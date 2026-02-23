@@ -28,9 +28,9 @@ The defining mechanic is supply chain management:
 
 | Type | Role | Traits |
 |------|------|--------|
-| Combat Drone | Marine-like ground unit | 100hp, speed 3, range 8, 50 ammo |
-| Heavy Assault Platform | Tank-like | 300hp, speed 1.5, range 12, 30 ammo |
-| Aerial Drone | Flyer/scout | 60hp, speed 6, range 6, 40 ammo |
+| Combat Drone | Marine-like ground unit | 100hp, speed 3, range 8, 38 ammo |
+| Heavy Assault Platform | Tank-like | 300hp, speed 1.5, range 12, 22 ammo |
+| Aerial Drone | Flyer/scout | 60hp, speed 6, range 6, 30 ammo |
 
 - Units consume ammo — **no ammo = no firing** (suppression mechanic)
 - Units gain veterancy (3/7/15 kills): +10% damage, +10% fire rate, +5% speed per level
