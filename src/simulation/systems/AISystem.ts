@@ -759,13 +759,21 @@ export class AISystem implements System {
     // Assign 2 ferry workers per depot
     for (const depot of completedDepots) {
       if (assigned >= maxFerryAssignments) break;
+      
+      const depotPos = world.getComponent<PositionComponent>(depot, POSITION)!;
+      const dx = depotPos.x - hqPos.x;
+      const dz = depotPos.z - hqPos.z;
+      const distance = Math.sqrt(dx * dx + dz * dz);
+      
+      // Calculate how many ferries we need (1 worker per 40 units of distance, max 4)
+      const requiredFerries = Math.max(1, Math.min(4, Math.ceil(distance / 40)));
       const currentFerries = ferryCountByDepot.get(depot) ?? 0;
-      if (currentFerries >= 2) continue;
+
+      if (currentFerries >= requiredFerries) continue;
 
       const worker = idleWorkers[assigned];
       if (!worker) break;
 
-      // Assign ferry route
       world.addComponent<SupplyRouteComponent>(worker, SUPPLY_ROUTE, {
         sourceEntity: hq,
         destEntity: depot,
@@ -775,10 +783,8 @@ export class AISystem implements System {
         carryCapacity: 10,
       });
 
-      // Move toward HQ
-      if (world.hasComponent(worker, MOVE_COMMAND)) {
-        world.removeComponent(worker, MOVE_COMMAND);
-      }
+      if (world.hasComponent(worker, MOVE_COMMAND)) world.removeComponent(worker, MOVE_COMMAND);
+      
       world.addComponent<MoveCommandComponent>(worker, MOVE_COMMAND, {
         path: [],
         currentWaypoint: 0,
@@ -793,40 +799,35 @@ export class AISystem implements System {
   // --- Army Control ---
 
   private executeArmyControl(world: World, state: AIWorldState): void {
-    // Aerial drones beyond the first two join the army (first 2 are scouts)
     const armyAerial = state.myAerial.slice(2);
 
-    // Decrement reattack cooldown timer
-    if (this.reattackTimer > 0) {
-      this.reattackTimer--;
-    }
-    // reattackTimer: -1 = no pending, >0 = cooling down, 0 = ready to re-attack
+    if (this.reattackTimer > 0) this.reattackTimer--;
 
-    // Priority 1: Defend base — abort any attack phase
+    // Priority 1: Defend base
     if (state.enemiesNearBase.length > 0) {
-      this.attackPhase = 'idle';
+      this.attackPhase = 'idle'; // Instantly abort attacks to defend
       const avgX = state.enemiesNearBase.reduce((s, e) => s + e.x, 0) / state.enemiesNearBase.length;
       const avgZ = state.enemiesNearBase.reduce((s, e) => s + e.z, 0) / state.enemiesNearBase.length;
 
-      for (const unitId of state.myCombat) {
-        if (world.hasComponent(unitId, RESUPPLY_SEEK)) continue;
-        this.issueMove(world, unitId, avgX, avgZ);
-      }
-      for (const unitId of armyAerial) {
-        if (world.hasComponent(unitId, RESUPPLY_SEEK)) continue;
-        this.issueMove(world, unitId, avgX, avgZ);
-      }
+      this.sendArmyTo(world, state, avgX, avgZ, armyAerial);
       return;
     }
 
-    // Priority 2: Staging phase — gather army at staging point before attacking
+    // THE TRICKLE FIX: If our army has been decimated, abort the attack and rebuild
+    if (this.attackPhase !== 'idle' && state.totalArmySize < 5) {
+      this.attackPhase = 'idle';
+      this.reattackTimer = REATTACK_COOLDOWN_TICKS;
+      // Survivors will naturally be caught by Priority 5 and rally back to base
+    }
+
+    // Priority 2: Staging phase
     if (this.attackPhase === 'staging' && state.totalArmySize > 0) {
       this.stagingTimer++;
 
-      // Count how many army units are near the staging point
       const allArmyUnits = [...state.myCombat, ...armyAerial];
       let nearStaging = 0;
       let totalActive = 0;
+      
       for (const unitId of allArmyUnits) {
         if (world.hasComponent(unitId, RESUPPLY_SEEK)) continue;
         totalActive++;
@@ -834,22 +835,19 @@ export class AISystem implements System {
         if (!pos) continue;
         const dx = pos.x - this.stagingX;
         const dz = pos.z - this.stagingZ;
-        if (dx * dx + dz * dz < STAGING_RADIUS * STAGING_RADIUS) {
-          nearStaging++;
-        }
+        if (dx * dx + dz * dz < STAGING_RADIUS * STAGING_RADIUS) nearStaging++;
       }
 
       const readyFraction = totalActive > 0 ? nearStaging / totalActive : 0;
-
-      // Advance to attack when enough units gathered or timeout
-      if (readyFraction >= STAGING_READY_FRACTION || this.stagingTimer >= MAX_STAGING_TICKS) {
+      
+      // Increased MAX_STAGING_TICKS from 20 to 60 (30 seconds) to allow large armies to gather
+      if (readyFraction >= STAGING_READY_FRACTION || this.stagingTimer >= 60) {
         this.attackPhase = 'attacking';
         this.sendArmyTo(world, state, this.attackTargetX, this.attackTargetZ, armyAerial);
         this.retreatWounded(world, state);
         return;
       }
 
-      // Still staging — send army to staging point
       this.sendArmyTo(world, state, this.stagingX, this.stagingZ, armyAerial);
       return;
     }
@@ -864,45 +862,18 @@ export class AISystem implements System {
             this.attackTargetX = target.x;
             this.attackTargetZ = target.z;
           }
-        } else {
-          let allNearTarget = true;
-          for (const unitId of state.myCombat) {
-            if (world.hasComponent(unitId, RESUPPLY_SEEK)) continue;
-            const pos = world.getComponent<PositionComponent>(unitId, POSITION);
-            if (!pos) continue;
-            const dx = pos.x - this.attackTargetX;
-            const dz = pos.z - this.attackTargetZ;
-            if (dx * dx + dz * dz > 400) {
-              allNearTarget = false;
-              break;
-            }
-          }
-          if (allNearTarget) {
-            this.attackPhase = 'idle';
-            this.reattackTimer = REATTACK_COOLDOWN_TICKS;
-          }
         }
       }
 
-      if (this.attackPhase === 'attacking') {
-        this.sendArmyTo(world, state, this.attackTargetX, this.attackTargetZ, armyAerial);
-        this.retreatWounded(world, state);
-        return;
-      }
+      this.sendArmyTo(world, state, this.attackTargetX, this.attackTargetZ, armyAerial);
+      this.retreatWounded(world, state);
+      return;
     }
 
-    // Determine effective attack threshold
-    let effectiveThreshold = ATTACK_THRESHOLD;
-
-    // After reattack cooldown expires (timer went from >0 to 0), use lower threshold
-    if (this.reattackTimer === 0) {
-      effectiveThreshold = REATTACK_THRESHOLD;
-    }
-
-    // Force attack after timeout regardless of army size
+    let effectiveThreshold = this.reattackTimer === 0 ? REATTACK_THRESHOLD : ATTACK_THRESHOLD;
     const forceAttack = this.forceAttackTimer >= FORCE_ATTACK_TICKS && state.totalArmySize > 0;
 
-    // Priority 4: Launch attack — enter staging phase first
+    // Priority 4: Launch attack
     if (state.totalArmySize >= effectiveThreshold || forceAttack) {
       const target = this.pickAttackTarget(state);
       const targetX = target ? target.x : 64;
@@ -913,7 +884,6 @@ export class AISystem implements System {
       this.reattackTimer = -1;
       this.forceAttackTimer = 0;
 
-      // Calculate staging point: 70% of the way from rally to target
       this.stagingX = this.rallyX + (targetX - this.rallyX) * STAGING_DISTANCE_FRACTION;
       this.stagingZ = this.rallyZ + (targetZ - this.rallyZ) * STAGING_DISTANCE_FRACTION;
       this.stagingTimer = 0;
@@ -923,24 +893,11 @@ export class AISystem implements System {
       return;
     }
 
-    // Priority 5: Rally idle combat units near base
-    for (const unitId of state.myCombat) {
+    // Priority 5: Rally idle units near base
+    for (const unitId of [...state.myCombat, ...armyAerial]) {
       if (world.hasComponent(unitId, RESUPPLY_SEEK)) continue;
       if (world.hasComponent(unitId, MOVE_COMMAND)) continue;
-      const pos = world.getComponent<PositionComponent>(unitId, POSITION);
-      if (!pos) continue;
-
-      const dx = pos.x - this.rallyX;
-      const dz = pos.z - this.rallyZ;
-      if (dx * dx + dz * dz > 100) {
-        this.issueMove(world, unitId, this.rallyX, this.rallyZ);
-      }
-    }
-
-    // Rally army aerial drones near base when not attacking
-    for (const unitId of armyAerial) {
-      if (world.hasComponent(unitId, RESUPPLY_SEEK)) continue;
-      if (world.hasComponent(unitId, MOVE_COMMAND)) continue;
+      
       const pos = world.getComponent<PositionComponent>(unitId, POSITION);
       if (!pos) continue;
 
@@ -952,23 +909,46 @@ export class AISystem implements System {
     }
   }
 
-  private pickAttackTarget(state: AIWorldState): { x: number; z: number } | null {
+ private pickAttackTarget(state: AIWorldState): { x: number; z: number } | null {
     let bestTarget: { x: number; z: number } | null = null;
     let bestDistSq = Infinity;
 
-    // When army is overwhelming, go for the kill — target enemy HQ first
     if (state.totalArmySize >= OVERWHELMING_ARMY) {
       for (const bldg of state.knownEnemyBuildings) {
-        if (bldg.type === BuildingType.HQ) {
-          return { x: bldg.x, z: bldg.z };
-        }
+        if (bldg.type === BuildingType.HQ) return { x: bldg.x, z: bldg.z };
       }
-      // HQ not visible — head toward expected enemy base area
-      return { x: 64, z: 64 };
     }
 
-    // Normal priority: economy buildings > factories > HQ > units
-    // Prefer economy buildings (extractors, plants)
+    // 1. TOP PRIORITY: Hunt Forward Supply Depots (Cut off ammo)
+    for (const bldg of state.knownEnemyBuildings) {
+      if (bldg.type === BuildingType.SupplyDepot) {
+        const dx = bldg.x - this.baseX;
+        const dz = bldg.z - this.baseZ;
+        const distSq = dx * dx + dz * dz;
+        // Target the depot closest to the AI's base (the player's forward operating base)
+        if (distSq < bestDistSq) {
+          bestDistSq = distSq;
+          bestTarget = { x: bldg.x, z: bldg.z };
+        }
+      }
+    }
+    if (bestTarget) return bestTarget;
+
+    // 2. HIGH PRIORITY: Disrupt Worker Ferries
+    for (const unit of state.knownEnemyUnits) {
+       // Assuming you have a way to identify enemy workers, otherwise target any unit near the front
+       const dx = unit.x - this.baseX;
+       const dz = unit.z - this.baseZ;
+       const distSq = dx * dx + dz * dz;
+       if (distSq < bestDistSq) {
+         bestDistSq = distSq;
+         bestTarget = { x: unit.x, z: unit.z };
+       }
+    }
+    if (bestTarget) return bestTarget;
+
+    // 3. Economy (Extractors / Matter Plants)
+    bestDistSq = Infinity;
     for (const bldg of state.knownEnemyBuildings) {
       if (bldg.type === BuildingType.EnergyExtractor || bldg.type === BuildingType.MatterPlant) {
         const dx = bldg.x - this.baseX;
@@ -980,52 +960,14 @@ export class AISystem implements System {
         }
       }
     }
-
     if (bestTarget) return bestTarget;
 
-    // Factories
-    bestDistSq = Infinity;
+    // 4. Drone Factories
     for (const bldg of state.knownEnemyBuildings) {
-      if (bldg.type === BuildingType.DroneFactory) {
-        const dx = bldg.x - this.baseX;
-        const dz = bldg.z - this.baseZ;
-        const distSq = dx * dx + dz * dz;
-        if (distSq < bestDistSq) {
-          bestDistSq = distSq;
-          bestTarget = { x: bldg.x, z: bldg.z };
-        }
-      }
+      if (bldg.type === BuildingType.DroneFactory) return { x: bldg.x, z: bldg.z };
     }
 
-    if (bestTarget) return bestTarget;
-
-    // Any building (including HQ)
-    bestDistSq = Infinity;
-    for (const bldg of state.knownEnemyBuildings) {
-      const dx = bldg.x - this.baseX;
-      const dz = bldg.z - this.baseZ;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestTarget = { x: bldg.x, z: bldg.z };
-      }
-    }
-
-    if (bestTarget) return bestTarget;
-
-    // Any unit
-    bestDistSq = Infinity;
-    for (const unit of state.knownEnemyUnits) {
-      const dx = unit.x - this.baseX;
-      const dz = unit.z - this.baseZ;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestTarget = { x: unit.x, z: unit.z };
-      }
-    }
-
-    return bestTarget;
+    return null;
   }
 
   private sendArmyTo(world: World, state: AIWorldState, x: number, z: number, armyAerial: number[] = []): void {
