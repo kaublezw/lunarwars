@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "baseUrl": ".",
+    "paths": {
+      "@core/*": ["src/core/*"],
+      "@sim/*": ["src/simulation/*"],
+      "@render/*": ["src/rendering/*"],
+      "@ui/*": ["src/ui/*"],
+      "@input/*": ["src/input/*"]
+    }
+  },
+  "include": ["src"]
+}
