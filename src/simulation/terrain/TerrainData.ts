@@ -24,8 +24,8 @@ export class TerrainData {
   private flatZones: FlatZone[];
 
   constructor(config: { width?: number; height?: number; seed?: number } = {}) {
-    this.width = config.width ?? 256;
-    this.height = config.height ?? 256;
+    this.width = config.width ?? 276;
+    this.height = config.height ?? 276;
     this.tileHeights = new Int8Array(this.width * this.height);
 
     this.flatZones = [
@@ -42,6 +42,7 @@ export class TerrainData {
     this.paintMountainRanges(seed);
     this.paintCraters(seed);
     this.clearFlatZones();
+    this.paintBorderWall();
   }
 
   private paintMountainRanges(seed: number): void {
@@ -187,6 +188,39 @@ export class TerrainData {
           const tz = Math.round(zone.z + dz);
           if (tx < 0 || tx >= this.width || tz < 0 || tz >= this.height) continue;
           this.tileHeights[tz * this.width + tx] = 0;
+        }
+      }
+    }
+  }
+
+  private paintBorderWall(): void {
+    const noise = createNoise2D(42);
+    const fineNoise = createNoise2D(137);
+
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        const distToEdge = Math.min(x, z, this.width - 1 - x, this.height - 1 - z);
+        if (distToEdge >= 9) continue;
+
+        let h: number;
+        if (distToEdge <= 1) {
+          // Outermost 2 rows always peak — seamless with plateau ring
+          h = 3;
+        } else {
+          // Noise shifts the effective distance for irregular cliff edges
+          const n = noise(x * 0.06, z * 0.06) * 2.5;
+          const fine = fineNoise(x * 0.2, z * 0.2) * 0.8;
+          const effectiveDist = distToEdge - n - fine;
+
+          if (effectiveDist <= 2.5) h = 3;       // peak (4.5 world)
+          else if (effectiveDist <= 3.5) h = 2;   // mid (3.0 world)
+          else if (effectiveDist <= 5) h = 1;     // foothills (1.5 world)
+          else continue;
+        }
+
+        const idx = z * this.width + x;
+        if (h > this.tileHeights[idx]) {
+          this.tileHeights[idx] = h;
         }
       }
     }

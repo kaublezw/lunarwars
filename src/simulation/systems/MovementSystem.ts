@@ -9,7 +9,7 @@ import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 
 const WORLD_MIN = 0;
-const WORLD_MAX = 256;
+const WORLD_MAX = 276;
 const AERIAL_HEIGHT = 5.5;
 const TURN_SPEED = 4.0; // radians per second
 

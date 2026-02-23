@@ -5,7 +5,7 @@ export class SceneManager {
 
   constructor() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x000010);
+    this.scene.background = new THREE.Color(0x000004);
 
     // Harsh directional light from screen-top
     const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);

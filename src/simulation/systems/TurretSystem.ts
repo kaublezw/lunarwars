@@ -16,7 +16,7 @@ export class TurretSystem implements System {
   private spatialHash: SpatialHash;
 
   constructor() {
-    this.spatialHash = new SpatialHash(4, 256, 256);
+    this.spatialHash = new SpatialHash(4, 276, 276);
   }
 
   update(world: World, dt: number): void {

@@ -5,6 +5,9 @@ import { FOG_UNEXPLORED, FOG_EXPLORED } from '@sim/fog/FogOfWarState';
 
 const FOG_Y_OFFSET = 0.15;
 
+// Must match TerrainRenderer's PLATEAU_PAD so fog covers the extended plateau
+const PLATEAU_PAD = 25;
+
 export class FogRenderer {
   private mesh: THREE.Mesh;
   private texture: THREE.DataTexture;
@@ -18,28 +21,42 @@ export class FogRenderer {
 
     const w = terrain.width;
     const h = terrain.height;
+    const totalW = w + PLATEAU_PAD * 2;
+    const totalH = h + PLATEAU_PAD * 2;
 
-    // Create plane geometry matching terrain dimensions and resolution
-    const geometry = new THREE.PlaneGeometry(w, h, w - 1, h - 1);
+    const geometry = new THREE.PlaneGeometry(totalW, totalH, totalW - 1, totalH - 1);
     geometry.rotateX(-Math.PI / 2);
 
     // Displace vertices to match terrain heights + offset
     const posAttr = geometry.getAttribute('position');
+    const uvAttr = geometry.getAttribute('uv');
+
+    // The fog grid now includes padding, so texture covers the full extended area.
+    // gridWidth/gridHeight = width + 2*padding
+    const gw = fogState.gridWidth;
+    const gh = fogState.gridHeight;
+
     for (let i = 0; i < posAttr.count; i++) {
-      const gx = posAttr.getX(i);
-      const gz = posAttr.getZ(i);
-      const tx = gx + w / 2;
-      const tz = gz + h / 2;
-      const height = terrain.getHeight(tx, tz);
+      const lx = posAttr.getX(i);
+      const lz = posAttr.getZ(i);
+      const wx = lx + w / 2;
+      const wz = lz + h / 2;
+
+      const height = terrain.getHeight(wx, wz);
       posAttr.setY(i, height + FOG_Y_OFFSET);
+
+      // Map world coords to grid coords, then to UV [0,1] across the full grid
+      const gx = wx + fogState.padding;
+      const gz = wz + fogState.padding;
+      uvAttr.setXY(i, gx / gw, 1 - gz / gh);
     }
     geometry.computeVertexNormals();
 
-    // Create RGBA DataTexture for fog overlay
-    this.textureData = new Uint8Array(w * h * 4);
+    // Texture covers the full padded grid
+    this.textureData = new Uint8Array(gw * gh * 4);
     this.texture = new THREE.DataTexture(
       this.textureData as unknown as BufferSource,
-      w, h, THREE.RGBAFormat,
+      gw, gh, THREE.RGBAFormat,
     ) as THREE.DataTexture;
     this.texture.flipY = true;
     this.texture.minFilter = THREE.LinearFilter;
@@ -48,7 +65,7 @@ export class FogRenderer {
     this.texture.wrapT = THREE.ClampToEdgeWrapping;
 
     // Initialize all pixels as unexplored (fully black)
-    for (let i = 0; i < w * h; i++) {
+    for (let i = 0; i < gw * gh; i++) {
       this.textureData[i * 4 + 0] = 0;   // R
       this.textureData[i * 4 + 1] = 0;   // G
       this.textureData[i * 4 + 2] = 0;   // B

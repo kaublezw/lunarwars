@@ -13,14 +13,20 @@ export class FogOfWarState {
   readonly width: number;
   readonly height: number;
   readonly teamCount: number;
+  readonly padding: number;
+  readonly gridWidth: number;
+  readonly gridHeight: number;
 
-  constructor(width: number, height: number, teamCount: number) {
+  constructor(width: number, height: number, teamCount: number, padding: number = 0) {
     this.width = width;
     this.height = height;
     this.teamCount = teamCount;
+    this.padding = padding;
+    this.gridWidth = width + 2 * padding;
+    this.gridHeight = height + 2 * padding;
     this.grids = [];
     for (let i = 0; i < teamCount; i++) {
-      this.grids.push(new Uint8Array(width * height));
+      this.grids.push(new Uint8Array(this.gridWidth * this.gridHeight));
     }
   }
 
@@ -49,18 +55,21 @@ export class FogOfWarState {
     const grid = this.grids[team];
     if (!grid) return;
 
+    // Offset world coords to grid coords
+    const gcx = cx + this.padding;
+    const gcz = cz + this.padding;
     const rangeSq = range * range;
-    const minX = Math.max(0, Math.floor(cx - range));
-    const maxX = Math.min(this.width - 1, Math.ceil(cx + range));
-    const minZ = Math.max(0, Math.floor(cz - range));
-    const maxZ = Math.min(this.height - 1, Math.ceil(cz + range));
+    const minX = Math.max(0, Math.floor(gcx - range));
+    const maxX = Math.min(this.gridWidth - 1, Math.ceil(gcx + range));
+    const minZ = Math.max(0, Math.floor(gcz - range));
+    const maxZ = Math.min(this.gridHeight - 1, Math.ceil(gcz + range));
 
     for (let z = minZ; z <= maxZ; z++) {
       for (let x = minX; x <= maxX; x++) {
-        const dx = x - cx;
-        const dz = z - cz;
+        const dx = x - gcx;
+        const dz = z - gcz;
         if (dx * dx + dz * dz <= rangeSq) {
-          grid[z * this.width + x] = FOG_VISIBLE;
+          grid[z * this.gridWidth + x] = FOG_VISIBLE;
         }
       }
     }
@@ -77,19 +86,24 @@ export class FogOfWarState {
   getState(team: number, x: number, z: number): number {
     const grid = this.grids[team];
     if (!grid) return FOG_UNEXPLORED;
-    const ix = Math.floor(Math.max(0, Math.min(this.width - 1, x)));
-    const iz = Math.floor(Math.max(0, Math.min(this.height - 1, z)));
-    return grid[iz * this.width + ix];
+    const gx = Math.floor(Math.max(0, Math.min(this.gridWidth - 1, x + this.padding)));
+    const gz = Math.floor(Math.max(0, Math.min(this.gridHeight - 1, z + this.padding)));
+    return grid[gz * this.gridWidth + gx];
   }
 
   serializeExplored(): number[][] {
     const result: number[][] = [];
+    const p = this.padding;
     for (let t = 0; t < this.teamCount; t++) {
       const grid = this.grids[t];
       const indices: number[] = [];
-      for (let i = 0; i < grid.length; i++) {
-        if (grid[i] >= FOG_EXPLORED) {
-          indices.push(i);
+      // Only serialize the inner width x height region (playable area)
+      for (let z = 0; z < this.height; z++) {
+        for (let x = 0; x < this.width; x++) {
+          const gi = (z + p) * this.gridWidth + (x + p);
+          if (grid[gi] >= FOG_EXPLORED) {
+            indices.push(z * this.width + x);
+          }
         }
       }
       result.push(indices);
@@ -98,11 +112,15 @@ export class FogOfWarState {
   }
 
   deserializeExplored(data: number[][]): void {
+    const p = this.padding;
     for (let t = 0; t < Math.min(data.length, this.teamCount); t++) {
       const grid = this.grids[t];
       for (const idx of data[t]) {
-        if (idx >= 0 && idx < grid.length) {
-          grid[idx] = FOG_EXPLORED;
+        // Convert inner index to grid index
+        const ix = idx % this.width;
+        const iz = Math.floor(idx / this.width);
+        if (ix >= 0 && ix < this.width && iz >= 0 && iz < this.height) {
+          grid[(iz + p) * this.gridWidth + (ix + p)] = FOG_EXPLORED;
         }
       }
     }

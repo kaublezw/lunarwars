@@ -7,15 +7,20 @@ const MIN_H = -3.0; // -2 levels * 1.5
 const MAX_H = 4.5;  //  3 levels * 1.5
 const H_RANGE = MAX_H - MIN_H;
 
+// Flat plateau extension beyond the 256x256 terrain so units near the edge
+// can reveal it through fog-of-war instead of seeing a black void.
+const PLATEAU_PAD = 25;
+
 export class TerrainRenderer {
   private mesh: THREE.Mesh;
 
   constructor(terrain: TerrainData) {
     const w = terrain.width;
     const h = terrain.height;
+    const totalW = w + PLATEAU_PAD * 2;
+    const totalH = h + PLATEAU_PAD * 2;
 
-    // 256x256 vertices matching tile grid
-    const geometry = new THREE.PlaneGeometry(w, h, w - 1, h - 1);
+    const geometry = new THREE.PlaneGeometry(totalW, totalH, totalW - 1, totalH - 1);
 
     // Rotate to XZ plane (PlaneGeometry defaults to XY)
     geometry.rotateX(-Math.PI / 2);
@@ -27,16 +32,18 @@ export class TerrainRenderer {
     const coarseNoise = createNoise2D(777);  // broad color patches
     const fineNoise = createNoise2D(1234);   // fine-grain speckle
 
-    // Displace vertices from heightmap and assign vertex colors
+    // Displace vertices from heightmap and assign vertex colors.
+    // Vertices outside [0,256] auto-clamp via terrain.getHeight/getSlope,
+    // producing a flat plateau at edge height (4.5) with zero slope.
     for (let i = 0; i < posAttr.count; i++) {
       const gx = posAttr.getX(i);
       const gz = posAttr.getZ(i);
 
-      // Map from geometry local coords [-128, 128] to terrain coords [0, 256]
-      const tx = gx + w / 2;
-      const tz = gz + h / 2;
+      // Map from geometry local coords to world coords
+      const wx = gx + w / 2;
+      const wz = gz + h / 2;
 
-      const height = terrain.getHeight(tx, tz);
+      const height = terrain.getHeight(wx, wz);
       posAttr.setY(i, height);
 
       // Vertex color: grey regolith with height variation
@@ -53,20 +60,20 @@ export class TerrainRenderer {
       b += (normalizedH - 0.4) * 0.22;
 
       // Darken steep edges between tile heights
-      const slope = terrain.getSlope(tx, tz);
+      const slope = terrain.getSlope(wx, wz);
       const slopeDarken = Math.min(slope * 0.06, 0.12);
       r -= slopeDarken;
       g -= slopeDarken;
       b -= slopeDarken;
 
       // Coarse variation — broad patches of slightly different shade
-      const coarse = coarseNoise(tx * 0.04, tz * 0.04) * 0.04;
+      const coarse = coarseNoise(wx * 0.04, wz * 0.04) * 0.04;
       r += coarse * 0.8;
       g += coarse * 0.9;
       b += coarse;
 
       // Fine speckle — per-vertex grain
-      const fine = fineNoise(tx * 0.5, tz * 0.5) * 0.025;
+      const fine = fineNoise(wx * 0.5, wz * 0.5) * 0.025;
       r += fine;
       g += fine;
       b += fine;
@@ -89,7 +96,6 @@ export class TerrainRenderer {
 
     this.mesh = new THREE.Mesh(geometry, material);
     this.mesh.receiveShadow = true;
-    // Center at world midpoint
     this.mesh.position.set(w / 2, 0, h / 2);
   }
 

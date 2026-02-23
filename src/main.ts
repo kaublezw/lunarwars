@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { SceneManager } from '@render/SceneManager';
 import { IsometricCamera } from '@render/IsometricCamera';
 import { TerrainRenderer } from '@render/terrain/TerrainRenderer';
-import { StarfieldBackground } from '@render/terrain/StarfieldBackground';
+import { ValleyWallRenderer } from '@render/terrain/ValleyWallRenderer';
 import { SelectionRenderer } from '@render/SelectionRenderer';
 import { WaypointRenderer } from '@render/WaypointRenderer';
 import { BoxSelectRenderer } from '@render/BoxSelectRenderer';
@@ -90,7 +90,7 @@ if (savedRaw) {
   try {
     const parsed = JSON.parse(savedRaw);
     // Reject saves from before the depot overhaul (version < 2)
-    if (parsed.version >= 6) {
+    if (parsed.version >= 8) {
       saveData = parsed;
     } else {
       sessionStorage.removeItem(SAVE_KEY);
@@ -107,9 +107,9 @@ const terrainData = new TerrainData({ seed });
 const terrainRenderer = new TerrainRenderer(terrainData);
 terrainRenderer.addTo(sceneManager.scene);
 
-// --- Starfield ---
-const starfield = new StarfieldBackground();
-starfield.addTo(sceneManager.scene);
+// --- Valley Walls (flat black ring beyond terrain edge) ---
+const valleyWalls = new ValleyWallRenderer();
+valleyWalls.addTo(sceneManager.scene);
 
 // --- Energy Nodes ---
 const energyNodes = generateEnergyNodes(terrainData, seed);
@@ -147,10 +147,10 @@ const cameraController = new CameraController(inputManager, isoCamera);
 const world = new World();
 
 // --- Fog of War ---
-const fogState = new FogOfWarState(256, 256, 2);
+const fogState = new FogOfWarState(276, 276, 2, 25);
 
 // --- Building Occupancy ---
-const buildingOccupancy = new BuildingOccupancy(256, 256);
+const buildingOccupancy = new BuildingOccupancy(276, 276);
 
 // Team colors: team 0 = blue, team 1 = red
 const TEAM_COLORS = [0x4488ff, 0xff4444];
@@ -304,6 +304,11 @@ selectionController.setFogState(fogState, PLAYER_TEAM);
 // --- Placement Controller ---
 const placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, PLAYER_TEAM);
 selectionController.setPlacementCheck(() => placementController.isActive());
+
+// --- Minimap Right-Click -> Move Units ---
+minimap.onRightClick = (worldX, worldZ) => {
+  selectionController.issueMoveTo(worldX, worldZ);
+};
 
 // --- Renderers ---
 const renderSync = new RenderSync(sceneManager.scene);
@@ -542,7 +547,7 @@ document.body.appendChild(restartBtn);
 setInterval(() => {
   try {
     const data = {
-      version: 6,
+      version: 8,
       seed,
       world: world.serialize(),
       resources: resourceState.serialize(),

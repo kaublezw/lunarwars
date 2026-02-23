@@ -718,6 +718,90 @@ export class SelectionController {
     return null;
   }
 
+  issueMoveTo(destX: number, destZ: number): void {
+    const selectables = this.world.query(POSITION, SELECTABLE);
+    const mobile: { entity: Entity; pos: PositionComponent; radius: number }[] = [];
+    let maxRadius = 0;
+    let centroidX = 0;
+    let centroidZ = 0;
+
+    for (const e of selectables) {
+      const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
+      if (!sel.selected) continue;
+
+      // Set rally point on production buildings
+      if (
+        this.world.hasComponent(e, PRODUCTION_QUEUE) &&
+        this.world.hasComponent(e, BUILDING) &&
+        !this.world.hasComponent(e, CONSTRUCTION)
+      ) {
+        const queue = this.world.getComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE)!;
+        queue.rallyX = destX;
+        queue.rallyZ = destZ;
+        continue;
+      }
+
+      // Skip buildings/construction sites
+      if (this.world.hasComponent(e, BUILDING)) continue;
+
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE);
+      const radius = ut ? ut.radius : 0.5;
+      if (radius > maxRadius) maxRadius = radius;
+      centroidX += pos.x;
+      centroidZ += pos.z;
+      mobile.push({ entity: e, pos, radius });
+    }
+
+    if (mobile.length === 0) return;
+
+    for (const s of mobile) {
+      if (this.world.hasComponent(s.entity, SUPPLY_ROUTE)) {
+        this.world.removeComponent(s.entity, SUPPLY_ROUTE);
+      }
+      if (this.world.hasComponent(s.entity, ATTACK_TARGET)) {
+        this.world.removeComponent(s.entity, ATTACK_TARGET);
+      }
+      if (this.world.hasComponent(s.entity, RESUPPLY_SEEK)) {
+        this.world.removeComponent(s.entity, RESUPPLY_SEEK);
+      }
+    }
+
+    if (mobile.length === 1) {
+      this.world.addComponent<MoveCommandComponent>(mobile[0].entity, MOVE_COMMAND, {
+        path: [], currentWaypoint: 0, destX, destZ,
+      });
+      this.events.emit('command:move', destX, destZ);
+      return;
+    }
+
+    centroidX /= mobile.length;
+    centroidZ /= mobile.length;
+
+    mobile.sort((a, b) => {
+      const da = (a.pos.x - centroidX) ** 2 + (a.pos.z - centroidZ) ** 2;
+      const db = (b.pos.x - centroidX) ** 2 + (b.pos.z - centroidZ) ** 2;
+      return da - db;
+    });
+
+    const spacing = Math.max(maxRadius * 3, 1.5);
+    const offsets = computeFormationOffsets(mobile.length, spacing);
+    const jitterMax = maxRadius * 0.4;
+
+    for (let i = 0; i < mobile.length; i++) {
+      const jitterX = (Math.random() - 0.5) * jitterMax;
+      const jitterZ = (Math.random() - 0.5) * jitterMax;
+      this.world.addComponent<MoveCommandComponent>(mobile[i].entity, MOVE_COMMAND, {
+        path: [],
+        currentWaypoint: 0,
+        destX: destX + offsets[i].x + jitterX,
+        destZ: destZ + offsets[i].z + jitterZ,
+      });
+    }
+
+    this.events.emit('command:move', destX, destZ);
+  }
+
   private deselectAll(): void {
     const selectables = this.world.query(SELECTABLE);
     for (const e of selectables) {
