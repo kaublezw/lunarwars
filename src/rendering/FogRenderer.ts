@@ -89,6 +89,14 @@ export class FogRenderer {
     scene.add(this.mesh);
   }
 
+  setPlayerTeam(team: number): void {
+    this.playerTeam = team;
+  }
+
+  setVisible(visible: boolean): void {
+    this.mesh.visible = visible;
+  }
+
   update(): void {
     const grid = this.fogState.getGrid(this.playerTeam);
     const len = grid.length;

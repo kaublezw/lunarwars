@@ -60,7 +60,8 @@ export class EnergyNodeRenderer {
 
   update(fogState: FogOfWarState, playerTeam: number): void {
     for (const ref of this.nodeRefs) {
-      const explored = fogState.isExplored(playerTeam, ref.x, ref.z);
+      // playerTeam < 0 = spectator, show all nodes
+      const explored = playerTeam < 0 || fogState.isExplored(playerTeam, ref.x, ref.z);
       ref.crystal.visible = explored;
       ref.glow.visible = explored;
     }

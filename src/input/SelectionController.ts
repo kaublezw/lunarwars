@@ -130,8 +130,7 @@ export class SelectionController {
 
     const selectables = this.world.query(POSITION, SELECTABLE);
     let bestEntity: Entity | null = null;
-    const pickRadiusPx = 30; // screen-space pick radius in pixels
-    let bestDistSq = pickRadiusPx * pickRadiusPx;
+    let bestDistSq = Infinity;
 
     const tmpVec = new THREE.Vector3();
     for (const e of selectables) {
@@ -150,7 +149,11 @@ export class SelectionController {
       const dx = screenPos.x - sx;
       const dy = screenPos.y - sy;
       const distSq = dx * dx + dy * dy;
-      if (distSq < bestDistSq) {
+
+      // Buildings get a larger pick radius than units
+      const isBuilding = this.world.hasComponent(e, BUILDING);
+      const pickRadius = isBuilding ? 60 : 30;
+      if (distSq < pickRadius * pickRadius && distSq < bestDistSq) {
         bestDistSq = distSq;
         bestEntity = e;
       }

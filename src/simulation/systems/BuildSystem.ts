@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, MATTER_STORAGE, DEPOT_RADIUS, SUPPLY_ROUTE } from '@sim/components/ComponentTypes';
+import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, MATTER_STORAGE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE } from '@sim/components/ComponentTypes';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { PositionComponent } from '@sim/components/Position';
@@ -13,6 +13,8 @@ import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
+import { VOXEL_MODELS } from '@sim/data/VoxelModels';
+import type { VoxelStateComponent } from '@sim/components/VoxelState';
 const DEPOT_VISUAL_RADIUS = 38;
 
 const BUILD_RANGE = 4; // max distance worker can be from site to build
@@ -92,6 +94,19 @@ export class BuildSystem implements System {
           // Add selectable
           if (!world.hasComponent(site, SELECTABLE)) {
             world.addComponent<SelectableComponent>(site, SELECTABLE, { selected: false });
+          }
+
+          // Update voxel state for the final building model
+          const finalVoxelModel = VOXEL_MODELS[def.meshType];
+          if (finalVoxelModel) {
+            world.addComponent<VoxelStateComponent>(site, VOXEL_STATE, {
+              modelId: def.meshType,
+              totalVoxels: finalVoxelModel.totalSolid,
+              destroyedCount: 0,
+              destroyed: new Uint8Array(Math.ceil(finalVoxelModel.totalSolid / 8)),
+              dirty: true,
+              pendingDebris: [],
+            });
           }
 
           // DroneFactory gets a production queue

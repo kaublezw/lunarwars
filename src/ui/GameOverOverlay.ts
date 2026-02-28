@@ -75,4 +75,18 @@ export class GameOverOverlay {
       this.subtitle.textContent = 'Your HQ was destroyed';
     }
   }
+
+  showSpectator(losingTeam: number): void {
+    this.container.style.display = 'flex';
+
+    if (losingTeam === 1) {
+      this.heading.textContent = 'BLUE WINS';
+      this.heading.style.color = '#4488ff';
+      this.subtitle.textContent = 'Red HQ destroyed';
+    } else {
+      this.heading.textContent = 'RED WINS';
+      this.heading.style.color = '#ff4444';
+      this.subtitle.textContent = 'Blue HQ destroyed';
+    }
+  }
 }

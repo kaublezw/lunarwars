@@ -41,6 +41,10 @@ export class BuildingEffectsRenderer {
     this.playerTeam = playerTeam;
   }
 
+  setPlayerTeam(team: number): void {
+    this.playerTeam = team;
+  }
+
   update(world: World, dt: number): void {
     const buildings = world.query(BUILDING, TEAM, POSITION);
     const activeEntities = new Set<number>();
@@ -52,8 +56,8 @@ export class BuildingEffectsRenderer {
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
 
-      // Check fog visibility
-      const visible = !this.fogState || this.fogState.isVisible(this.playerTeam, pos.x, pos.z);
+      // Check fog visibility (playerTeam < 0 = spectator, always visible)
+      const visible = !this.fogState || this.playerTeam < 0 || this.fogState.isVisible(this.playerTeam, pos.x, pos.z);
 
       if (building.buildingType === BuildingType.MatterPlant) {
         activeEntities.add(e);
@@ -90,10 +94,11 @@ export class BuildingEffectsRenderer {
     tracker.timer += dt;
     if (tracker.timer >= SMOKE_INTERVAL && visible) {
       tracker.timer = 0;
-      // Chimney is offset at (1.0, 3.5, 1.0) relative to building position
-      const smokeX = pos.x + 1.0;
-      const smokeY = pos.y + 5.0;
-      const smokeZ = pos.z + 1.0;
+      // Chimney top: voxel model chimney is at grid (15-19, 0-13, 15-19) in a 20x14x20 grid
+      // World offset: ((17.5*0.15)-1.5, 14*0.15, (17.5*0.15)-1.5) = (1.125, 2.1, 1.125)
+      const smokeX = pos.x + 1.1;
+      const smokeY = pos.y + 2.2;
+      const smokeZ = pos.z + 1.1;
 
       this.particleRenderer.spawnBurst(
         smokeX, smokeY, smokeZ,
@@ -113,8 +118,10 @@ export class BuildingEffectsRenderer {
   private updateGlow(entity: number, pos: PositionComponent, dt: number, visible: boolean): void {
     let tracker = this.glowTrackers.get(entity);
     if (!tracker) {
+      // Glow orb at top of extractor: voxel model orb is at grid y=13-16 in 10x17x10 grid
+      // World offset: ~(15*0.15) = 2.25
       const light = new THREE.PointLight(0x66ccff, 1.0, 8);
-      light.position.set(pos.x, pos.y + 2.5, pos.z);
+      light.position.set(pos.x, pos.y + 2.3, pos.z);
       this.scene.add(light);
       tracker = { entity, light, phase: Math.random() * Math.PI * 2 };
       this.glowTrackers.set(entity, tracker);
@@ -124,7 +131,7 @@ export class BuildingEffectsRenderer {
     // Pulse intensity between 0.5 and 1.5
     tracker.light.intensity = visible ? 1.0 + 0.5 * Math.sin(tracker.phase) : 0;
     // Keep position synced in case building was moved (unlikely but safe)
-    tracker.light.position.set(pos.x, pos.y + 2.5, pos.z);
+    tracker.light.position.set(pos.x, pos.y + 2.3, pos.z);
   }
 
   dispose(): void {

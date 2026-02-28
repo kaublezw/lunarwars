@@ -11,5 +11,7 @@ export interface TurretComponent {
   maxAmmo: number;         // for future supply depot refill
   muzzleOffset: number;    // distance from entity center to muzzle (varies by unit size)
   muzzleHeight: number;    // height above entity Y
-  rotateBodyToTarget: boolean; // true for primitives (body faces target), false for GLTF (independent turret)
+  rotateBodyToTarget: boolean; // true for infantry-like (body faces target), false for tanks (independent turret)
+  turretRotation: number;  // world-space Y-axis angle for turret facing (independent of body)
+  turretPitch: number;     // X-axis pitch angle for turret (negative = aim up)
 }

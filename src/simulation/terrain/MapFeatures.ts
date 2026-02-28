@@ -34,9 +34,7 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
       const z = zone.z + Math.sin(angle) * dist;
 
       if (x < 2 || x > 254 || z < 2 || z > 254) continue;
-      if (!terrain.isPassable(x, z)) continue;
-      if (terrain.getHeight(x, z) > 0.5) continue;
-      if (terrain.getSlope(x, z) >= 1.0) continue;
+      if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
       if (!isFarEnough(nodes, x, z, MIN_DIST)) continue;
 
       nodes.push({ x, z });
@@ -52,9 +50,7 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
     const x = 10 + next() * 236;
     const z = 10 + next() * 236;
 
-    if (!terrain.isPassable(x, z)) continue;
-    if (terrain.getHeight(x, z) > 0.5) continue;
-    if (terrain.getSlope(x, z) >= 1.0) continue;
+    if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
     if (!isFarEnough(nodes, x, z, MIN_DIST)) continue;
 
     nodes.push({ x, z });

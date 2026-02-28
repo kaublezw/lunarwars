@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { Entity, World } from '@core/ECS';
-import { POSITION, RENDERABLE, TURRET, TEAM, BUILDING } from '@sim/components/ComponentTypes';
+import { POSITION, RENDERABLE, TURRET, TEAM, BUILDING, VOXEL_STATE } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { TurretComponent } from '@sim/components/Turret';
@@ -18,6 +18,7 @@ const geometries: Record<string, THREE.BufferGeometry> = {
   aerial_drone: new THREE.CylinderGeometry(1, 1, 0.3, 8),
   worker_drone: new THREE.BoxGeometry(0.7, 0.5, 0.7),
   construction_site: new THREE.BoxGeometry(2, 0.5, 2),
+  projectile: new THREE.BoxGeometry(0.15, 0.15, 0.15),
 };
 
 function createBuildingGroup(meshType: string, color: number): THREE.Group | null {
@@ -144,7 +145,6 @@ const SHOCK_DAMPING = 3.5;       // how fast the spring settles
 const SHOCK_DURATION = 1.0;      // total animation time
 const MUZZLE_SPARK_COUNT_GLTF = 16;
 const MUZZLE_SPARK_COUNT_PRIM = 8;
-const IMPACT_SPARK_COUNT = 16;
 const PRIMITIVE_SHOCK_SCALE = 0.3;
 
 interface TurretRef {
@@ -186,6 +186,10 @@ export class RenderSync {
 
   constructor(private scene: THREE.Scene) {}
 
+  getObject(entity: Entity): THREE.Object3D | undefined {
+    return this.objects.get(entity);
+  }
+
   setParticleRenderer(pr: ParticleRenderer): void {
     this.particleRenderer = pr;
   }
@@ -193,6 +197,10 @@ export class RenderSync {
   setFogState(fogState: FogOfWarState, playerTeam: number): void {
     this.fogState = fogState;
     this.playerTeam = playerTeam;
+  }
+
+  setPlayerTeam(team: number): void {
+    this.playerTeam = team;
   }
 
   private applyGhostEffect(entity: Entity, obj: THREE.Object3D): void {
@@ -258,7 +266,10 @@ export class RenderSync {
     const currentEntities = new Set<Entity>(entities);
 
     // Add new entities or recreate if meshType changed
+    // Skip entities with VOXEL_STATE — those are handled by VoxelMeshManager
     for (const e of entities) {
+      if (world.hasComponent(e, VOXEL_STATE)) continue;
+
       const renderable = world.getComponent<RenderableComponent>(e, RENDERABLE)!;
       const prevType = this.meshTypes.get(e);
 
@@ -276,7 +287,10 @@ export class RenderSync {
     }
 
     // Update existing entities with interpolated positions
+    // Skip voxel entities for mesh positioning (VoxelMeshManager handles that)
     for (const e of entities) {
+      if (world.hasComponent(e, VOXEL_STATE)) continue;
+
       const obj = this.objects.get(e);
       if (!obj) continue;
 
@@ -289,28 +303,34 @@ export class RenderSync {
 
       // Fog of war visibility for enemy entities
       if (this.fogState) {
-        const team = world.getComponent<TeamComponent>(e, TEAM);
-        if (team && team.team !== this.playerTeam) {
-          const visible = this.fogState.isVisible(this.playerTeam, pos.x, pos.z);
-          if (visible) {
-            // Fully visible — show normally, remove ghost if was ghosted
-            obj.visible = true;
-            this.removeGhostEffect(e, obj);
-          } else if (this.fogState.isExplored(this.playerTeam, pos.x, pos.z) && world.hasComponent(e, BUILDING)) {
-            // Explored territory + building — show as faded ghost
-            obj.visible = true;
-            this.applyGhostEffect(e, obj);
-          } else {
-            // Unexplored or non-building unit — hide
-            obj.visible = false;
-          }
-        } else {
+        if (this.playerTeam < 0) {
+          // Spectator: no fog filtering, show everything
           obj.visible = true;
+          this.removeGhostEffect(e, obj);
+        } else {
+          const team = world.getComponent<TeamComponent>(e, TEAM);
+          if (team && team.team !== this.playerTeam) {
+            const visible = this.fogState.isVisible(this.playerTeam, pos.x, pos.z);
+            if (visible) {
+              // Fully visible — show normally, remove ghost if was ghosted
+              obj.visible = true;
+              this.removeGhostEffect(e, obj);
+            } else if (this.fogState.isExplored(this.playerTeam, pos.x, pos.z) && world.hasComponent(e, BUILDING)) {
+              // Explored territory + building — show as faded ghost
+              obj.visible = true;
+              this.applyGhostEffect(e, obj);
+            } else {
+              // Unexplored or non-building unit — hide
+              obj.visible = false;
+            }
+          } else {
+            obj.visible = true;
+          }
         }
       }
     }
 
-    // Update turrets to track nearest unit
+    // Update turrets to track nearest unit (still applies to voxel entities for firing animation)
     this.updateTurrets(world, alpha);
 
     // Remove entities that no longer exist
@@ -334,6 +354,9 @@ export class RenderSync {
 
   private updateTurrets(world: World, _alpha: number): void {
     const dt = 1 / 60; // fixed timestep
+
+    // Handle muzzle flash for voxel entities (no TurretRef, just particle effects)
+    this.updateVoxelTurretEffects(world);
 
     for (const [entity, ref] of this.turrets) {
       const pos = world.getComponent<PositionComponent>(entity, POSITION);
@@ -412,17 +435,6 @@ export class RenderSync {
             0xffcc33,
             sparkCount,
           );
-
-          // Impact sparks at target position
-          const targetPos = world.getComponent<PositionComponent>(turret.targetEntity, POSITION);
-          if (targetPos) {
-            this.particleRenderer.spawnBurst(
-              targetPos.x, targetPos.y, targetPos.z,
-              -dirX, -dirZ,
-              0xff6622,
-              IMPACT_SPARK_COUNT,
-            );
-          }
         }
       }
 
@@ -463,15 +475,54 @@ export class RenderSync {
     }
   }
 
+  /** Handle muzzle flash particles for voxel entities that don't have TurretRef entries */
+  private updateVoxelTurretEffects(world: World): void {
+    const turretEntities = world.query(POSITION, TURRET);
+    for (const e of turretEntities) {
+      // Skip non-voxel entities (handled by normal turret path)
+      if (!world.hasComponent(e, VOXEL_STATE)) continue;
+      // Skip if already tracked in turrets map
+      if (this.turrets.has(e)) continue;
+
+      const turret = world.getComponent<TurretComponent>(e, TURRET)!;
+      if (!turret.firedThisFrame) continue;
+
+      turret.firedThisFrame = false;
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+
+      if (!this.particleRenderer) continue;
+
+      const dirX = turret.targetX - pos.x;
+      const dirZ = turret.targetZ - pos.z;
+      const dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ) || 1;
+      const ndx = dirX / dirLen;
+      const ndz = dirZ / dirLen;
+
+      const muzzleX = pos.x + ndx * turret.muzzleOffset;
+      const muzzleY = pos.y + turret.muzzleHeight;
+      const muzzleZ = pos.z + ndz * turret.muzzleOffset;
+
+      this.particleRenderer.spawnBurst(
+        muzzleX, muzzleY, muzzleZ,
+        dirX, dirZ,
+        0xffcc33,
+        MUZZLE_SPARK_COUNT_PRIM,
+      );
+    }
+  }
+
   private createObject(e: Entity, world: World): void {
     const renderable = world.getComponent<RenderableComponent>(e, RENDERABLE)!;
     const pos = world.getComponent<PositionComponent>(e, POSITION)!;
 
     this.meshTypes.set(e, renderable.meshType);
 
+    const isBuilding = world.hasComponent(e, BUILDING);
+
     // Try compound building shapes first
     const buildingGroup = createBuildingGroup(renderable.meshType, renderable.color);
     if (buildingGroup) {
+      if (isBuilding) this.enableBuildingLayer(buildingGroup);
       buildingGroup.scale.setScalar(renderable.scale);
       buildingGroup.position.set(pos.x, pos.y, pos.z);
       this.scene.add(buildingGroup);
@@ -560,13 +611,25 @@ export class RenderSync {
       }
     } else {
       const geometry = geometries[renderable.meshType] ?? geometries.cube;
-      const material = new THREE.MeshStandardMaterial({
-        color: renderable.color,
-        roughness: 0.6,
-        metalness: 0.3,
-      });
+      let material: THREE.Material;
+      if (renderable.meshType === 'projectile') {
+        // Projectiles glow with emissive
+        material = new THREE.MeshStandardMaterial({
+          color: renderable.color,
+          emissive: renderable.color,
+          emissiveIntensity: 2.0,
+          roughness: 0.3,
+          metalness: 0.0,
+        });
+      } else {
+        material = new THREE.MeshStandardMaterial({
+          color: renderable.color,
+          roughness: 0.6,
+          metalness: 0.3,
+        });
+      }
       const mesh = new THREE.Mesh(geometry, material);
-      mesh.castShadow = true;
+      mesh.castShadow = renderable.meshType !== 'projectile';
       obj = mesh;
 
       // Register primitive mesh as turret if entity has TURRET component
@@ -588,12 +651,20 @@ export class RenderSync {
       }
     }
 
+    if (isBuilding) this.enableBuildingLayer(obj);
+
     obj.scale.setScalar(renderable.scale);
     obj.position.set(pos.x, pos.y, pos.z);
 
     this.scene.add(obj);
     this.objects.set(e, obj);
     this.trackedEntities.add(e);
+  }
+
+  private enableBuildingLayer(obj: THREE.Object3D): void {
+    obj.traverse((child) => {
+      child.layers.enable(1);
+    });
   }
 
   private disposeObject(obj: THREE.Object3D): void {

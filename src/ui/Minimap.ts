@@ -104,32 +104,34 @@ export class Minimap {
     // Copy base image to frame
     this.frameImage.data.set(this.baseImage.data);
 
-    // Apply fog overlay per pixel (mapped to playable interior)
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const tx = Math.floor(this.playableStart + x * scaleX);
-        const tz = Math.floor(this.playableStart + y * scaleZ);
-        const state = fogState.getState(playerTeam, tx, tz);
-        const idx = (y * w + x) * 4;
+    // Apply fog overlay per pixel (mapped to playable interior) — skip if spectator (playerTeam < 0)
+    if (playerTeam >= 0) {
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const tx = Math.floor(this.playableStart + x * scaleX);
+          const tz = Math.floor(this.playableStart + y * scaleZ);
+          const state = fogState.getState(playerTeam, tx, tz);
+          const idx = (y * w + x) * 4;
 
-        if (state === FOG_UNEXPLORED) {
-          // Near-black
-          this.frameImage.data[idx + 0] = 10;
-          this.frameImage.data[idx + 1] = 10;
-          this.frameImage.data[idx + 2] = 12;
-        } else if (state === FOG_EXPLORED) {
-          // Darken 55%
-          this.frameImage.data[idx + 0] = Math.floor(this.frameImage.data[idx + 0] * 0.45);
-          this.frameImage.data[idx + 1] = Math.floor(this.frameImage.data[idx + 1] * 0.45);
-          this.frameImage.data[idx + 2] = Math.floor(this.frameImage.data[idx + 2] * 0.45);
+          if (state === FOG_UNEXPLORED) {
+            // Near-black
+            this.frameImage.data[idx + 0] = 10;
+            this.frameImage.data[idx + 1] = 10;
+            this.frameImage.data[idx + 2] = 12;
+          } else if (state === FOG_EXPLORED) {
+            // Darken 55%
+            this.frameImage.data[idx + 0] = Math.floor(this.frameImage.data[idx + 0] * 0.45);
+            this.frameImage.data[idx + 1] = Math.floor(this.frameImage.data[idx + 1] * 0.45);
+            this.frameImage.data[idx + 2] = Math.floor(this.frameImage.data[idx + 2] * 0.45);
+          }
+          // VISIBLE: leave unchanged
         }
-        // VISIBLE: leave unchanged
       }
     }
 
-    // Draw energy nodes (only if explored)
+    // Draw energy nodes (only if explored, or always in spectator mode)
     for (const node of this.energyNodes) {
-      if (!fogState.isExplored(playerTeam, node.x, node.z)) continue;
+      if (playerTeam >= 0 && !fogState.isExplored(playerTeam, node.x, node.z)) continue;
       const mx = Math.floor(((node.x - this.playableStart) / this.playableSize) * w);
       const mz = Math.floor(((node.z - this.playableStart) / this.playableSize) * h);
       this.drawDot(mx, mz, 2, 0, 255, 255);
@@ -141,8 +143,8 @@ export class Minimap {
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
       const team = world.getComponent<TeamComponent>(e, TEAM)!;
 
-      // Own units always visible; enemies only if in visible cells
-      if (team.team !== playerTeam && !fogState.isVisible(playerTeam, pos.x, pos.z)) continue;
+      // Own units always visible; enemies only if in visible cells (spectator sees all)
+      if (playerTeam >= 0 && team.team !== playerTeam && !fogState.isVisible(playerTeam, pos.x, pos.z)) continue;
 
       const mx = Math.floor(((pos.x - this.playableStart) / this.playableSize) * w);
       const mz = Math.floor(((pos.z - this.playableStart) / this.playableSize) * h);

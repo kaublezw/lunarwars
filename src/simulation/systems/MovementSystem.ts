@@ -88,11 +88,11 @@ export class MovementSystem implements System {
         }
         // If blocked on both axes, don't move (vel stays for next frame's steering to correct)
 
-        pos.y = this.terrain.getHeight(pos.x, pos.z) + 0.5;
+        pos.y = this.terrain.getHeight(pos.x, pos.z) + 0.02;
       } else {
         pos.x += vel.x * dt;
         pos.z += vel.z * dt;
-        pos.y = 0.5;
+        pos.y = 0.02;
       }
 
       // Clamp to world edges

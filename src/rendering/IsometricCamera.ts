@@ -111,4 +111,14 @@ export class IsometricCamera {
   getZoom(): number {
     return this.zoomLevel;
   }
+
+  setTarget(x: number, y: number, z: number): void {
+    this.target.set(x, y, z);
+    this.updateCameraPosition();
+  }
+
+  setZoom(level: number): void {
+    this.zoomLevel = Math.max(this.minZoom, Math.min(this.maxZoom, level));
+    this.updateCameraPosition();
+  }
 }

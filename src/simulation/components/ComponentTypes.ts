@@ -18,3 +18,7 @@ export const SUPPLY_ROUTE = 'SupplyRoute';
 export const RESUPPLY_SEEK = 'ResupplySeek';
 export const DEPOT_RADIUS = 'DepotRadius';
 export const ATTACK_TARGET = 'AttackTarget';
+export const VOXEL_STATE = 'VoxelState';
+export const IMPACT_EVENT = 'ImpactEvent';
+export const PROJECTILE = 'Projectile';
+export const DEATH_TIMER = 'DeathTimer';

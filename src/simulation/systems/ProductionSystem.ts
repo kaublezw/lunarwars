@@ -1,11 +1,12 @@
 import type { System, World } from '@core/ECS';
-import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET } from '@sim/components/ComponentTypes';
+import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
 import type { VelocityComponent } from '@sim/components/Velocity';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
+import { UnitCategory } from '@sim/components/UnitType';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { SteeringComponent } from '@sim/components/Steering';
 import type { HealthComponent } from '@sim/components/Health';
@@ -13,6 +14,8 @@ import type { VisionComponent } from '@sim/components/Vision';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { TurretComponent } from '@sim/components/Turret';
 import { UNIT_DEFS } from '@sim/data/UnitData';
+import { VOXEL_MODELS } from '@sim/data/VoxelModels';
+import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 
@@ -45,7 +48,7 @@ export class ProductionSystem implements System {
 
         const spawnX = bldgPos.x + 4;
         const spawnZ = bldgPos.z + 4;
-        const spawnY = this.terrainData.getHeight(spawnX, spawnZ) + 0.5;
+        const spawnY = this.terrainData.getHeight(spawnX, spawnZ) + 0.02;
 
         const unit = world.createEntity();
         world.addComponent<PositionComponent>(unit, POSITION, {
@@ -73,6 +76,19 @@ export class ProductionSystem implements System {
         world.addComponent<TeamComponent>(unit, TEAM, { team: team.team });
         world.addComponent<VisionComponent>(unit, VISION, { range: def.visionRange });
 
+        // Add voxel state for voxel rendering
+        const voxelModel = VOXEL_MODELS[def.meshType];
+        if (voxelModel) {
+          world.addComponent<VoxelStateComponent>(unit, VOXEL_STATE, {
+            modelId: def.meshType,
+            totalVoxels: voxelModel.totalSolid,
+            destroyedCount: 0,
+            destroyed: new Uint8Array(Math.ceil(voxelModel.totalSolid / 8)),
+            dirty: true,
+            pendingDebris: [],
+          });
+        }
+
         // Add turret for combat units
         if (def.range != null) {
           world.addComponent<TurretComponent>(unit, TURRET, {
@@ -88,7 +104,9 @@ export class ProductionSystem implements System {
             maxAmmo: def.maxAmmo ?? def.ammo ?? 50,
             muzzleOffset: def.muzzleOffset ?? 0.5,
             muzzleHeight: def.muzzleHeight ?? 0.6,
-            rotateBodyToTarget: true,
+            rotateBodyToTarget: false,
+            turretRotation: 0,
+            turretPitch: 0,
           });
         }
 
