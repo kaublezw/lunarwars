@@ -26,6 +26,10 @@ export class WaypointRenderer {
     events.on('command:rally', (destX, destZ) => {
       this.addMarker(destX as number, destZ as number, 0x44ff88);
     });
+
+    events.on('command:repair', (destX, destZ) => {
+      this.addMarker(destX as number, destZ as number, 0xffdd44);
+    });
   }
 
   private addMarker(x: number, z: number, color: number): void {

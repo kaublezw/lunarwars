@@ -166,11 +166,6 @@ export class SelectionController {
         return;
       }
 
-      // Check if we clicked on a friendly damaged building while a worker is selected
-      if (!shift && this.tryAssignWorkerToRepair(bestEntity)) {
-        return;
-      }
-
       const sel = this.world.getComponent<SelectableComponent>(bestEntity, SELECTABLE)!;
       if (shift) {
         sel.selected = !sel.selected;
@@ -394,6 +389,13 @@ export class SelectionController {
         this.events.emit('command:move', enemyPos.x, enemyPos.z);
         return;
       }
+    }
+
+    // Check if right-clicked on a friendly damaged building (assign worker repair)
+    const damagedBuilding = this.findDamagedBuildingAtScreen(sx, sy);
+    if (damagedBuilding !== null && this.tryAssignWorkerToRepair(damagedBuilding)) {
+      this.events.emit('command:repair', worldPos.x, worldPos.z);
+      return;
     }
 
     // Check if right-clicked on an allied completed Supply Depot (screen-space pick)
@@ -696,6 +698,34 @@ export class SelectionController {
     if (bldgSel) bldgSel.selected = true;
 
     return true;
+  }
+
+  private findDamagedBuildingAtScreen(sx: number, sy: number): Entity | null {
+    const entities = this.world.query(POSITION, BUILDING, HEALTH, TEAM);
+    let best: Entity | null = null;
+    const pickRadiusPx = 60;
+    let bestDistSq = pickRadiusPx * pickRadiusPx;
+    const tmpVec = new THREE.Vector3();
+
+    for (const e of entities) {
+      if (this.world.hasComponent(e, CONSTRUCTION)) continue;
+      const team = this.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (team.team !== this.playerTeam) continue;
+      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (health.dead || health.current >= health.max) continue;
+
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      tmpVec.set(pos.x, pos.y, pos.z);
+      const screenPos = this.camera.worldToScreen(tmpVec);
+      const dx = screenPos.x - sx;
+      const dy = screenPos.y - sy;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        best = e;
+      }
+    }
+    return best;
   }
 
   private findEnemyAtScreen(sx: number, sy: number): Entity | null {
