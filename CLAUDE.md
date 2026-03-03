@@ -1,6 +1,6 @@
 # Lunar Wars
 
-Free, zero-barrier, web-based RTS game set on the Moon. Competing human factions fight for a foothold on harsh lunar terrain — mountains, craters, flat regolith. All units are autonomous drones; no organic life.
+Free, zero-barrier, web-based RTS game set in a voxel arena. Competing factions of autonomous drones fight for control of terrain and resources. All units are drones; no organic life.
 
 **Guiding idea**: "An RTS where designing, protecting, and disrupting supply lines is just as important as commanding armies."
 
@@ -55,8 +55,10 @@ The defining mechanic is supply chain management:
 
 ### Terrain & Strategy
 
-- Terrain affects movement, line of sight, and supply line routing
-- Mountains create chokepoints; craters create ambush/slowdown zones
+- Voxel arena with flat floor, rectangular mountain blocks, and vertical border walls
+- Terrain is rendered as chunked greedy-meshed voxel cubes (same VOXEL_SIZE as units/buildings)
+- Mountains are axis-aligned rectangular blocks with flat tops — no slopes
+- Mountains create chokepoints and obstruct movement/line of sight
 - Terrain matters primarily because it affects logistics, not just combat
 - 2-4 flat zones for base building, 8-12 energy nodes at flat spots
 
@@ -86,6 +88,37 @@ The defining mechanic is supply chain management:
 - `npm run dev` — Vite dev server (localhost:5173, HMR)
 - `npm run build` — TypeScript check + Vite production bundle
 - `npm run preview` — Serve production build locally
+- `npm run convert-vox` — Convert `.vox` files in `assets/vox/` to `GeneratedVoxelModels.ts`
+
+## Voxel Model Authoring (.vox workflow)
+
+Models can be authored visually in [MagicaVoxel](https://ephtracy.github.io/) (free) and imported at build time.
+
+**Palette conventions in MagicaVoxel:**
+- Slot **254** = team primary color (resolved to team color at render)
+- Slot **253** = team accent color (resolved to team color at render)
+- Slots 1–252 = custom colors stored verbatim in the model palette
+- Slot **0** = empty/transparent (do not paint with it)
+
+**Axis convention:** MagicaVoxel is Z-up; the game is Y-up. The script handles the swap automatically (`mv_x→gx`, `mv_z→gy`, `mv_y→gz`). Design your model with MagicaVoxel's Z as the up axis.
+
+**Adding a new .vox model:**
+1. Export the model from MagicaVoxel to `assets/vox/your_model.vox`
+2. Add an entry to `assets/vox/models.json`:
+   ```json
+   "your_model.vox": { "meshType": "combat_drone", "turretMinY": 6 }
+   ```
+   - `meshType` — key used in `VOXEL_MODELS` and `RENDERABLE` components (replaces hand-authored model of the same key)
+   - `turretMinY` — voxels at `y >= turretMinY` rotate independently with the turret; omit if no turret
+   - `turretMaxY` — optional upper bound for the turret layer range
+3. Run `npm run convert-vox`
+4. Vite HMR picks up the generated `GeneratedVoxelModels.ts` automatically
+
+**Pipeline internals:**
+- `scripts/convert-vox.ts` — self-contained `.vox` binary parser + codegen script
+- `src/simulation/data/GeneratedVoxelModels.ts` — auto-generated output; do not edit manually
+- Generated models take precedence over hand-authored models in `VoxelModels.ts`
+- All downstream systems (VoxelGeometryBuilder, VoxelMeshManager, VoxelDamageSystem) work unchanged
 
 ## Architecture
 
@@ -182,7 +215,7 @@ Fixed timestep simulation at 1/60s with accumulator pattern. Render callback rec
 - Project scaffolding with Vite + Three.js
 - Isometric camera with pan/zoom input
 - ECS engine, game loop
-- Procedural terrain (simplex noise, craters, flat zones, minimap, starfield)
+- Voxel terrain (rectangular mountain blocks, border walls, flat zones, minimap, starfield)
 - Units: selection, A* pathfinding, formation movement, combat drones, assault platforms, aerial drones, worker drones
 - Combat: turret system, ammo, health, particle effects (muzzle flash, impact sparks)
 - Fog of war: per-team visibility, explored/visible/unexplored states

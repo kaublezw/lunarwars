@@ -23,4 +23,6 @@ export interface VoxelStateComponent {
   dirty: boolean;
   /** Per-voxel debris direction info, consumed by renderer each frame */
   pendingDebris: VoxelDebrisInfo[];
+  /** Solid voxel indices near impact that survived — renderer will scorch these */
+  pendingScorch: number[];
 }

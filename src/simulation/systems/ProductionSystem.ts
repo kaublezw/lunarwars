@@ -86,6 +86,7 @@ export class ProductionSystem implements System {
             destroyed: new Uint8Array(Math.ceil(voxelModel.totalSolid / 8)),
             dirty: true,
             pendingDebris: [],
+            pendingScorch: [],
           });
         }
 

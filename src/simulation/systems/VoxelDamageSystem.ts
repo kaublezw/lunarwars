@@ -44,7 +44,7 @@ export class VoxelDamageSystem implements System {
         this.blastPass(voxelState, impact, pos, model, isBuilding, pos.rotation, 0, model.sizeY - 1);
       }
 
-      if (voxelState.destroyedCount > countBefore) {
+      if (voxelState.destroyedCount > countBefore || voxelState.pendingScorch.length > 0) {
         voxelState.dirty = true;
       }
 
@@ -92,10 +92,10 @@ export class VoxelDamageSystem implements System {
       localDirZ = rdz;
     }
 
-    // Convert to grid coordinates
-    const gridX = Math.floor((localX + halfX) / VOXEL_SIZE);
-    const gridY = Math.floor(localY / VOXEL_SIZE);
-    const gridZ = Math.floor((localZ + halfZ) / VOXEL_SIZE);
+    // Convert to grid coordinates (clamped to valid range for surface boundary safety)
+    const gridX = Math.max(0, Math.min(model.sizeX - 1, Math.floor((localX + halfX) / VOXEL_SIZE)));
+    const gridY = Math.max(0, Math.min(model.sizeY - 1, Math.floor(localY / VOXEL_SIZE)));
+    const gridZ = Math.max(0, Math.min(model.sizeZ - 1, Math.floor((localZ + halfZ) / VOXEL_SIZE)));
 
     // Convert bullet direction to grid-space step for "behind" check
     const absDX = Math.abs(localDirX);
@@ -191,6 +191,35 @@ export class VoxelDamageSystem implements System {
             dirY: debrisDirY,
             dirZ: debrisDirZ,
           });
+        }
+      }
+    }
+
+    // Scorch pass: mark surviving solid voxels in a slightly larger radius
+    const scorchR = blastR + 1;
+    for (let dy = -scorchR; dy <= scorchR; dy++) {
+      for (let dz = -scorchR; dz <= scorchR; dz++) {
+        for (let dx = -scorchR; dx <= scorchR; dx++) {
+          const gx = gridX + dx;
+          const gy = gridY + dy;
+          const gz = gridZ + dz;
+
+          if (gx < 0 || gx >= model.sizeX || gy < 0 || gy >= model.sizeY || gz < 0 || gz >= model.sizeZ) continue;
+          if (gy < minY || gy > maxY) continue;
+          if (dx * dx + dy * dy + dz * dz > scorchR * scorchR + 1) continue;
+
+          const gridIdx = gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ;
+          if (model.grid[gridIdx] === 0) continue;
+
+          const solidIdx = model.gridToSolid[gridIdx];
+          if (solidIdx === -1) continue;
+
+          // Only scorch surviving voxels
+          const byteIdx = solidIdx >> 3;
+          const bitIdx = solidIdx & 7;
+          if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) continue;
+
+          voxelState.pendingScorch.push(solidIdx);
         }
       }
     }

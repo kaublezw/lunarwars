@@ -6,7 +6,6 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { TurretComponent } from '@sim/components/Turret';
 import type { TeamComponent } from '@sim/components/Team';
-import type { ParticleRenderer } from '@render/effects/ParticleRenderer';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 
 // Shared geometries for primitive mesh types (units + construction site only)
@@ -143,8 +142,6 @@ const SHOCK_TILT_ANGLE = 0.18;   // max lean in radians (~10 degrees)
 const SHOCK_FREQUENCY = 8.0;     // oscillation speed (rad/s)
 const SHOCK_DAMPING = 3.5;       // how fast the spring settles
 const SHOCK_DURATION = 1.0;      // total animation time
-const MUZZLE_SPARK_COUNT_GLTF = 16;
-const MUZZLE_SPARK_COUNT_PRIM = 8;
 const PRIMITIVE_SHOCK_SCALE = 0.3;
 
 interface TurretRef {
@@ -176,10 +173,8 @@ export class RenderSync {
   private loadedModels = new Map<string, THREE.Object3D>();
   private loadingModels = new Map<string, Promise<THREE.Object3D>>();
   private loader = new GLTFLoader();
-  private particleRenderer: ParticleRenderer | null = null;
   private fogState: FogOfWarState | null = null;
   private playerTeam = 0;
-  private muzzleWorldPos = new THREE.Vector3();
   private baseQuat = new THREE.Quaternion();
   private tiltQuat = new THREE.Quaternion();
   private tiltAxis = new THREE.Vector3();
@@ -190,9 +185,6 @@ export class RenderSync {
     return this.objects.get(entity);
   }
 
-  setParticleRenderer(pr: ParticleRenderer): void {
-    this.particleRenderer = pr;
-  }
 
   setFogState(fogState: FogOfWarState, playerTeam: number): void {
     this.fogState = fogState;
@@ -423,19 +415,6 @@ export class RenderSync {
           ref.shockAxisZ = ndx;
         }
 
-        // Spawn particles using per-entity muzzle offset/height (only if visible)
-        if (this.particleRenderer && objVisible) {
-          const muzzleX = pos.x + ndx * turret.muzzleOffset;
-          const muzzleY = pos.y + turret.muzzleHeight;
-          const muzzleZ = pos.z + ndz * turret.muzzleOffset;
-          const sparkCount = ref.isPrimitive ? MUZZLE_SPARK_COUNT_PRIM : MUZZLE_SPARK_COUNT_GLTF;
-          this.particleRenderer.spawnBurst(
-            muzzleX, muzzleY, muzzleZ,
-            dirX, dirZ,
-            0xffcc33,
-            sparkCount,
-          );
-        }
       }
 
       // Animate barrel recoil (GLTF only)
@@ -475,39 +454,17 @@ export class RenderSync {
     }
   }
 
-  /** Handle muzzle flash particles for voxel entities that don't have TurretRef entries */
+  /** Clear firedThisFrame for voxel entities that don't have TurretRef entries */
   private updateVoxelTurretEffects(world: World): void {
     const turretEntities = world.query(POSITION, TURRET);
     for (const e of turretEntities) {
-      // Skip non-voxel entities (handled by normal turret path)
       if (!world.hasComponent(e, VOXEL_STATE)) continue;
-      // Skip if already tracked in turrets map
       if (this.turrets.has(e)) continue;
 
       const turret = world.getComponent<TurretComponent>(e, TURRET)!;
-      if (!turret.firedThisFrame) continue;
-
-      turret.firedThisFrame = false;
-      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-
-      if (!this.particleRenderer) continue;
-
-      const dirX = turret.targetX - pos.x;
-      const dirZ = turret.targetZ - pos.z;
-      const dirLen = Math.sqrt(dirX * dirX + dirZ * dirZ) || 1;
-      const ndx = dirX / dirLen;
-      const ndz = dirZ / dirLen;
-
-      const muzzleX = pos.x + ndx * turret.muzzleOffset;
-      const muzzleY = pos.y + turret.muzzleHeight;
-      const muzzleZ = pos.z + ndz * turret.muzzleOffset;
-
-      this.particleRenderer.spawnBurst(
-        muzzleX, muzzleY, muzzleZ,
-        dirX, dirZ,
-        0xffcc33,
-        MUZZLE_SPARK_COUNT_PRIM,
-      );
+      if (turret.firedThisFrame) {
+        turret.firedThisFrame = false;
+      }
     }
   }
 

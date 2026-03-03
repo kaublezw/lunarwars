@@ -22,3 +22,4 @@ export const VOXEL_STATE = 'VoxelState';
 export const IMPACT_EVENT = 'ImpactEvent';
 export const PROJECTILE = 'Projectile';
 export const DEATH_TIMER = 'DeathTimer';
+export const REPAIR_COMMAND = 'RepairCommand';

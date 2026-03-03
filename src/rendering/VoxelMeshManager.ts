@@ -33,6 +33,32 @@ const _material = new THREE.MeshStandardMaterial({
   vertexColors: true,
 });
 
+// Inject per-vertex emissive attribute into the standard material shader
+_material.onBeforeCompile = (shader) => {
+  // Vertex: declare attribute and varying, pass emissive to fragment
+  shader.vertexShader = shader.vertexShader
+    .replace(
+      'void main() {',
+      'attribute vec3 aEmissive;\nvarying vec3 vEmissive;\nvoid main() {',
+    )
+    .replace(
+      '#include <begin_vertex>',
+      '#include <begin_vertex>\nvEmissive = aEmissive;',
+    );
+
+  // Fragment: declare varying and add to total emissive radiance
+  shader.fragmentShader = shader.fragmentShader
+    .replace(
+      'void main() {',
+      'varying vec3 vEmissive;\nvoid main() {',
+    )
+    .replace(
+      'vec3 totalEmissiveRadiance = emissive;',
+      'vec3 totalEmissiveRadiance = emissive + vEmissive;',
+    );
+};
+_material.customProgramCacheKey = () => 'voxel-emissive';
+
 // White flash material for death timer
 const _flashMaterial = new THREE.MeshStandardMaterial({
   roughness: 0.7,
@@ -40,6 +66,11 @@ const _flashMaterial = new THREE.MeshStandardMaterial({
   vertexColors: false,
   color: 0xffffff,
 });
+
+// Scorch rebuild interval in frames (~10fps at 60fps)
+const SCORCH_REBUILD_INTERVAL = 6;
+// Heat decay per rebuild (covers SCORCH_REBUILD_INTERVAL frames)
+const HEAT_DECAY_PER_REBUILD = SCORCH_REBUILD_INTERVAL * (1 / 60) / 1.5;
 
 interface EntityMeshState {
   bodyMesh: THREE.Mesh;
@@ -53,6 +84,12 @@ interface EntityMeshState {
   hasOwnGeometry: boolean;
   /** True while flashing white during death */
   isFlashing: boolean;
+  /** Per-solid-voxel heat values for scorch. >0=cooling, 0=never scorched, -1=permanent ash. null=no scorch. */
+  scorchHeat: Float32Array | null;
+  /** Frame counter for periodic scorch geometry rebuilds */
+  scorchRebuildTimer: number;
+  /** True if any voxel has heat > 0 (still cooling) */
+  hasCoolingVoxels: boolean;
 }
 
 /** Cache key for template geometries: "modelId:team" */
@@ -160,25 +197,86 @@ export class VoxelMeshManager {
           const model = state.model;
           const turret = world.getComponent<TurretComponent>(e, TURRET);
 
+          // For buildings: pre-select bottom-layer voxels as rubble (spawned during
+          // the loop to guarantee pool slots before flying debris fills it)
+          const rubbleSet = new Set<number>();
+          if (isBuilding) {
+            const candidates: number[] = [];
+            for (let si = 0; si < model.totalSolid; si++) {
+              const byteIdx = si >> 3;
+              const bitIdx = si & 7;
+              if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) continue;
+              const [gridIdx] = model.solidVoxels[si];
+              const [, gy] = indexToCoords(gridIdx, model.sizeX, model.sizeZ);
+              if (gy <= 1) candidates.push(si);
+            }
+            // Shuffle and pick a random subset
+            for (let i = candidates.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+            }
+            const rubbleCount = Math.min(50 + Math.floor(Math.random() * 51), candidates.length);
+            for (let i = 0; i < rubbleCount; i++) rubbleSet.add(candidates[i]);
+          }
+
           for (let si = 0; si < model.totalSolid; si++) {
             const byteIdx = si >> 3;
             const bitIdx = si & 7;
             if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) continue;
 
-            const worldPos = this.getDestroyedVoxelWorldPos(e, si, pos, isBuilding, turret?.turretRotation, model.turretMinY, model.turretMaxY);
-            if (worldPos) {
-              const centerY = pos.y + model.sizeY * VOXEL_SIZE * 0.5;
-              const dirX = worldPos.x - pos.x;
-              const dirY = worldPos.y - centerY;
-              const dirZ = worldPos.z - pos.z;
-              const len = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
-              this.debrisRenderer.spawn(
-                worldPos.x, worldPos.y, worldPos.z,
-                (dirX / len) * 2.5 + (Math.random() - 0.5) * 1.0,
-                (dirY / len) * 2.5 + Math.random() * 1.5,
-                (dirZ / len) * 2.5 + (Math.random() - 0.5) * 1.0,
-                worldPos.color,
-              );
+            if (rubbleSet.has(si)) {
+              // Spawn as persistent rubble at foundation level
+              const worldPos = this.getDestroyedVoxelWorldPos(e, si, pos, isBuilding, turret?.turretRotation, model.turretMinY, model.turretMaxY);
+              if (worldPos) {
+                this.debrisRenderer.spawnRubble(worldPos.x, pos.y, worldPos.z, worldPos.color);
+              }
+            } else {
+              // Only spawn flying debris for surface voxels (at least one empty neighbor)
+              const [gridIdx] = model.solidVoxels[si];
+              const [gx, gy, gz] = indexToCoords(gridIdx, model.sizeX, model.sizeZ);
+              let isSurface = false;
+              const sx = model.sizeX;
+              const sy = model.sizeY;
+              const sz = model.sizeZ;
+              // Check 6 neighbors: if any is out-of-bounds or empty, this is a surface voxel
+              if (gx <= 0 || gx >= sx - 1 || gy <= 0 || gy >= sy - 1 || gz <= 0 || gz >= sz - 1) {
+                isSurface = true;
+              } else {
+                const neighbors = [
+                  (gx - 1) + gz * sx + gy * sx * sz,
+                  (gx + 1) + gz * sx + gy * sx * sz,
+                  gx + gz * sx + (gy - 1) * sx * sz,
+                  gx + gz * sx + (gy + 1) * sx * sz,
+                  gx + (gz - 1) * sx + gy * sx * sz,
+                  gx + (gz + 1) * sx + gy * sx * sz,
+                ];
+                for (const ni of neighbors) {
+                  if (model.grid[ni] === 0) {
+                    isSurface = true;
+                    break;
+                  }
+                }
+              }
+
+              if (isSurface) {
+                const worldPos = this.getDestroyedVoxelWorldPos(e, si, pos, isBuilding, turret?.turretRotation, model.turretMinY, model.turretMaxY);
+                if (worldPos) {
+                  const centerY = pos.y + model.sizeY * VOXEL_SIZE * 0.5;
+                  const dirX = worldPos.x - pos.x;
+                  const dirY = worldPos.y - centerY;
+                  const dirZ = worldPos.z - pos.z;
+                  const len = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
+                  this.debrisRenderer.spawn(
+                    worldPos.x, worldPos.y, worldPos.z,
+                    (dirX / len) * 2.5 + (Math.random() - 0.5) * 1.0,
+                    (dirY / len) * 2.5 + Math.random() * 1.5,
+                    (dirZ / len) * 2.5 + (Math.random() - 0.5) * 1.0,
+                    worldPos.color,
+                    1.0, // explosion debris starts fully lit
+                  );
+                }
+              }
+              // else: interior voxel, silently mark destroyed below
             }
 
             voxelState.destroyed[byteIdx] |= (1 << bitIdx);
@@ -194,6 +292,40 @@ export class VoxelMeshManager {
       }
     }
 
+    // Periodic scorch heat decay and geometry rebuild for cooling entities
+    for (const e of entities) {
+      const state = this.entityStates.get(e);
+      if (!state || !state.hasCoolingVoxels || !state.scorchHeat) continue;
+
+      state.scorchRebuildTimer--;
+      if (state.scorchRebuildTimer > 0) continue;
+
+      // Reset timer for next rebuild
+      state.scorchRebuildTimer = SCORCH_REBUILD_INTERVAL;
+
+      // Decay heat and check if still cooling
+      let stillCooling = false;
+      const heat = state.scorchHeat;
+
+      for (let i = 0; i < heat.length; i++) {
+        const h = heat[i];
+        if (h <= 0) continue; // Already settled (0 = never scorched, -1 = permanent ash)
+
+        heat[i] = h - HEAT_DECAY_PER_REBUILD;
+        if (heat[i] <= 0) {
+          heat[i] = -1; // Permanent ash
+        } else {
+          stillCooling = true;
+        }
+      }
+
+      state.hasCoolingVoxels = stillCooling;
+      state.geometryDirty = true;
+      if (!state.hasOwnGeometry) {
+        state.hasOwnGeometry = true;
+      }
+    }
+
     // Rebuild any dirty geometries
     for (const e of entities) {
       const state = this.entityStates.get(e);
@@ -201,7 +333,8 @@ export class VoxelMeshManager {
       state.geometryDirty = false;
 
       const voxelState = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE)!;
-      const result = buildVoxelGeometry(state.model, voxelState.destroyed, state.team);
+      const scorchHeat = state.scorchHeat ?? undefined;
+      const result = buildVoxelGeometry(state.model, voxelState.destroyed, state.team, scorchHeat);
 
       // Dispose old geometry if we own it
       if (state.hasOwnGeometry) {
@@ -354,6 +487,9 @@ export class VoxelMeshManager {
       geometryDirty: false,
       hasOwnGeometry,
       isFlashing: false,
+      scorchHeat: null,
+      scorchRebuildTimer: 0,
+      hasCoolingVoxels: false,
     });
 
     this.trackedEntities.add(e);
@@ -409,9 +545,29 @@ export class VoxelMeshManager {
             worldPos.x, worldPos.y, worldPos.z,
             debrisDir.dirX, debrisDir.dirY, debrisDir.dirZ,
             worldPos.color,
+            1.0, // hit debris starts fully lit
           );
         }
       }
+    }
+
+    // Process pending scorch marks
+    if (voxelState.pendingScorch.length > 0) {
+      if (!state.scorchHeat) {
+        state.scorchHeat = new Float32Array(model.totalSolid);
+      }
+      for (const solidIdx of voxelState.pendingScorch) {
+        if (solidIdx < model.totalSolid) {
+          // Random initial heat (0.7-1.0) so adjacent voxels cool at different rates
+          const randomHeat = 0.7 + Math.random() * 0.3;
+          // Max with existing heat so overlapping impacts don't reset cooling voxels
+          state.scorchHeat[solidIdx] = Math.max(state.scorchHeat[solidIdx], randomHeat);
+        }
+      }
+      voxelState.pendingScorch.length = 0;
+      state.hasCoolingVoxels = true;
+      // Trigger immediate rebuild for new scorch marks
+      state.scorchRebuildTimer = 0;
     }
 
     // If entity was sharing template, it now needs its own geometry

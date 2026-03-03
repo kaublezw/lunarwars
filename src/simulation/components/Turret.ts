@@ -14,4 +14,11 @@ export interface TurretComponent {
   rotateBodyToTarget: boolean; // true for infantry-like (body faces target), false for tanks (independent turret)
   turretRotation: number;  // world-space Y-axis angle for turret facing (independent of body)
   turretPitch: number;     // X-axis pitch angle for turret (negative = aim up)
+  // Pre-computed aim for next building shot (smooth turret sweep between shots)
+  pendingAimX?: number;
+  pendingAimY?: number;
+  pendingAimZ?: number;
+  pendingAimTarget?: number; // entity ID the pending aim was computed for
+  sweepStartAngle?: number;  // turret yaw at start of sweep (set on fire frame)
+  sweepStartPitch?: number;  // turret pitch at start of sweep (set on fire frame)
 }

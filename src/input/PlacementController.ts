@@ -132,11 +132,8 @@ export class PlacementController {
     // Out of bounds
     if (x < 2 || x > 254 || z < 2 || z > 254) return false;
 
-    // Must be on passable terrain
+    // Must be on passable (flat) terrain
     if (!this.terrainData.isPassable(x, z)) return false;
-
-    // Check slope
-    if (this.terrainData.getSlope(x, z) >= 0.5) return false;
 
     // Check building overlap
     const buildings = this.world.query(BUILDING, POSITION);

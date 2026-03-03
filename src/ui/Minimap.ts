@@ -8,8 +8,8 @@ import { POSITION, TEAM } from '@sim/components/ComponentTypes';
 import { FOG_UNEXPLORED, FOG_EXPLORED } from '@sim/fog/FogOfWarState';
 
 // Height range for grayscale mapping (world units)
-const MIN_H = -3.0;
-const MAX_H = 4.5;
+const MIN_H = 0;
+const MAX_H = 4.5; // 30 * 0.15 = 4.5 (max border wall height)
 const H_RANGE = MAX_H - MIN_H;
 
 const TEAM_COLORS: [number, number, number][] = [

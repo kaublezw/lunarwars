@@ -16,6 +16,14 @@ import { COUNTER_MULTIPLIERS, UNIT_DEFS } from '@sim/data/UnitData';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_SIZE, VOXEL_MODELS } from '@sim/data/VoxelModels';
 
+// Interpolate between two angles, handling wraparound
+function lerpAngle(a: number, b: number, t: number): number {
+  let diff = b - a;
+  while (diff > Math.PI) diff -= 2 * Math.PI;
+  while (diff < -Math.PI) diff += 2 * Math.PI;
+  return a + diff * t;
+}
+
 const BODY_TURN_SPEED = 3.0; // radians per second for body rotation
 const TURRET_TURN_SPEED = 4.0; // radians per second for independent turret tracking
 const TURRET_RETURN_SPEED = 1.5; // radians per second for turret returning to body facing
@@ -23,7 +31,7 @@ const TURRET_RETURN_SPEED = 1.5; // radians per second for turret returning to b
 // Projectile speeds by attacker category
 const PROJECTILE_SPEEDS: Partial<Record<UnitCategory, number>> = {
   [UnitCategory.CombatDrone]: 55,
-  [UnitCategory.AssaultPlatform]: 40,
+  [UnitCategory.AssaultPlatform]: 70,
   [UnitCategory.AerialDrone]: 60,
 };
 const DEFAULT_PROJECTILE_SPEED = 45;
@@ -146,7 +154,18 @@ export class TurretSystem implements System {
             ? (PROJECTILE_SPEEDS[attackerType.category] ?? DEFAULT_PROJECTILE_SPEED)
             : DEFAULT_PROJECTILE_SPEED;
 
-          // Predictive aiming: compute intercept point
+          // --- Single firing line through turret pivot ---
+          // Step 1: Turret pivot = rotation center (matches renderer)
+          const attackerVoxel = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE);
+          let pivotY: number;
+          if (attackerVoxel) {
+            const attackerModel = VOXEL_MODELS[attackerVoxel.modelId];
+            pivotY = pos.y + (attackerModel?.turretMinY ?? 0) * VOXEL_SIZE;
+          } else {
+            pivotY = pos.y + turret.muzzleHeight;
+          }
+
+          // Step 2: Pick target point
           const targetPos = world.getComponent<PositionComponent>(nearestEntity, POSITION)!;
           const targetVel = world.getComponent<VelocityComponent>(nearestEntity, VELOCITY);
 
@@ -155,64 +174,141 @@ export class TurretSystem implements System {
           const dist = Math.sqrt(dx * dx + dz * dz) || 1;
           const travelTime = dist / projSpeed;
 
-          let interceptX = targetPos.x;
-          let interceptZ = targetPos.z;
-          let interceptY = targetPos.y + 0.3; // aim slightly above ground level
-
+          // Lead prediction
+          let aimX = targetPos.x;
+          let aimZ = targetPos.z;
           if (targetVel) {
-            interceptX += targetVel.x * travelTime;
-            interceptZ += targetVel.z * travelTime;
+            aimX += targetVel.x * travelTime;
+            aimZ += targetVel.z * travelTime;
           }
 
-          // Scale scatter to target size: buildings get full-volume randomization,
-          // units get small scatter for voxel-level variation
           const isTargetBuilding = world.hasComponent(nearestEntity, BUILDING);
           const targetVoxel = world.getComponent<VoxelStateComponent>(nearestEntity, VOXEL_STATE);
+          let impactX: number, impactY: number, impactZ: number;
+
           if (isTargetBuilding && targetVoxel) {
+            // Building: ray march inward from shooter-facing edge to find solid surface voxel
             const model = VOXEL_MODELS[targetVoxel.modelId];
             if (model) {
-              const extentX = model.sizeX * VOXEL_SIZE;
-              const extentY = model.sizeY * VOXEL_SIZE;
-              const extentZ = model.sizeZ * VOXEL_SIZE;
-              interceptX += (Math.random() - 0.5) * extentX * 0.8;
-              interceptZ += (Math.random() - 0.5) * extentZ * 0.8;
-              interceptY = targetPos.y + Math.random() * extentY * 0.9;
+              const bHalfX = (model.sizeX * VOXEL_SIZE) / 2;
+              const bHalfZ = (model.sizeZ * VOXEL_SIZE) / 2;
+              const adx = pos.x - aimX;
+              const adz = pos.z - aimZ;
+              const marchX = Math.abs(adx) > Math.abs(adz);
+
+              // Determine if attacker is well above the target (aerial drone attacking building)
+              const ady = pos.y - targetPos.y;
+              const attackFromAbove = ady > 2.0 && ady > Math.sqrt(adx * adx + adz * adz) * 0.5;
+
+              // Helper: pick a random solid surface voxel via ray march
+              const marchRandomImpact = (): { x: number; y: number; z: number } => {
+                let fGX = -1, fGY = -1, fGZ = -1;
+                for (let attempt = 0; attempt < 8 && fGX < 0; attempt++) {
+                  if (attackFromAbove) {
+                    // Top-down ray march: random X/Z, march downward to find roof
+                    const gx = Math.floor(Math.random() * model.sizeX);
+                    const gz = Math.floor(Math.random() * model.sizeZ);
+                    for (let gy = model.sizeY - 1; gy >= 0; gy--) {
+                      if (model.grid[gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ] !== 0) {
+                        fGX = gx; fGY = gy; fGZ = gz;
+                        break;
+                      }
+                    }
+                  } else if (marchX) {
+                    const gy = Math.floor(Math.random() * model.sizeY);
+                    const gz = Math.floor(Math.random() * model.sizeZ);
+                    const startX = adx > 0 ? model.sizeX - 1 : 0;
+                    const step = adx > 0 ? -1 : 1;
+                    for (let gx = startX; gx >= 0 && gx < model.sizeX; gx += step) {
+                      if (model.grid[gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ] !== 0) {
+                        fGX = gx; fGY = gy; fGZ = gz;
+                        break;
+                      }
+                    }
+                  } else {
+                    const gy = Math.floor(Math.random() * model.sizeY);
+                    const gx = Math.floor(Math.random() * model.sizeX);
+                    const startZ = adz > 0 ? model.sizeZ - 1 : 0;
+                    const step = adz > 0 ? -1 : 1;
+                    for (let gz = startZ; gz >= 0 && gz < model.sizeZ; gz += step) {
+                      if (model.grid[gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ] !== 0) {
+                        fGX = gx; fGY = gy; fGZ = gz;
+                        break;
+                      }
+                    }
+                  }
+                }
+                if (fGX >= 0) {
+                  return {
+                    x: aimX + (fGX + 0.5) * VOXEL_SIZE - bHalfX,
+                    y: targetPos.y + (fGY + 0.5) * VOXEL_SIZE,
+                    z: aimZ + (fGZ + 0.5) * VOXEL_SIZE - bHalfZ,
+                  };
+                }
+                return {
+                  x: aimX,
+                  y: targetPos.y + model.sizeY * VOXEL_SIZE * 0.5,
+                  z: aimZ,
+                };
+              };
+
+              // Use pre-computed aim if available for this target, else compute fresh
+              if (turret.pendingAimTarget === nearestEntity && turret.pendingAimX !== undefined) {
+                impactX = turret.pendingAimX;
+                impactY = turret.pendingAimY!;
+                impactZ = turret.pendingAimZ!;
+              } else {
+                const hit = marchRandomImpact();
+                impactX = hit.x; impactY = hit.y; impactZ = hit.z;
+              }
+
+              // Pre-compute next aim point for smooth turret sweep between shots
+              const next = marchRandomImpact();
+              turret.pendingAimX = next.x;
+              turret.pendingAimY = next.y;
+              turret.pendingAimZ = next.z;
+              turret.pendingAimTarget = nearestEntity;
+            } else {
+              impactX = aimX;
+              impactY = targetPos.y + 0.5;
+              impactZ = aimZ;
             }
           } else {
-            // Unit scatter: ~5 voxels of XZ randomness
+            // Unit: positional scatter
             const SCATTER = 0.8;
-            interceptX += (Math.random() - 0.5) * SCATTER;
-            interceptZ += (Math.random() - 0.5) * SCATTER;
-            interceptY += (Math.random() - 0.5) * 0.6;
+            impactX = aimX + (Math.random() - 0.5) * SCATTER;
+            impactY = targetPos.y + 0.3 + (Math.random() - 0.5) * 0.6;
+            impactZ = aimZ + (Math.random() - 0.5) * SCATTER;
           }
 
-          // Direction to intercept point for muzzle spawn and rotation
-          const idxI = interceptX - pos.x;
-          const idzI = interceptZ - pos.z;
-          const iDist = Math.sqrt(idxI * idxI + idzI * idzI) || 1;
-          const ndxI = idxI / iDist;
-          const ndzI = idzI / iDist;
+          // Step 3: Direction from pivot to impact (the ONE fire line)
+          let fireDirX = impactX - pos.x;
+          let fireDirY = impactY - pivotY;
+          let fireDirZ = impactZ - pos.z;
+          const fireDist = Math.sqrt(fireDirX * fireDirX + fireDirY * fireDirY + fireDirZ * fireDirZ) || 1;
+          fireDirX /= fireDist;
+          fireDirY /= fireDist;
+          fireDirZ /= fireDist;
 
-          // Muzzle uses turret direction for independent turrets, body direction otherwise
-          const muzzleAngle = turret.rotateBodyToTarget
-            ? Math.atan2(dx / dist, dz / dist)
-            : turret.turretRotation;
-          const muzzleDirX = Math.sin(muzzleAngle);
-          const muzzleDirZ = Math.cos(muzzleAngle);
-          const muzzleX = pos.x + muzzleDirX * turret.muzzleOffset;
-          const muzzleY = pos.y + turret.muzzleHeight;
-          const muzzleZ = pos.z + muzzleDirZ * turret.muzzleOffset;
+          // Step 4: Muzzle on the fire line (offset from pivot by barrel length)
+          const muzzleX = pos.x + fireDirX * turret.muzzleOffset;
+          const muzzleY = pivotY + fireDirY * turret.muzzleOffset;
+          const muzzleZ = pos.z + fireDirZ * turret.muzzleOffset;
 
-          // Determine projectile color
+          // Step 5: Snap turret rotation to match fire line
+          const fireAngle = Math.atan2(fireDirX, fireDirZ);
+          const horizDist = Math.sqrt(fireDirX * fireDirX + fireDirZ * fireDirZ) || 1;
+          const firePitch = -Math.atan2(fireDirY, horizDist);
+
+          // Step 6: Spawn projectile along the barrel line
           const teamNum = myTeam ? myTeam.team : 0;
           const projColor = TEAM_PROJECTILE_COLORS[teamNum] ?? 0xffcc33;
 
-          // Spawn projectile entity
           const proj = world.createEntity();
           world.addComponent<PositionComponent>(proj, POSITION, {
             x: muzzleX, y: muzzleY, z: muzzleZ,
             prevX: muzzleX, prevY: muzzleY, prevZ: muzzleZ,
-            rotation: Math.atan2(ndxI, ndzI),
+            rotation: fireAngle,
           });
           world.addComponent<RenderableComponent>(proj, RENDERABLE, {
             meshType: 'projectile',
@@ -222,9 +318,9 @@ export class TurretSystem implements System {
           world.addComponent<ProjectileComponent>(proj, PROJECTILE, {
             ownerEntity: e,
             targetEntity: nearestEntity,
-            targetX: interceptX,
-            targetY: interceptY,
-            targetZ: interceptZ,
+            targetX: impactX,
+            targetY: impactY,
+            targetZ: impactZ,
             speed: projSpeed,
             damage: actualDamage,
             team: teamNum,
@@ -232,62 +328,107 @@ export class TurretSystem implements System {
             blastRadius: turret.damage >= 20 ? 2 : 1,
           });
 
+          // Step 7: Snap rotation to match firing direction
           if (turret.rotateBodyToTarget) {
-            // Infantry-like: snap body to face shot direction
-            const ndx = dx / dist;
-            const ndz = dz / dist;
-            pos.rotation = Math.atan2(ndx, ndz);
-            turret.turretRotation = pos.rotation;
+            pos.rotation = fireAngle;
+            turret.turretRotation = fireAngle;
           } else {
-            // Tank-like: snap turret to intercept direction, body untouched
-            turret.turretRotation = Math.atan2(ndxI, ndzI);
-            // Pitch toward intercept point
-            const pitchDy = interceptY - muzzleY;
-            const pitchDxz = Math.sqrt((interceptX - muzzleX) ** 2 + (interceptZ - muzzleZ) ** 2) || 1;
-            turret.turretPitch = -Math.atan2(pitchDy, pitchDxz);
+            turret.turretRotation = fireAngle;
+            turret.turretPitch = firePitch;
+          }
+          // Store sweep origin for cooldown-based interpolation toward next aim
+          if (isTargetBuilding) {
+            turret.sweepStartAngle = fireAngle;
+            turret.sweepStartPitch = firePitch;
           }
         }
+
+        const targetIsBuilding = world.hasComponent(nearestEntity, BUILDING);
 
         if (turret.rotateBodyToTarget) {
           // Infantry-like: idle body rotation toward target when not moving and not firing
           turret.turretRotation = pos.rotation;
+          const canSweepBody = targetIsBuilding && turret.pendingAimTarget === nearestEntity
+            && turret.pendingAimX !== undefined && turret.sweepStartAngle !== undefined;
           if (!turret.firedThisFrame && !world.hasComponent(e, MOVE_COMMAND)) {
-            const dx = nearestX - pos.x;
-            const dz = nearestZ - pos.z;
-            const targetAngle = Math.atan2(dx, dz);
-            let diff = targetAngle - pos.rotation;
-            while (diff > Math.PI) diff -= 2 * Math.PI;
-            while (diff < -Math.PI) diff += 2 * Math.PI;
-
-            const maxStep = BODY_TURN_SPEED * dt;
-            if (Math.abs(diff) <= maxStep) {
-              pos.rotation = targetAngle;
+            if (canSweepBody) {
+              // Building: interpolate from last fire angle to next aim over cooldown period
+              const cooldownMax = 1 / turret.fireRate;
+              const t = Math.max(0, Math.min(1, 1 - turret.cooldown / cooldownMax));
+              const pendingAngle = Math.atan2(turret.pendingAimX! - pos.x, turret.pendingAimZ! - pos.z);
+              pos.rotation = lerpAngle(turret.sweepStartAngle!, pendingAngle, t);
             } else {
-              pos.rotation += Math.sign(diff) * maxStep;
+              // Unit: smoothly track toward target center
+              const dx = nearestX - pos.x;
+              const dz = nearestZ - pos.z;
+              const targetAngle = Math.atan2(dx, dz);
+              let diff = targetAngle - pos.rotation;
+              while (diff > Math.PI) diff -= 2 * Math.PI;
+              while (diff < -Math.PI) diff += 2 * Math.PI;
+
+              const maxStep = BODY_TURN_SPEED * dt;
+              if (Math.abs(diff) <= maxStep) {
+                pos.rotation = targetAngle;
+              } else {
+                pos.rotation += Math.sign(diff) * maxStep;
+              }
             }
             turret.turretRotation = pos.rotation;
           }
         } else {
-          // Tank-like: smoothly rotate turret toward target (when not snapping on fire)
+          // Tank-like: smoothly rotate turret toward target
+          const canSweepTurret = targetIsBuilding && turret.pendingAimTarget === nearestEntity
+            && turret.pendingAimX !== undefined && turret.sweepStartAngle !== undefined;
           if (!turret.firedThisFrame) {
-            const dx = nearestX - pos.x;
-            const dz = nearestZ - pos.z;
-            const targetAngle = Math.atan2(dx, dz);
-            let diff = targetAngle - turret.turretRotation;
-            while (diff > Math.PI) diff -= 2 * Math.PI;
-            while (diff < -Math.PI) diff += 2 * Math.PI;
+            if (canSweepTurret) {
+              // Building: interpolate yaw and pitch over cooldown period
+              const cooldownMax = 1 / turret.fireRate;
+              const t = Math.max(0, Math.min(1, 1 - turret.cooldown / cooldownMax));
+              const pendingAngle = Math.atan2(turret.pendingAimX! - pos.x, turret.pendingAimZ! - pos.z);
+              turret.turretRotation = lerpAngle(turret.sweepStartAngle!, pendingAngle, t);
 
-            const maxStep = TURRET_TURN_SPEED * dt;
-            if (Math.abs(diff) <= maxStep) {
-              turret.turretRotation = targetAngle;
+              // Pitch interpolation
+              const idleVoxel = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE);
+              let idlePivotY: number;
+              if (idleVoxel) {
+                const idleModel = VOXEL_MODELS[idleVoxel.modelId];
+                idlePivotY = pos.y + (idleModel?.turretMinY ?? 0) * VOXEL_SIZE;
+              } else {
+                idlePivotY = pos.y + turret.muzzleHeight;
+              }
+              const pdx = turret.pendingAimX! - pos.x;
+              const pdz = turret.pendingAimZ! - pos.z;
+              const pdxz = Math.sqrt(pdx * pdx + pdz * pdz) || 1;
+              const pendingPitch = -Math.atan2(turret.pendingAimY! - idlePivotY, pdxz);
+              turret.turretPitch = lerpAngle(turret.sweepStartPitch ?? 0, pendingPitch, t);
             } else {
-              turret.turretRotation += Math.sign(diff) * maxStep;
-            }
+              // Unit: smoothly track toward target center
+              const dx = nearestX - pos.x;
+              const dz = nearestZ - pos.z;
+              const targetAngle = Math.atan2(dx, dz);
+              let diff = targetAngle - turret.turretRotation;
+              while (diff > Math.PI) diff -= 2 * Math.PI;
+              while (diff < -Math.PI) diff += 2 * Math.PI;
 
-            // Pitch tracking toward target
-            const tgtPos = world.getComponent<PositionComponent>(nearestEntity, POSITION);
-            if (tgtPos) {
-              const dy = tgtPos.y - (pos.y + turret.muzzleHeight);
+              const maxStep = TURRET_TURN_SPEED * dt;
+              if (Math.abs(diff) <= maxStep) {
+                turret.turretRotation = targetAngle;
+              } else {
+                turret.turretRotation += Math.sign(diff) * maxStep;
+              }
+
+              // Pitch tracking
+              const idleVoxel = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE);
+              let idlePivotY: number;
+              if (idleVoxel) {
+                const idleModel = VOXEL_MODELS[idleVoxel.modelId];
+                idlePivotY = pos.y + (idleModel?.turretMinY ?? 0) * VOXEL_SIZE;
+              } else {
+                idlePivotY = pos.y + turret.muzzleHeight;
+              }
+              const tgtPos = world.getComponent<PositionComponent>(nearestEntity, POSITION);
+              const trackY = tgtPos ? tgtPos.y : pos.y;
+              const dy = trackY - idlePivotY;
               const dxz = Math.sqrt(dx * dx + dz * dz) || 1;
               const targetPitch = -Math.atan2(dy, dxz);
               let pitchDiff = targetPitch - turret.turretPitch;
@@ -301,7 +442,11 @@ export class TurretSystem implements System {
           }
         }
       } else {
-        // No target
+        // No target: clear pre-computed building aim and sweep state
+        turret.pendingAimTarget = undefined;
+        turret.pendingAimX = undefined;
+        turret.sweepStartAngle = undefined;
+        turret.sweepStartPitch = undefined;
         if (turret.rotateBodyToTarget) {
           turret.turretRotation = pos.rotation;
         } else {

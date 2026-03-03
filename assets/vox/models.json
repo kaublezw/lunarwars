@@ -1,0 +1,11 @@
+{
+  "$comment": "Maps .vox filename to game meshType and optional turret split metadata. Run `npm run convert-vox` after adding entries.",
+  "models": {
+    "$comment_example": {
+      "$comment": "Example entry — copy without the $ prefix to activate:",
+      "meshType": "combat_drone",
+      "turretMinY": 6,
+      "turretMaxY": null
+    }
+  }
+}

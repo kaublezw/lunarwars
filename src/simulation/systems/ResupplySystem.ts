@@ -1,7 +1,7 @@
 import type { System, World } from '@core/ECS';
 import {
   TURRET, TEAM, POSITION, HEALTH, MOVE_COMMAND, RESUPPLY_SEEK, MATTER_STORAGE, UNIT_TYPE,
-  BUILDING, CONSTRUCTION, DEPOT_RADIUS,
+  BUILDING, CONSTRUCTION, DEPOT_RADIUS, VOXEL_STATE,
 } from '@sim/components/ComponentTypes';
 import type { TurretComponent } from '@sim/components/Turret';
 import type { TeamComponent } from '@sim/components/Team';
@@ -10,6 +10,7 @@ import type { HealthComponent } from '@sim/components/Health';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { ResupplySeekComponent } from '@sim/components/ResupplySeek';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
+import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import { findNearestDepot, RESUPPLY_RANGE, AMMO_MATTER_COST, REPAIR_MATTER_COST, REPAIR_RATE } from '@sim/economy/DepotUtils';
 
 const RESUPPLY_RANGE_SQ = RESUPPLY_RANGE * RESUPPLY_RANGE;
@@ -86,6 +87,27 @@ export class ResupplySystem implements System {
           if (actualRepair > 0) {
             health.current = Math.min(health.current + actualRepair, health.max);
             storage.stored -= affordable;
+          }
+        }
+
+        // Restore voxels proportionally to HP
+        const voxelState = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE);
+        if (voxelState && voxelState.destroyedCount > 0) {
+          const hpFraction = health.current / health.max;
+          const targetDestroyed = Math.floor(voxelState.totalVoxels * (1 - hpFraction));
+          if (voxelState.destroyedCount > targetDestroyed) {
+            let toRestore = voxelState.destroyedCount - targetDestroyed;
+            for (let byteIdx = 0; byteIdx < voxelState.destroyed.length && toRestore > 0; byteIdx++) {
+              if (voxelState.destroyed[byteIdx] === 0) continue;
+              for (let bitIdx = 0; bitIdx < 8 && toRestore > 0; bitIdx++) {
+                if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) {
+                  voxelState.destroyed[byteIdx] &= ~(1 << bitIdx);
+                  voxelState.destroyedCount--;
+                  toRestore--;
+                }
+              }
+            }
+            voxelState.dirty = true;
           }
         }
 

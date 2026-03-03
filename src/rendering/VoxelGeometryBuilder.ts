@@ -8,16 +8,56 @@ import {
 const TEAM_COLORS = [0x4488ff, 0xff4444];
 const TEAM_ACCENT_COLORS = [0x88bbff, 0xff8888];
 
-/** Resolve a palette index to an RGB Color, applying team color substitution */
-function resolveColor(palIdx: number, team: number, _c: THREE.Color): THREE.Color {
+// Scorch color targets (linear RGB)
+const SCORCH_CHARCOAL = { r: 0.15, g: 0.12, b: 0.1 };   // Hot scorch darkens toward this
+const SCORCH_ASH = { r: 0.3, g: 0.3, b: 0.3 };           // Permanent ash grey
+
+// Emissive glow range
+const EMISSIVE_DIM = { r: 0.4, g: 0.08, b: 0.0 };        // Low heat: dim red
+const EMISSIVE_BRIGHT = { r: 1.0, g: 0.4, b: 0.0 };      // High heat: bright orange
+
+/** Resolve a palette index to an RGB Color, applying team color substitution.
+ *  Uses the model's own palette for non-team-color indices so that .vox-imported
+ *  models with custom colors render correctly. Existing models reference SHARED_PALETTE
+ *  as their palette, so behaviour is unchanged for hand-authored models.
+ */
+function resolveColor(palIdx: number, team: number, palette: number[], _c: THREE.Color): THREE.Color {
   if (palIdx === PAL_TEAM_PRIMARY) {
     _c.setHex(TEAM_COLORS[team] ?? 0xffffff).multiplyScalar(0.6);
   } else if (palIdx === PAL_TEAM_ACCENT) {
     _c.setHex(TEAM_ACCENT_COLORS[team] ?? 0xffffff).multiplyScalar(0.7);
   } else {
-    _c.setHex(SHARED_PALETTE[palIdx] ?? 0xff00ff);
+    _c.setHex(palette[palIdx] ?? SHARED_PALETTE[palIdx] ?? 0xff00ff);
   }
   return _c;
+}
+
+/** Apply scorch tint to diffuse color based on continuous heat */
+function applyScorchDiffuse(_c: THREE.Color, heat: number): void {
+  if (heat > 0) {
+    // Cooling: darken toward charcoal, stronger blend at higher heat
+    const blend = 0.6 + 0.25 * heat; // 0.6 at heat~0 to 0.85 at heat=1
+    _c.r = _c.r + (SCORCH_CHARCOAL.r - _c.r) * blend;
+    _c.g = _c.g + (SCORCH_CHARCOAL.g - _c.g) * blend;
+    _c.b = _c.b + (SCORCH_CHARCOAL.b - _c.b) * blend;
+  } else {
+    // Permanent ash (heat === -1)
+    const blend = 0.6;
+    _c.r = _c.r + (SCORCH_ASH.r - _c.r) * blend;
+    _c.g = _c.g + (SCORCH_ASH.g - _c.g) * blend;
+    _c.b = _c.b + (SCORCH_ASH.b - _c.b) * blend;
+  }
+}
+
+/** Get emissive glow color for a given heat value */
+function getScorchEmissive(heat: number): { r: number; g: number; b: number } {
+  if (heat <= 0) return { r: 0, g: 0, b: 0 }; // No glow for ash or unscorched
+  // Lerp between dim red (heat~0) and bright orange (heat=1)
+  return {
+    r: EMISSIVE_DIM.r + (EMISSIVE_BRIGHT.r - EMISSIVE_DIM.r) * heat,
+    g: EMISSIVE_DIM.g + (EMISSIVE_BRIGHT.g - EMISSIVE_DIM.g) * heat,
+    b: EMISSIVE_DIM.b + (EMISSIVE_BRIGHT.b - EMISSIVE_DIM.b) * heat,
+  };
 }
 
 // Face normals for the 6 directions: +X, -X, +Y, -Y, +Z, -Z
@@ -69,6 +109,7 @@ export function buildVoxelGeometry(
   model: VoxelModel,
   destroyed: Uint8Array,
   team: number,
+  scorchHeat?: Float32Array,
 ): BuiltGeometry {
   const { sizeX, sizeY, sizeZ, grid, turretMinY, turretMaxY } = model;
   const hasTurret = turretMinY != null;
@@ -77,11 +118,13 @@ export function buildVoxelGeometry(
   const bodyPositions: number[] = [];
   const bodyNormals: number[] = [];
   const bodyColors: number[] = [];
+  const bodyEmissive: number[] = [];
   const bodyIndices: number[] = [];
 
   const turretPositions: number[] = [];
   const turretNormals: number[] = [];
   const turretColors: number[] = [];
+  const turretEmissive: number[] = [];
   const turretIndices: number[] = [];
 
   // Helper to check if a voxel is solid (not empty, not destroyed)
@@ -99,6 +142,19 @@ export function buildVoxelGeometry(
   function getPalette(x: number, y: number, z: number): number {
     const gi = x + z * sizeX + y * sizeX * sizeZ;
     return grid[gi];
+  }
+
+  function getScorchHeat(x: number, y: number, z: number): number {
+    if (!scorchHeat) return 0;
+    const gi = x + z * sizeX + y * sizeX * sizeZ;
+    const si = model.gridToSolid[gi];
+    if (si === -1) return 0;
+    return scorchHeat[si] || 0;
+  }
+
+  function getSolidIndex(x: number, y: number, z: number): number {
+    const gi = x + z * sizeX + y * sizeX * sizeZ;
+    return model.gridToSolid[gi];
   }
 
   function isTurretVoxel(y: number): boolean {
@@ -128,7 +184,8 @@ export function buildVoxelGeometry(
     // Sweep each slice along the normal axis
     for (let d = 0; d < normalSize; d++) {
       // Build a 2D mask of exposed faces for this slice
-      // Each entry: palette index + 1 if exposed, 0 if not
+      // Positive values: (palIdx + 1) for normal (mergeable) voxels
+      // Negative values: -(solidIdx + 1) for scorched voxels (unique, won't merge)
       const mask = new Int32Array(uSize * vSize);
       const isTurretMask = new Uint8Array(uSize * vSize);
 
@@ -161,8 +218,16 @@ export function buildVoxelGeometry(
             continue;
           }
 
-          const palIdx = getPalette(cx, cy, cz);
-          mask[u + v * uSize] = palIdx + 1;
+          const heat = getScorchHeat(cx, cy, cz);
+          if (heat !== 0) {
+            // Scorched voxel: use negative unique value to prevent merging
+            const solidIdx = getSolidIndex(cx, cy, cz);
+            mask[u + v * uSize] = -(solidIdx + 1);
+          } else {
+            // Normal voxel: palette index + 1 (mergeable)
+            const palIdx = getPalette(cx, cy, cz);
+            mask[u + v * uSize] = palIdx + 1;
+          }
 
           if (hasTurret) {
             isTurretMask[u + v * uSize] = selfTurret ? 1 : 0;
@@ -170,7 +235,7 @@ export function buildVoxelGeometry(
         }
       }
 
-      // Greedy merge: sweep and find maximal rectangles of same color + same turret group
+      // Greedy merge: sweep and find maximal rectangles of same value + same turret group
       for (let v = 0; v < vSize; v++) {
         for (let u = 0; u < uSize;) {
           const idx = u + v * uSize;
@@ -208,15 +273,30 @@ export function buildVoxelGeometry(
             }
           }
 
-          // Emit quad for this merged rectangle
-          const palIdx = val - 1;
-          resolveColor(palIdx, team, _color);
+          // Resolve color and emissive based on mask value
+          let emR = 0, emG = 0, emB = 0;
+          if (val < 0) {
+            // Scorched voxel: recover solidIdx, look up palette from grid
+            const solidIdx = -(val + 1);
+            const [gridIdx] = model.solidVoxels[solidIdx];
+            const palIdx = model.grid[gridIdx];
+            resolveColor(palIdx, team, model.palette, _color);
+            const heat = scorchHeat![solidIdx];
+            applyScorchDiffuse(_color, heat);
+            const em = getScorchEmissive(heat);
+            emR = em.r; emG = em.g; emB = em.b;
+          } else {
+            // Normal voxel
+            const palIdx = val - 1;
+            resolveColor(palIdx, team, model.palette, _color);
+          }
 
           // Determine which bucket to add to
           const isTurret = hasTurret && turretFlag === 1;
           const positions = isTurret ? turretPositions : bodyPositions;
           const normals = isTurret ? turretNormals : bodyNormals;
           const colors = isTurret ? turretColors : bodyColors;
+          const emissive = isTurret ? turretEmissive : bodyEmissive;
           const indices = isTurret ? turretIndices : bodyIndices;
 
           const vertexBase = positions.length / 3;
@@ -248,6 +328,7 @@ export function buildVoxelGeometry(
               positions.push(px, finalY, pz);
               normals.push(nx, ny, nz);
               colors.push(_color.r, _color.g, _color.b);
+              emissive.push(emR, emG, emB);
             }
           }
 
@@ -268,10 +349,10 @@ export function buildVoxelGeometry(
     }
   }
 
-  const bodyGeometry = createBufferGeometry(bodyPositions, bodyNormals, bodyColors, bodyIndices);
+  const bodyGeometry = createBufferGeometry(bodyPositions, bodyNormals, bodyColors, bodyEmissive, bodyIndices);
   let turretGeometry: THREE.BufferGeometry | null = null;
   if (hasTurret && turretPositions.length > 0) {
-    turretGeometry = createBufferGeometry(turretPositions, turretNormals, turretColors, turretIndices);
+    turretGeometry = createBufferGeometry(turretPositions, turretNormals, turretColors, turretEmissive, turretIndices);
   }
 
   return { bodyGeometry, turretGeometry };
@@ -281,12 +362,14 @@ function createBufferGeometry(
   positions: number[],
   normals: number[],
   colors: number[],
+  emissive: number[],
   indices: number[],
 ): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geo.setAttribute('aEmissive', new THREE.Float32BufferAttribute(emissive, 3));
   geo.setIndex(indices);
   return geo;
 }

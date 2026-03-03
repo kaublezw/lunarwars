@@ -6,7 +6,7 @@ import type { EventBus } from '@core/EventBus';
 import {
   POSITION, SELECTABLE, MOVE_COMMAND, UNIT_TYPE, TEAM, RESUPPLY_SEEK,
   BUILDING, CONSTRUCTION, HEALTH, MATTER_STORAGE, SUPPLY_ROUTE, BUILD_COMMAND,
-  TURRET, ATTACK_TARGET, PRODUCTION_QUEUE,
+  TURRET, ATTACK_TARGET, PRODUCTION_QUEUE, REPAIR_COMMAND,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { SelectableComponent } from '@sim/components/Selectable';
@@ -21,6 +21,7 @@ import type { AttackTargetComponent } from '@sim/components/AttackTarget';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
+import type { RepairCommandComponent } from '@sim/components/RepairCommand';
 import { UnitCategory } from '@sim/components/UnitType';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 
@@ -165,6 +166,11 @@ export class SelectionController {
         return;
       }
 
+      // Check if we clicked on a friendly damaged building while a worker is selected
+      if (!shift && this.tryAssignWorkerToRepair(bestEntity)) {
+        return;
+      }
+
       const sel = this.world.getComponent<SelectableComponent>(bestEntity, SELECTABLE)!;
       if (shift) {
         sel.selected = !sel.selected;
@@ -296,6 +302,9 @@ export class SelectionController {
         if (this.world.hasComponent(w.entity, RESUPPLY_SEEK)) {
           this.world.removeComponent(w.entity, RESUPPLY_SEEK);
         }
+        if (this.world.hasComponent(w.entity, REPAIR_COMMAND)) {
+          this.world.removeComponent(w.entity, REPAIR_COMMAND);
+        }
 
         construction.builderEntity = w.entity;
 
@@ -357,6 +366,9 @@ export class SelectionController {
           if (this.world.hasComponent(s.entity, RESUPPLY_SEEK)) {
             this.world.removeComponent(s.entity, RESUPPLY_SEEK);
           }
+          if (this.world.hasComponent(s.entity, REPAIR_COMMAND)) {
+            this.world.removeComponent(s.entity, REPAIR_COMMAND);
+          }
 
           if (this.world.hasComponent(s.entity, TURRET)) {
             // Combat unit: pin attack target
@@ -416,6 +428,9 @@ export class SelectionController {
           }
           if (this.world.hasComponent(w.entity, RESUPPLY_SEEK)) {
             this.world.removeComponent(w.entity, RESUPPLY_SEEK);
+          }
+          if (this.world.hasComponent(w.entity, REPAIR_COMMAND)) {
+            this.world.removeComponent(w.entity, REPAIR_COMMAND);
           }
 
           // Add ferry route
@@ -481,6 +496,9 @@ export class SelectionController {
       }
       if (this.world.hasComponent(s.entity, ATTACK_TARGET)) {
         this.world.removeComponent(s.entity, ATTACK_TARGET);
+      }
+      if (this.world.hasComponent(s.entity, REPAIR_COMMAND)) {
+        this.world.removeComponent(s.entity, REPAIR_COMMAND);
       }
     }
 
@@ -611,6 +629,71 @@ export class SelectionController {
     this.deselectAll();
     const depotSel = this.world.getComponent<SelectableComponent>(clickedEntity, SELECTABLE);
     if (depotSel) depotSel.selected = true;
+
+    return true;
+  }
+
+  /** If a worker is selected and clickedEntity is a friendly damaged building, assign repair. */
+  private tryAssignWorkerToRepair(clickedEntity: Entity): boolean {
+    // Is the clicked entity a friendly completed damaged building?
+    if (!this.world.hasComponent(clickedEntity, BUILDING)) return false;
+    if (this.world.hasComponent(clickedEntity, CONSTRUCTION)) return false;
+    const bldgTeam = this.world.getComponent<TeamComponent>(clickedEntity, TEAM);
+    if (!bldgTeam || bldgTeam.team !== this.playerTeam) return false;
+    const bldgHealth = this.world.getComponent<HealthComponent>(clickedEntity, HEALTH);
+    if (!bldgHealth || bldgHealth.dead) return false;
+    if (bldgHealth.current >= bldgHealth.max) return false;
+
+    // Collect currently selected workers
+    const selectables = this.world.query(POSITION, SELECTABLE, UNIT_TYPE);
+    const workers: { entity: Entity; pos: PositionComponent }[] = [];
+    for (const e of selectables) {
+      const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
+      if (!sel.selected) continue;
+      const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
+      if (ut.category !== UnitCategory.WorkerDrone) continue;
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      workers.push({ entity: e, pos });
+    }
+
+    if (workers.length === 0) return false;
+
+    const buildingPos = this.world.getComponent<PositionComponent>(clickedEntity, POSITION)!;
+
+    // Assign first worker to repair
+    const w = workers[0];
+    if (this.world.hasComponent(w.entity, BUILD_COMMAND)) {
+      this.world.removeComponent(w.entity, BUILD_COMMAND);
+    }
+    if (this.world.hasComponent(w.entity, SUPPLY_ROUTE)) {
+      this.world.removeComponent(w.entity, SUPPLY_ROUTE);
+    }
+    if (this.world.hasComponent(w.entity, RESUPPLY_SEEK)) {
+      this.world.removeComponent(w.entity, RESUPPLY_SEEK);
+    }
+    if (this.world.hasComponent(w.entity, REPAIR_COMMAND)) {
+      this.world.removeComponent(w.entity, REPAIR_COMMAND);
+    }
+
+    this.world.addComponent<RepairCommandComponent>(w.entity, REPAIR_COMMAND, {
+      targetEntity: clickedEntity,
+      state: 'moving',
+    });
+
+    if (this.world.hasComponent(w.entity, MOVE_COMMAND)) {
+      this.world.removeComponent(w.entity, MOVE_COMMAND);
+    }
+    this.world.addComponent<MoveCommandComponent>(w.entity, MOVE_COMMAND, {
+      path: [],
+      currentWaypoint: 0,
+      destX: buildingPos.x,
+      destZ: buildingPos.z,
+    });
+
+    // Deselect workers and select the building
+    this.deselectAll();
+    const bldgSel = this.world.getComponent<SelectableComponent>(clickedEntity, SELECTABLE);
+    if (bldgSel) bldgSel.selected = true;
 
     return true;
   }

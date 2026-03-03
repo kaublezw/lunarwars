@@ -62,6 +62,27 @@ export class BuildSystem implements System {
       // Increment progress
       construction.progress += dt / construction.buildTime;
 
+      // Progressive voxel reveal during construction
+      const voxelState = world.getComponent<VoxelStateComponent>(site, VOXEL_STATE);
+      if (voxelState) {
+        const model = VOXEL_MODELS[voxelState.modelId];
+        if (model && model.buildOrder) {
+          const clampedProgress = Math.min(construction.progress, 1);
+          const targetRevealed = Math.floor(model.totalSolid * clampedProgress);
+          const currentRevealed = model.totalSolid - voxelState.destroyedCount;
+          if (targetRevealed > currentRevealed) {
+            for (let i = currentRevealed; i < targetRevealed; i++) {
+              const solidIdx = model.buildOrder[i];
+              const byteIdx = solidIdx >> 3;
+              const bitIdx = solidIdx & 7;
+              voxelState.destroyed[byteIdx] &= ~(1 << bitIdx);
+              voxelState.destroyedCount--;
+            }
+            voxelState.dirty = true;
+          }
+        }
+      }
+
       if (construction.progress >= 1) {
         // Building complete - swap to final building
         const def = BUILDING_DEFS[construction.buildingType];
@@ -69,14 +90,6 @@ export class BuildSystem implements System {
           const renderable = world.getComponent<RenderableComponent>(site, RENDERABLE);
           if (renderable) {
             renderable.meshType = def.meshType;
-          }
-
-          // Reset Y position for compound building groups (they expect y=0 as ground)
-          const bldgPos = world.getComponent<PositionComponent>(site, POSITION);
-          if (bldgPos) {
-            const groundY = bldgPos.y - 0.25; // undo construction site offset
-            bldgPos.y = groundY;
-            bldgPos.prevY = groundY;
           }
 
           // Update health to full
@@ -106,6 +119,7 @@ export class BuildSystem implements System {
               destroyed: new Uint8Array(Math.ceil(finalVoxelModel.totalSolid / 8)),
               dirty: true,
               pendingDebris: [],
+              pendingScorch: [],
             });
           }
 

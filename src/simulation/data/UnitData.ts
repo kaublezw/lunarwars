@@ -60,7 +60,7 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     radius: 0.6,
     visionRange: 14,
     meshType: 'assault_platform',
-    range: 24,
+    range: 18,
     fireRate: 0.8,
     damage: 40,
     ammo: 22,

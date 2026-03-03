@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import { SceneManager } from '@render/SceneManager';
 import { IsometricCamera } from '@render/IsometricCamera';
-import { TerrainRenderer } from '@render/terrain/TerrainRenderer';
-import { ValleyWallRenderer } from '@render/terrain/ValleyWallRenderer';
+import { TerrainVoxelRenderer } from '@render/terrain/TerrainVoxelRenderer';
 import { SelectionRenderer } from '@render/SelectionRenderer';
 import { XRayRenderer } from '@render/XRayRenderer';
 import { WaypointRenderer } from '@render/WaypointRenderer';
@@ -26,6 +25,7 @@ import { TurretSystem } from '@sim/systems/TurretSystem';
 import { VoxelDamageSystem } from '@sim/systems/VoxelDamageSystem';
 import { ProjectileSystem } from '@sim/systems/ProjectileSystem';
 import { ResupplySystem } from '@sim/systems/ResupplySystem';
+import { RepairSystem } from '@sim/systems/RepairSystem';
 import { GameOverSystem } from '@sim/systems/GameOverSystem';
 import { HealthSystem } from '@sim/systems/HealthSystem';
 import { EconomySystem } from '@sim/systems/EconomySystem';
@@ -44,12 +44,14 @@ import { ResourceDisplay } from '@ui/ResourceDisplay';
 import { GameOverOverlay } from '@ui/GameOverOverlay';
 import { PauseOverlay } from '@ui/PauseOverlay';
 import { SandboxPanel } from '@ui/SandboxPanel';
+import { PerfPanel } from '@ui/PerfPanel';
 import { SpectatorPanel } from '@ui/SpectatorPanel';
 import type { FogMode } from '@ui/SpectatorPanel';
 import { ParticleRenderer } from '@render/effects/ParticleRenderer';
 import { BuildingEffectsRenderer } from '@render/effects/BuildingEffectsRenderer';
 import { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { VoxelMeshManager } from '@render/VoxelMeshManager';
+import { DepotRangeRenderer } from '@render/DepotRangeRenderer';
 import { SupplySystem } from '@sim/systems/SupplySystem';
 import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE, TURRET, MATTER_STORAGE } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
@@ -112,7 +114,7 @@ if (savedRaw) {
   try {
     const parsed = JSON.parse(savedRaw);
     // Reject old saves or saves from mismatched mode
-    if (parsed.version >= 11 && !!parsed.spectator === spectatorMode) {
+    if (parsed.version >= 12 && !!parsed.spectator === spectatorMode) {
       saveData = parsed;
     } else {
       sessionStorage.removeItem(SAVE_KEY);
@@ -126,12 +128,8 @@ const seed = saveData ? saveData.seed : Math.floor(Math.random() * 2147483647);
 
 // --- Terrain ---
 const terrainData = new TerrainData({ seed });
-const terrainRenderer = new TerrainRenderer(terrainData);
-terrainRenderer.addTo(sceneManager.scene);
-
-// --- Valley Walls (flat black ring beyond terrain edge) ---
-const valleyWalls = new ValleyWallRenderer();
-valleyWalls.addTo(sceneManager.scene);
+const terrainVoxelRenderer = new TerrainVoxelRenderer(terrainData);
+terrainVoxelRenderer.addTo(sceneManager.scene);
 
 // --- Energy Nodes ---
 const energyNodes = generateEnergyNodes(terrainData, seed);
@@ -162,6 +160,9 @@ if (spectatorMode) {
   resourceDisplay.mount(app);
 }
 
+const perfPanel = new PerfPanel();
+perfPanel.mount(app);
+
 const gameOverOverlay = new GameOverOverlay(() => {
   sessionStorage.removeItem(SAVE_KEY);
   location.reload();
@@ -191,7 +192,7 @@ const TEAM_COLORS = [0x4488ff, 0xff4444];
 const PLAYER_TEAM = 0;
 const AI_TEAM = 1;
 
-// System order: pathfinding -> collision avoidance -> movement -> fog -> turret -> resupply -> gameOver -> health -> economy -> supply -> build -> production -> AI
+// System order: pathfinding -> collision avoidance -> movement -> fog -> turret -> resupply -> repair -> gameOver -> health -> economy -> supply -> build -> production -> AI
 const pathfindingSystem = new PathfindingSystem(terrainData);
 pathfindingSystem.setOccupancy(buildingOccupancy);
 const movementSystem = new MovementSystem(terrainData);
@@ -224,6 +225,7 @@ world.addSystem(new TurretSystem());
 world.addSystem(new ProjectileSystem());
 world.addSystem(new VoxelDamageSystem());
 world.addSystem(new ResupplySystem());
+world.addSystem(new RepairSystem(resourceState, 2));
 world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem());
 world.addSystem(new EconomySystem(resourceState, 2));
@@ -271,6 +273,7 @@ function spawnCombatUnit(x: number, z: number, team: number, category: UnitCateg
       destroyed: new Uint8Array(Math.ceil(voxelModel.totalSolid / 8)),
       dirty: true,
       pendingDebris: [],
+      pendingScorch: [],
     });
   }
   if (def.range != null) {
@@ -347,6 +350,7 @@ function spawnBuilding(x: number, z: number, team: number, type: BuildingType): 
       destroyed: new Uint8Array(Math.ceil(voxelModel.totalSolid / 8)),
       dirty: true,
       pendingDebris: [],
+      pendingScorch: [],
     });
   }
 
@@ -434,6 +438,7 @@ if (saveData) {
         destroyed: new Uint8Array(Math.ceil(hqVoxelModel.totalSolid / 8)),
         dirty: true,
         pendingDebris: [],
+        pendingScorch: [],
       });
     }
   }
@@ -492,6 +497,7 @@ if (saveData) {
         destroyed: new Uint8Array(Math.ceil(workerVoxelModel.totalSolid / 8)),
         dirty: true,
         pendingDebris: [],
+        pendingScorch: [],
       });
     }
   }
@@ -518,7 +524,6 @@ const initialFogTeam = (spectatorMode || scenarioMode) ? -1 : PLAYER_TEAM;
 const renderSync = new RenderSync(sceneManager.scene);
 renderSync.setFogState(fogState, initialFogTeam);
 const particleRenderer = new ParticleRenderer(sceneManager.scene);
-renderSync.setParticleRenderer(particleRenderer);
 const selectionRenderer = new SelectionRenderer(sceneManager.scene);
 selectionRenderer.setFogState(fogState, initialFogTeam);
 selectionRenderer.setObjectGetter((e) => renderSync.getObject(e));
@@ -541,6 +546,8 @@ const voxelMeshManager = new VoxelMeshManager(sceneManager.scene);
 voxelMeshManager.setFogState(fogState, initialFogTeam);
 voxelMeshManager.setDebrisRenderer(debrisRenderer);
 selectionRenderer.setVoxelMeshManager(voxelMeshManager);
+const depotRangeRenderer = new DepotRangeRenderer(sceneManager.scene);
+depotRangeRenderer.setPlayerTeam(initialFogTeam);
 
 // Wire box select callbacks (only if player input active)
 if (selectionController) {
@@ -651,13 +658,13 @@ if (actionBar && placementController) {
     const siteY = terrainData.getHeight(x, z);
 
     world.addComponent<PositionComponent>(site, POSITION, {
-      x, y: siteY + 0.25, z,
-      prevX: x, prevY: siteY + 0.25, prevZ: z,
+      x, y: siteY, z,
+      prevX: x, prevY: siteY, prevZ: z,
       rotation: 0,
     });
 
     world.addComponent<RenderableComponent>(site, RENDERABLE, {
-      meshType: 'construction_site',
+      meshType: def.meshType,
       color: TEAM_COLORS[PLAYER_TEAM],
       scale: 1.0,
     });
@@ -683,16 +690,24 @@ if (actionBar && placementController) {
 
     world.addComponent<SelectableComponent>(site, SELECTABLE, { selected: false });
 
-    // Voxel state for construction site
-    const siteVoxelModel = VOXEL_MODELS['construction_site'];
-    if (siteVoxelModel) {
+    // Voxel state: start with first layer visible, rest destroyed — BuildSystem reveals progressively
+    const finalModel = VOXEL_MODELS[def.meshType];
+    if (finalModel) {
+      const destroyedMask = new Uint8Array(Math.ceil(finalModel.totalSolid / 8));
+      destroyedMask.fill(255);
+      // Reveal the first Y layer immediately
+      for (let i = 0; i < finalModel.firstLayerCount; i++) {
+        const solidIdx = finalModel.buildOrder[i];
+        destroyedMask[solidIdx >> 3] &= ~(1 << (solidIdx & 7));
+      }
       world.addComponent<VoxelStateComponent>(site, VOXEL_STATE, {
-        modelId: 'construction_site',
-        totalVoxels: siteVoxelModel.totalSolid,
-        destroyedCount: 0,
-        destroyed: new Uint8Array(Math.ceil(siteVoxelModel.totalSolid / 8)),
+        modelId: def.meshType,
+        totalVoxels: finalModel.totalSolid,
+        destroyedCount: finalModel.totalSolid - finalModel.firstLayerCount,
+        destroyed: destroyedMask,
         dirty: true,
         pendingDebris: [],
+        pendingScorch: [],
       });
     }
 
@@ -744,6 +759,7 @@ function setFogPerspective(team: number): void {
   selectionRenderer.setPlayerTeam(team);
   xrayRenderer.setPlayerTeam(team);
   buildingEffectsRenderer.setPlayerTeam(team);
+  depotRangeRenderer.setPlayerTeam(team);
   if (team < 0) {
     fogRenderer.setVisible(false);
   } else {
@@ -766,6 +782,9 @@ if (spectatorPanel) {
   };
 }
 
+// --- Frame Timing ---
+let lastFrameTime = performance.now();
+
 // --- Game Loop ---
 const gameLoop = new GameLoop(
   (dt: number) => {
@@ -782,6 +801,7 @@ const gameLoop = new GameLoop(
     particleRenderer.update(1 / 60);
     debrisRenderer.update(1 / 60);
     buildingEffectsRenderer.update(world, 1 / 60);
+    depotRangeRenderer.sync(world);
     fogRenderer.update();
     energyNodeRenderer.update(fogState, currentFogTeam);
     minimap.update(fogState, currentFogTeam, world);
@@ -795,12 +815,24 @@ const gameLoop = new GameLoop(
     if (resourceDisplay) {
       resourceDisplay.update(resourceState, PLAYER_TEAM);
     }
+    if (sandboxPanel) {
+      sandboxPanel.update();
+    }
     renderer.render(sceneManager.scene, isoCamera.getCamera());
+
+    const now = performance.now();
+    const frameDelta = now - lastFrameTime;
+    lastFrameTime = now;
+    const fps = frameDelta > 0 ? 1000 / frameDelta : 60;
+    perfPanel.update(fps, renderer.info, world.getEntities().length, debrisRenderer.getActiveCount());
   }
 );
 
 // --- Pause Toggle (P key) ---
 inputManager.onKeyDown((key: string) => {
+  if (key === 'f3') {
+    perfPanel.toggle();
+  }
   if (key === 'p' && !gameOver) {
     gameLoop.togglePause();
     if (gameLoop.isPaused()) {
@@ -817,6 +849,7 @@ if (scenarioMode === 'sandbox') {
   sandboxPanel = new SandboxPanel(
     world, terrainData, isoCamera, inputManager,
     spawnCombatUnit, spawnBuilding,
+    sceneManager.scene, sceneManager.dirLight, sceneManager.ambientLight,
   );
   sandboxPanel.mount(app);
 
@@ -859,6 +892,13 @@ if (scenarioMode === 'sandbox') {
     const allEntities = world.getEntities();
     for (const e of allEntities) {
       world.destroyEntity(e);
+    }
+  };
+
+  sandboxPanel.onGiveResources = () => {
+    for (let t = 0; t < 2; t++) {
+      resourceState.addEnergy(t, 1000);
+      resourceState.addMatter(t, 1000);
     }
   };
 
@@ -910,7 +950,7 @@ if (scenarioMode !== 'sandbox') {
   setInterval(() => {
     try {
       const data: Record<string, unknown> = {
-        version: 11,
+        version: 12,
         seed,
         spectator: spectatorMode,
         world: world.serialize(),
