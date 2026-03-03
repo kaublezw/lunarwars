@@ -9,16 +9,18 @@ export class InputManager {
   private keysDown = new Set<string>();
   private dragStart: { x: number; y: number } | null = null;
 
-  // Touch state
-  private touches = new Map<number, { x: number; y: number }>();
+  // Touch state machine
+  private touchMode: 'idle' | 'pending' | 'pan' | 'longpress' | 'twofinger' = 'idle';
+  private touchStartPos: { x: number; y: number } | null = null;
+  private isPanHeld = false;
+  private secondFingerPos: { x: number; y: number } | null = null;
+  private twoFingerCentroid: { x: number; y: number } | null = null;
+  private twoFingerMoved = false;
+  private twoFingerStartTime = 0;
   private longPressTimer: ReturnType<typeof setTimeout> | null = null;
-  private longPressFired = false;
-  private touchDragStartPos: { x: number; y: number } | null = null;
-  private lastPinchDist = 0;
-  private twoFingerTouchStart: { time: number; moved: boolean } | null = null;
-  private syntheticButtonsDown = new Set<number>();
   private readonly LONG_PRESS_MS = 400;
-  private readonly TWO_FINGER_TAP_MS = 200;
+  private readonly TWO_FINGER_TAP_MS = 400;
+  private readonly DRAG_THRESHOLD_PX = 8;
 
   private mouseDownCallbacks: MouseCallback[] = [];
   private mouseUpCallbacks: MouseCallback[] = [];
@@ -70,194 +72,167 @@ export class InputManager {
     });
 
     // Touch handlers
+    // Single finger: tap = select, drag = camera pan, long-press = right-click command
+    // Two fingers:   tap = shift+click (multi-select), drag = camera pan
     canvas.addEventListener('touchstart', (e) => {
       e.preventDefault();
-      for (const t of e.changedTouches) {
-        this.touches.set(t.identifier, { x: t.clientX, y: t.clientY });
-      }
+      const count = e.touches.length;
 
-      if (this.touches.size === 1) {
-        const t = e.changedTouches[0];
-        this.touchDragStartPos = { x: t.clientX, y: t.clientY };
-        this.longPressFired = false;
-
-        // Synthesize button=0 mousedown so SelectionController initializes leftDownPos
-        this.syntheticButtonsDown.add(0);
-        this.buttonsDown.add(0);
+      if (count === 1) {
+        const t = e.touches[0];
+        this.touchMode = 'pending';
+        this.touchStartPos = { x: t.clientX, y: t.clientY };
         this.mousePos.x = t.clientX;
         this.mousePos.y = t.clientY;
-        this.dragStart = { x: t.clientX, y: t.clientY };
-        for (const cb of this.mouseDownCallbacks) cb(t.clientX, t.clientY, 0);
 
-        // Long-press timer fires a right-click command
         this.longPressTimer = setTimeout(() => {
           this.longPressTimer = null;
-          this.longPressFired = true;
-          const pos = this.mousePos;
-          // Fire button=2 down+up (right-click command)
-          this.syntheticButtonsDown.add(2);
-          this.buttonsDown.add(2);
-          for (const cb of this.mouseDownCallbacks) cb(pos.x, pos.y, 2);
-          this.syntheticButtonsDown.delete(2);
-          this.buttonsDown.delete(2);
-          for (const cb of this.mouseUpCallbacks) cb(pos.x, pos.y, 2);
+          if (this.touchMode === 'pending') {
+            this.touchMode = 'longpress';
+            const { x, y } = this.mousePos;
+            for (const cb of this.mouseDownCallbacks) cb(x, y, 2);
+            for (const cb of this.mouseUpCallbacks) cb(x, y, 2);
+          }
         }, this.LONG_PRESS_MS);
 
-      } else if (this.touches.size === 2) {
-        // Cancel single-finger state
+      } else if (count === 2) {
+        // Cancel any single-finger state
         this.cancelLongPress();
-        if (this.syntheticButtonsDown.has(0)) {
-          this.syntheticButtonsDown.delete(0);
-          this.buttonsDown.delete(0);
-          for (const cb of this.mouseUpCallbacks) cb(this.mousePos.x, this.mousePos.y, 0);
+        if (this.isPanHeld) {
+          this.isPanHeld = false;
+          for (const cb of this.mouseUpCallbacks) cb(this.mousePos.x, this.mousePos.y, 2);
         }
-        this.touchDragStartPos = null;
 
-        // Compute initial pinch distance
-        const pts = Array.from(this.touches.values());
-        const dx = pts[1].x - pts[0].x;
-        const dy = pts[1].y - pts[0].y;
-        this.lastPinchDist = Math.sqrt(dx * dx + dy * dy);
-
-        // Start camera pan (button=2 held)
-        const centX = (pts[0].x + pts[1].x) / 2;
-        const centY = (pts[0].y + pts[1].y) / 2;
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const centX = (t0.clientX + t1.clientX) / 2;
+        const centY = (t0.clientY + t1.clientY) / 2;
+        this.twoFingerCentroid = { x: centX, y: centY };
+        this.secondFingerPos = { x: t1.clientX, y: t1.clientY };
+        this.twoFingerMoved = false;
+        this.twoFingerStartTime = performance.now();
+        this.touchMode = 'twofinger';
         this.mousePos.x = centX;
         this.mousePos.y = centY;
-        this.syntheticButtonsDown.add(2);
-        this.buttonsDown.add(2);
-        for (const cb of this.mouseDownCallbacks) cb(centX, centY, 2);
 
-        this.twoFingerTouchStart = { time: performance.now(), moved: false };
+        // Start two-finger pan
+        this.isPanHeld = true;
+        for (const cb of this.mouseDownCallbacks) cb(centX, centY, 2);
       }
     }, { passive: false });
 
     canvas.addEventListener('touchmove', (e) => {
       e.preventDefault();
-      for (const t of e.changedTouches) {
-        this.touches.set(t.identifier, { x: t.clientX, y: t.clientY });
-      }
+      const count = e.touches.length;
 
-      if (this.touches.size === 1) {
+      if (this.touchMode === 'twofinger' && count >= 2) {
+        const t0 = e.touches[0];
+        const t1 = e.touches[1];
+        const centX = (t0.clientX + t1.clientX) / 2;
+        const centY = (t0.clientY + t1.clientY) / 2;
+        const dx = centX - this.mousePos.x;
+        const dy = centY - this.mousePos.y;
+        this.twoFingerCentroid = { x: centX, y: centY };
+        this.mousePos.x = centX;
+        this.mousePos.y = centY;
+        if (!this.twoFingerMoved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+          this.twoFingerMoved = true;
+        }
+        for (const cb of this.mouseMoveCallbacks) cb(centX, centY, dx, dy);
+
+      } else if ((this.touchMode === 'pending' || this.touchMode === 'pan') && count === 1) {
         const t = e.changedTouches[0];
-        const dx = t.clientX - this.mousePos.x;
-        const dy = t.clientY - this.mousePos.y;
 
-        // Cancel long-press if finger moved beyond threshold
-        if (this.touchDragStartPos) {
-          const totalDx = t.clientX - this.touchDragStartPos.x;
-          const totalDy = t.clientY - this.touchDragStartPos.y;
-          if (Math.sqrt(totalDx * totalDx + totalDy * totalDy) > 5) {
+        // Transition pending → pan once drag threshold is crossed
+        let justStartedPan = false;
+        if (this.touchMode === 'pending' && this.touchStartPos) {
+          const ddx = t.clientX - this.touchStartPos.x;
+          const ddy = t.clientY - this.touchStartPos.y;
+          if (Math.sqrt(ddx * ddx + ddy * ddy) > this.DRAG_THRESHOLD_PX) {
             this.cancelLongPress();
+            this.touchMode = 'pan';
+            this.isPanHeld = true;
+            this.mousePos.x = t.clientX;
+            this.mousePos.y = t.clientY;
+            for (const cb of this.mouseDownCallbacks) cb(t.clientX, t.clientY, 2);
+            justStartedPan = true;
           }
         }
 
-        this.mousePos.x = t.clientX;
-        this.mousePos.y = t.clientY;
-        for (const cb of this.mouseMoveCallbacks) cb(t.clientX, t.clientY, dx, dy);
-
-      } else if (this.touches.size === 2) {
-        const pts = Array.from(this.touches.values());
-
-        // Pan: fire mousemove with centroid delta
-        const centX = (pts[0].x + pts[1].x) / 2;
-        const centY = (pts[0].y + pts[1].y) / 2;
-        const dx = centX - this.mousePos.x;
-        const dy = centY - this.mousePos.y;
-        this.mousePos.x = centX;
-        this.mousePos.y = centY;
-        for (const cb of this.mouseMoveCallbacks) cb(centX, centY, dx, dy);
-
-        // Pinch: zoom
-        const ddx = pts[1].x - pts[0].x;
-        const ddy = pts[1].y - pts[0].y;
-        const newDist = Math.sqrt(ddx * ddx + ddy * ddy);
-        const pinchDelta = newDist - this.lastPinchDist;
-        if (Math.abs(pinchDelta) > 0.5) {
-          // Spreading fingers (pinchDelta > 0) → zoom in (negative wheel delta)
-          for (const cb of this.wheelCallbacks) cb(-pinchDelta * 3, centX, centY);
-          this.lastPinchDist = newDist;
-        }
-
-        if (this.twoFingerTouchStart) {
-          this.twoFingerTouchStart.moved = true;
+        if (this.touchMode === 'pan' && !justStartedPan) {
+          const dx = t.clientX - this.mousePos.x;
+          const dy = t.clientY - this.mousePos.y;
+          this.mousePos.x = t.clientX;
+          this.mousePos.y = t.clientY;
+          for (const cb of this.mouseMoveCallbacks) cb(t.clientX, t.clientY, dx, dy);
         }
       }
     }, { passive: false });
 
     canvas.addEventListener('touchend', (e) => {
       e.preventDefault();
-      const prevCount = this.touches.size;
-      for (const t of e.changedTouches) {
-        this.touches.delete(t.identifier);
+      const remainingCount = e.touches.length;
+
+      if (this.touchMode === 'twofinger') {
+        if (remainingCount <= 1) {
+          const elapsed = performance.now() - this.twoFingerStartTime;
+          const wasTap = !this.twoFingerMoved && elapsed < this.TWO_FINGER_TAP_MS;
+
+          if (this.isPanHeld) {
+            this.isPanHeld = false;
+            for (const cb of this.mouseUpCallbacks) cb(this.mousePos.x, this.mousePos.y, 2);
+          }
+
+          if (wasTap && this.secondFingerPos) {
+            // Shift+click at second finger position to add to selection
+            const { x, y } = this.secondFingerPos;
+            this.keysDown.add('shift');
+            for (const cb of this.keyDownCallbacks) cb('shift');
+            for (const cb of this.mouseDownCallbacks) cb(x, y, 0);
+            for (const cb of this.mouseUpCallbacks) cb(x, y, 0);
+            this.keysDown.delete('shift');
+            for (const cb of this.keyUpCallbacks) cb('shift');
+          }
+
+          this.touchMode = 'idle';
+          this.secondFingerPos = null;
+          this.twoFingerCentroid = null;
+        }
+        return;
       }
 
-      if (prevCount >= 2 && this.touches.size < 2) {
-        // Two-finger gesture ended
-        const twoFinger = this.twoFingerTouchStart;
-        this.twoFingerTouchStart = null;
-
-        // Two-finger tap (short, no movement) = cancel placement (Escape)
-        if (twoFinger && !twoFinger.moved && (performance.now() - twoFinger.time) < this.TWO_FINGER_TAP_MS) {
-          for (const cb of this.keyDownCallbacks) cb('escape');
-          for (const cb of this.keyUpCallbacks) cb('escape');
-        }
-
-        // Release pan button
-        if (this.syntheticButtonsDown.has(2)) {
-          this.syntheticButtonsDown.delete(2);
-          this.buttonsDown.delete(2);
-          for (const cb of this.mouseUpCallbacks) cb(this.mousePos.x, this.mousePos.y, 2);
-        }
-
-        // If one finger remains, restart single-finger tracking
-        if (this.touches.size === 1) {
-          const [remaining] = this.touches.values();
-          this.touchDragStartPos = { x: remaining.x, y: remaining.y };
-          this.longPressFired = false;
-          this.mousePos.x = remaining.x;
-          this.mousePos.y = remaining.y;
-          this.syntheticButtonsDown.add(0);
-          this.buttonsDown.add(0);
-          this.dragStart = { x: remaining.x, y: remaining.y };
-          for (const cb of this.mouseDownCallbacks) cb(remaining.x, remaining.y, 0);
-        }
-
-      } else if (prevCount === 1 && this.touches.size === 0) {
-        // Single-finger lift
+      if (remainingCount === 0) {
         this.cancelLongPress();
-        const t = e.changedTouches[0];
 
-        if (!this.longPressFired && this.syntheticButtonsDown.has(0)) {
-          this.syntheticButtonsDown.delete(0);
-          this.buttonsDown.delete(0);
-          this.dragStart = null;
+        if (this.touchMode === 'pending') {
+          // Tap: fire left click to select
+          const t = e.changedTouches[0];
+          for (const cb of this.mouseDownCallbacks) cb(t.clientX, t.clientY, 0);
           for (const cb of this.mouseUpCallbacks) cb(t.clientX, t.clientY, 0);
+        } else if (this.touchMode === 'pan' && this.isPanHeld) {
+          // End pan
+          const t = e.changedTouches[0];
+          this.isPanHeld = false;
+          for (const cb of this.mouseUpCallbacks) cb(t.clientX, t.clientY, 2);
         }
-        this.touchDragStartPos = null;
+        // 'longpress': already fired, nothing to do
+
+        this.touchMode = 'idle';
+        this.touchStartPos = null;
       }
     }, { passive: false });
 
     canvas.addEventListener('touchcancel', (e) => {
       e.preventDefault();
-      for (const t of e.changedTouches) {
-        this.touches.delete(t.identifier);
-      }
       this.cancelLongPress();
-      this.touchDragStartPos = null;
-      this.twoFingerTouchStart = null;
-
-      if (this.syntheticButtonsDown.has(0)) {
-        this.syntheticButtonsDown.delete(0);
-        this.buttonsDown.delete(0);
-        for (const cb of this.mouseUpCallbacks) cb(this.mousePos.x, this.mousePos.y, 0);
-      }
-      if (this.syntheticButtonsDown.has(2)) {
-        this.syntheticButtonsDown.delete(2);
-        this.buttonsDown.delete(2);
+      if (this.isPanHeld) {
+        this.isPanHeld = false;
         for (const cb of this.mouseUpCallbacks) cb(this.mousePos.x, this.mousePos.y, 2);
       }
-      this.dragStart = null;
+      this.touchMode = 'idle';
+      this.touchStartPos = null;
+      this.secondFingerPos = null;
+      this.twoFingerCentroid = null;
     }, { passive: false });
   }
 

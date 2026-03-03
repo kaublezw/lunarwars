@@ -96,6 +96,15 @@ const scenarioMode = new URLSearchParams(window.location.search).get('scenario')
 const sceneManager = new SceneManager();
 const isoCamera = new IsometricCamera(window.innerWidth, window.innerHeight);
 
+// Zoom slider: slider value 10–200, mapping zoom = 210 - value
+// (slider max at top = value 200 = zoom 10 = zoomed in; slider min at bottom = zoom out)
+const zoomSlider = document.getElementById('zoom-slider') as HTMLInputElement | null;
+if (zoomSlider) {
+  zoomSlider.addEventListener('input', () => {
+    isoCamera.setZoom(210 - Number(zoomSlider.value));
+  });
+}
+
 // --- Save/Load Detection ---
 const SAVE_KEY = 'lunarwars_save';
 const savedRaw = sessionStorage.getItem(SAVE_KEY);
@@ -819,6 +828,8 @@ const gameLoop = new GameLoop(
       sandboxPanel.update();
     }
     renderer.render(sceneManager.scene, isoCamera.getCamera());
+
+    if (zoomSlider) zoomSlider.value = String(Math.round(210 - isoCamera.getZoom()));
 
     const now = performance.now();
     const frameDelta = now - lastFrameTime;
