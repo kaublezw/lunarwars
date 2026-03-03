@@ -37,7 +37,7 @@ const PROJECTILE_SPEEDS: Partial<Record<UnitCategory, number>> = {
 const DEFAULT_PROJECTILE_SPEED = 45;
 
 // Projectile colors by team
-const TEAM_PROJECTILE_COLORS = [0x88ccff, 0xff6644];
+const TEAM_PROJECTILE_COLORS = [0xffffff, 0xffffff];
 
 export class TurretSystem implements System {
   readonly name = 'TurretSystem';
@@ -302,7 +302,7 @@ export class TurretSystem implements System {
 
           // Step 6: Spawn projectile along the barrel line
           const teamNum = myTeam ? myTeam.team : 0;
-          const projColor = TEAM_PROJECTILE_COLORS[teamNum] ?? 0xffcc33;
+          const projColor = TEAM_PROJECTILE_COLORS[teamNum] ?? 0xffffff;
 
           const proj = world.createEntity();
           world.addComponent<PositionComponent>(proj, POSITION, {

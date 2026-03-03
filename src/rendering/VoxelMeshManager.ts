@@ -273,6 +273,7 @@ export class VoxelMeshManager {
                     (dirZ / len) * 2.5 + (Math.random() - 0.5) * 1.0,
                     worldPos.color,
                     1.0, // explosion debris starts fully lit
+                    0xffffff, // death explosion stays white
                   );
                 }
               }
@@ -546,6 +547,7 @@ export class VoxelMeshManager {
             debrisDir.dirX, debrisDir.dirY, debrisDir.dirZ,
             worldPos.color,
             1.0, // hit debris starts fully lit
+            0xff6600, // orange glow matches scorch hue
           );
         }
       }

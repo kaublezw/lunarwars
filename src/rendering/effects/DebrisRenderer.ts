@@ -32,6 +32,7 @@ interface DebrisParticle {
   color: THREE.Color;
   isRubble: boolean;
   emissive: number; // 0-1 glow intensity
+  glowColor: THREE.Color;
 }
 
 // Temp objects
@@ -40,8 +41,6 @@ const _pos = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 const _euler = new THREE.Euler();
 const _scale = new THREE.Vector3();
-const _blendColor = new THREE.Color();
-const _white = new THREE.Color(1, 1, 1);
 
 export class DebrisRenderer {
   private instancedMesh: THREE.InstancedMesh;
@@ -50,6 +49,8 @@ export class DebrisRenderer {
   private terrainData: TerrainData;
   private emissiveArray: Float32Array;
   private emissiveAttr: THREE.InstancedBufferAttribute;
+  private glowColorArray: Float32Array;
+  private glowColorAttr: THREE.InstancedBufferAttribute;
 
   constructor(scene: THREE.Scene, terrainData: TerrainData) {
     this.terrainData = terrainData;
@@ -61,34 +62,45 @@ export class DebrisRenderer {
     this.emissiveAttr = new THREE.InstancedBufferAttribute(this.emissiveArray, 1);
     geometry.setAttribute('aInstanceEmissive', this.emissiveAttr);
 
+    // Per-instance glow color (RGB) — used only for emissive tint, not diffuse
+    this.glowColorArray = new Float32Array(MAX_DEBRIS * 3);
+    this.glowColorAttr = new THREE.InstancedBufferAttribute(this.glowColorArray, 3);
+    geometry.setAttribute('aInstanceGlowColor', this.glowColorAttr);
+
     const material = new THREE.MeshStandardMaterial({
       roughness: 0.8,
       metalness: 0.2,
     });
 
-    // Inject per-instance emissive into the shader
+    // Inject per-instance emissive + glow color into the shader
     material.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
         .replace(
           'void main() {',
-          'attribute float aInstanceEmissive;\nvarying float vInstanceEmissive;\nvoid main() {',
+          [
+            'attribute float aInstanceEmissive;',
+            'attribute vec3 aInstanceGlowColor;',
+            'varying float vInstanceEmissive;',
+            'varying vec3 vInstanceGlowColor;',
+            'void main() {',
+          ].join('\n'),
         )
         .replace(
           '#include <begin_vertex>',
-          '#include <begin_vertex>\nvInstanceEmissive = aInstanceEmissive;',
+          '#include <begin_vertex>\nvInstanceEmissive = aInstanceEmissive;\nvInstanceGlowColor = aInstanceGlowColor;',
         );
 
       shader.fragmentShader = shader.fragmentShader
         .replace(
           'void main() {',
-          'varying float vInstanceEmissive;\nvoid main() {',
+          'varying float vInstanceEmissive;\nvarying vec3 vInstanceGlowColor;\nvoid main() {',
         )
         .replace(
           'vec3 totalEmissiveRadiance = emissive;',
-          'vec3 totalEmissiveRadiance = emissive + vInstanceEmissive * 1.5 * vec3(1.0, 0.95, 0.9);',
+          'vec3 totalEmissiveRadiance = emissive + vInstanceEmissive * 1.5 * vInstanceGlowColor;',
         );
     };
-    material.customProgramCacheKey = () => 'debris-emissive';
+    material.customProgramCacheKey = () => 'debris-emissive-v2';
 
     this.instancedMesh = new THREE.InstancedMesh(geometry, material, MAX_DEBRIS);
     this.instancedMesh.count = 0;
@@ -110,6 +122,7 @@ export class DebrisRenderer {
         color: new THREE.Color(),
         isRubble: false,
         emissive: 0,
+        glowColor: new THREE.Color(1, 1, 1),
       });
     }
 
@@ -129,6 +142,7 @@ export class DebrisRenderer {
     dirX: number, dirY: number, dirZ: number,
     color: number,
     initialEmissive = 0,
+    glowColor = 0xffffff,
   ): void {
     // Find a dead particle slot
     let slot = -1;
@@ -166,6 +180,7 @@ export class DebrisRenderer {
     p.isRubble = false;
     p.color.setHex(color);
     p.emissive = initialEmissive;
+    p.glowColor.setHex(glowColor);
 
     this.activeCount = Math.max(this.activeCount, slot + 1);
   }
@@ -211,6 +226,7 @@ export class DebrisRenderer {
     dirX: number, dirY: number, dirZ: number,
     color: number,
     count: number,
+    glowColor = 0xffffff,
   ): void {
     // Normalize direction
     const len = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
@@ -219,7 +235,7 @@ export class DebrisRenderer {
     const ndz = dirZ / len;
 
     for (let i = 0; i < count; i++) {
-      this.spawn(x, y, z, ndx, ndy, ndz, color);
+      this.spawn(x, y, z, ndx, ndy, ndz, color, 0, glowColor);
     }
   }
 
@@ -292,14 +308,16 @@ export class DebrisRenderer {
       _mat4.compose(_pos, _quat, _scale);
       this.instancedMesh.setMatrixAt(i, _mat4);
 
-      // Blend instance color toward white when glowing
+      // Diffuse color stays as p.color always — glow is purely additive via shader
+      this.instancedMesh.setColorAt(i, p.color);
+
       if (p.emissive > 0) {
-        _blendColor.copy(p.color).lerp(_white, p.emissive * 0.7);
-        this.instancedMesh.setColorAt(i, _blendColor);
         this.emissiveArray[i] = p.emissive;
+        this.glowColorArray[i * 3 + 0] = p.glowColor.r;
+        this.glowColorArray[i * 3 + 1] = p.glowColor.g;
+        this.glowColorArray[i * 3 + 2] = p.glowColor.b;
         hasEmissive = true;
       } else {
-        this.instancedMesh.setColorAt(i, p.color);
         this.emissiveArray[i] = 0;
       }
     }
@@ -312,6 +330,7 @@ export class DebrisRenderer {
     }
     if (hasEmissive) {
       this.emissiveAttr.needsUpdate = true;
+      this.glowColorAttr.needsUpdate = true;
     }
   }
 
