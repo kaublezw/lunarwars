@@ -1,16 +1,24 @@
 import * as THREE from 'three';
 import type { InputManager } from '@input/InputManager';
 import type { IsometricCamera } from '@render/IsometricCamera';
+import type { GhostBuildingRenderer } from '@render/GhostBuildingRenderer';
+import type { WallSegment } from '@input/PlacementController';
 import type { World, Entity } from '@core/ECS';
 import type { TerrainData } from '@sim/terrain/TerrainData';
-import { POSITION, SELECTABLE, TEAM, HEALTH, VOXEL_STATE } from '@sim/components/ComponentTypes';
+import { POSITION, SELECTABLE, TEAM, HEALTH, VOXEL_STATE, BUILDING, RENDERABLE, CONSTRUCTION } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
+import type { RenderableComponent } from '@sim/components/Renderable';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { TeamComponent } from '@sim/components/Team';
 import type { HealthComponent } from '@sim/components/Health';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import { UnitCategory } from '@sim/components/UnitType';
-import { BuildingType } from '@sim/components/Building';
+import { BuildingType, type BuildingComponent } from '@sim/components/Building';
+
+const WALL_SEGMENT_LENGTH = 3.0;
+const WALL_CORNER_SIZE = 0.75;
+const WALL_JUNCTION_OFFSET = WALL_SEGMENT_LENGTH / 2 + WALL_CORNER_SIZE / 2;
+const WALL_OVERLAP_DIST_SQ = 1.5 * 1.5;
 
 type SandboxMode = 'editor' | 'play';
 
@@ -34,6 +42,7 @@ const PALETTE_BUILDINGS: PaletteItem[] = [
   { label: 'Matter Plant', kind: 'building', buildingType: BuildingType.MatterPlant },
   { label: 'Supply Depot', kind: 'building', buildingType: BuildingType.SupplyDepot },
   { label: 'Drone Factory', kind: 'building', buildingType: BuildingType.DroneFactory },
+  { label: 'Wall', kind: 'building', buildingType: BuildingType.Wall },
 ];
 
 export class SandboxPanel {
@@ -64,6 +73,14 @@ export class SandboxPanel {
   private lightElevation = 51;
   private lightDistance = 94;
 
+  // Wall drag state
+  private wallDragging = false;
+  private wallAnchor: { x: number; z: number } | null = null;
+  private wallLegAxis: 'x' | 'z' | null = null;
+  private wallLegDir: 1 | -1 = 1;
+  private wallCommitted: WallSegment[] = [];
+  private wallLive: WallSegment[] = [];
+
   // Callbacks set by main.ts
   onPlay?: () => void;
   onPause?: () => void;
@@ -72,6 +89,7 @@ export class SandboxPanel {
   onClearAll?: () => void;
   onReset?: () => void;
   onGiveResources?: () => void;
+  onSpawnWallSegments?: (segments: { x: number; z: number; meshType: string }[], team: number) => void;
 
   constructor(
     private world: World,
@@ -80,6 +98,7 @@ export class SandboxPanel {
     private inputManager: InputManager,
     private spawnUnit: (x: number, z: number, team: number, category: UnitCategory) => number,
     private spawnBuilding: (x: number, z: number, team: number, type: BuildingType) => number,
+    private ghostRenderer: GhostBuildingRenderer,
     private scene: THREE.Scene,
     private dirLight: THREE.DirectionalLight,
     private ambientLight: THREE.AmbientLight,
@@ -347,17 +366,26 @@ export class SandboxPanel {
   }
 
   private wireEditorInput(): void {
-    const tmpVec = new THREE.Vector3();
-
     this.inputManager.onMouseDown((x, y, button) => {
       if (this.mode !== 'editor') return;
-
-      // Ignore clicks on the panel itself
       if (this.isOverPanel(x, y)) return;
 
       if (button === 0) {
+        // Wall drag: start
+        if (this.selectedPalette?.buildingType === BuildingType.Wall) {
+          const worldPos = this.isoCamera.screenToWorld(x, y);
+          if (!worldPos) return;
+          const snap = this.snapToExistingWall(worldPos.x, worldPos.z);
+          this.wallAnchor = { x: snap.x, z: snap.z };
+          this.wallLegAxis = snap.axis;
+          this.wallLegDir = 1;
+          this.wallDragging = true;
+          this.wallCommitted = [];
+          this.wallLive = [];
+          return;
+        }
+
         if (this.selectedPalette) {
-          // Place entity
           const worldPos = this.isoCamera.screenToWorld(x, y);
           if (!worldPos) return;
           const wx = worldPos.x;
@@ -370,14 +398,20 @@ export class SandboxPanel {
             this.spawnBuilding(wx, wz, this.selectedTeam, this.selectedPalette.buildingType);
           }
         } else {
-          // Pick entity for dragging
           const picked = this.pickEntity(x, y);
           if (picked !== null) {
             this.draggingEntity = picked;
           }
         }
       } else if (button === 2) {
-        // Cancel palette selection
+        if (this.wallDragging) {
+          this.wallDragging = false;
+          this.wallAnchor = null;
+          this.wallCommitted = [];
+          this.wallLive = [];
+          this.ghostRenderer.hideWall();
+          return;
+        }
         this.selectedPalette = null;
         this.highlightPalette();
       }
@@ -385,9 +419,13 @@ export class SandboxPanel {
 
     this.inputManager.onMouseMove((x, y) => {
       if (this.mode !== 'editor') return;
-      if (this.draggingEntity === null) return;
 
-      // Check entity still exists
+      if (this.wallDragging) {
+        this.updateWallDrag(x, y);
+        return;
+      }
+
+      if (this.draggingEntity === null) return;
       if (!this.world.hasComponent(this.draggingEntity, POSITION)) {
         this.draggingEntity = null;
         return;
@@ -400,7 +438,6 @@ export class SandboxPanel {
       pos.x = worldPos.x;
       pos.z = worldPos.z;
       pos.y = this.terrainData.getHeight(worldPos.x, worldPos.z) + 0.1;
-      // Match prev to avoid interpolation glitch
       pos.prevX = pos.x;
       pos.prevY = pos.y;
       pos.prevZ = pos.z;
@@ -408,6 +445,22 @@ export class SandboxPanel {
 
     this.inputManager.onMouseUp((_x, _y, button) => {
       if (button === 0) {
+        if (this.wallDragging) {
+          this.wallDragging = false;
+          const allSegments = [...this.wallCommitted, ...this.wallLive];
+          const validSegments = allSegments.filter(s => s.valid);
+          if (validSegments.length > 0) {
+            this.onSpawnWallSegments?.(
+              validSegments.map(s => ({ x: s.x, z: s.z, meshType: s.meshType })),
+              this.selectedTeam,
+            );
+          }
+          this.wallAnchor = null;
+          this.wallCommitted = [];
+          this.wallLive = [];
+          this.ghostRenderer.hideWall();
+          return;
+        }
         this.draggingEntity = null;
       }
     });
@@ -430,8 +483,16 @@ export class SandboxPanel {
         return;
       }
 
-      // Escape: cancel palette selection
+      // Escape: cancel wall drag or palette selection
       if (e.key === 'Escape') {
+        if (this.wallDragging) {
+          this.wallDragging = false;
+          this.wallAnchor = null;
+          this.wallCommitted = [];
+          this.wallLive = [];
+          this.ghostRenderer.hideWall();
+          return;
+        }
         this.selectedPalette = null;
         this.highlightPalette();
       }
@@ -483,6 +544,217 @@ export class SandboxPanel {
     for (const e of toDelete) {
       this.world.destroyEntity(e);
     }
+  }
+
+  // --- Wall placement helpers (mirrors PlacementController logic) ---
+
+  private updateWallDrag(sx: number, sy: number): void {
+    const worldPos = this.isoCamera.screenToWorld(sx, sy);
+    if (!worldPos || !this.wallAnchor) return;
+
+    const SEG = WALL_SEGMENT_LENGTH;
+    const J = WALL_JUNCTION_OFFSET;
+    const AXIS_LOCK_THRESHOLD = SEG * 0.3;
+    const TURN_THRESHOLD = SEG; // must move a full segment width sideways to turn
+
+    const anchor = this.wallAnchor;
+    const dx = worldPos.x - anchor.x;
+    const dz = worldPos.z - anchor.z;
+
+    // Axis locking: determine axis from dominant displacement
+    if (this.wallLegAxis === null) {
+      if (Math.abs(dx) >= Math.abs(dz) && Math.abs(dx) >= AXIS_LOCK_THRESHOLD) {
+        this.wallLegAxis = 'x';
+        this.wallLegDir = dx > 0 ? 1 : -1;
+      } else if (Math.abs(dz) >= AXIS_LOCK_THRESHOLD) {
+        this.wallLegAxis = 'z';
+        this.wallLegDir = dz > 0 ? 1 : -1;
+      } else {
+        this.wallLive = [];
+        this.ghostRenderer.updateWall([...this.wallCommitted]);
+        return;
+      }
+    }
+
+    const axis = this.wallLegAxis;
+    const dir = this.wallLegDir;
+    const forwardDisp = axis === 'x' ? dx * dir : dz * dir;
+    const crossDisp = axis === 'x' ? dz : dx;
+
+    // Turn detection: commit current leg and start new one
+    // Cross must exceed a full segment width, AND either be dominant (early drag) or large enough absolutely (long drag)
+    if (Math.abs(crossDisp) > TURN_THRESHOLD && (Math.abs(crossDisp) > Math.abs(forwardDisp) * 2 || Math.abs(crossDisp) > SEG * 2)) {
+      if (forwardDisp >= J) {
+        // Normal turn: enough forward room for junction
+        this.commitCurrentLeg(forwardDisp);
+      } else {
+        // Not enough forward room — just switch axis at current anchor (no corner piece)
+        // This handles the case where user drags mostly perpendicular immediately
+      }
+      // Start new leg from anchor/corner position
+      const newDir: 1 | -1 = crossDisp > 0 ? 1 : -1;
+      this.wallLegAxis = axis === 'x' ? 'z' : 'x';
+      this.wallLegDir = newDir;
+      // Recompute live from new anchor
+      const newDx = worldPos.x - this.wallAnchor.x;
+      const newDz = worldPos.z - this.wallAnchor.z;
+      const newForward = this.wallLegAxis === 'x' ? newDx * this.wallLegDir : newDz * this.wallLegDir;
+      this.wallLive = this.computeLiveSegments(newForward);
+    } else {
+      this.wallLive = this.computeLiveSegments(forwardDisp);
+    }
+
+    this.ghostRenderer.updateWall([...this.wallCommitted, ...this.wallLive]);
+  }
+
+  private commitCurrentLeg(forwardDisp: number): void {
+    if (!this.wallAnchor || !this.wallLegAxis) return;
+
+    const SEG = WALL_SEGMENT_LENGTH;
+    const J = WALL_JUNCTION_OFFSET;
+    const axis = this.wallLegAxis;
+    const dir = this.wallLegDir;
+    const anchor = this.wallAnchor;
+    const isFirstLeg = this.wallCommitted.length === 0;
+    const meshType = axis === 'x' ? 'wall_x' : 'wall_z';
+
+    let wallStart: number;
+    if (isFirstLeg) {
+      wallStart = axis === 'x' ? anchor.x : anchor.z;
+    } else {
+      wallStart = (axis === 'x' ? anchor.x : anchor.z) + J * dir;
+    }
+
+    // Number of wall segments that fit before the corner
+    const availableDist = forwardDisp - J;
+    const n = isFirstLeg
+      ? Math.floor(availableDist / SEG) + 1
+      : Math.floor((forwardDisp - 2 * J) / SEG) + 1;
+
+    for (let i = 0; i < Math.max(0, n); i++) {
+      const val = wallStart + i * SEG * dir;
+      const wx = axis === 'x' ? val : anchor.x;
+      const wz = axis === 'z' ? val : anchor.z;
+      this.wallCommitted.push({ x: wx, z: wz, meshType, valid: this.validateWallSegment(wx, wz) });
+    }
+
+    // Corner piece
+    const cornerOffset = isFirstLeg
+      ? ((Math.max(0, n) - 1) * SEG + J) * dir
+      : (J + (Math.max(0, n) - 1) * SEG + J) * dir;
+    const cornerVal = (axis === 'x' ? anchor.x : anchor.z) + cornerOffset;
+    const cx = axis === 'x' ? cornerVal : anchor.x;
+    const cz = axis === 'z' ? cornerVal : anchor.z;
+    this.wallCommitted.push({ x: cx, z: cz, meshType: 'wall_corner', valid: this.validateWallSegment(cx, cz) });
+
+    // Update anchor to corner position
+    this.wallAnchor = { x: cx, z: cz };
+  }
+
+  private computeLiveSegments(forwardDisp: number): WallSegment[] {
+    if (!this.wallAnchor || !this.wallLegAxis) return [];
+
+    const SEG = WALL_SEGMENT_LENGTH;
+    const J = WALL_JUNCTION_OFFSET;
+    const axis = this.wallLegAxis;
+    const dir = this.wallLegDir;
+    const anchor = this.wallAnchor;
+    const isFirstLeg = this.wallCommitted.length === 0;
+    const meshType = axis === 'x' ? 'wall_x' : 'wall_z';
+
+    if (forwardDisp < 0) return [];
+
+    let wallStart: number;
+    if (isFirstLeg) {
+      wallStart = axis === 'x' ? anchor.x : anchor.z;
+    } else {
+      wallStart = (axis === 'x' ? anchor.x : anchor.z) + J * dir;
+    }
+
+    const dispFromStart = forwardDisp - (isFirstLeg ? 0 : J);
+    if (dispFromStart < 0) return [];
+
+    const n = Math.floor(dispFromStart / SEG) + 1;
+    const segments: WallSegment[] = [];
+    for (let i = 0; i < n; i++) {
+      const val = wallStart + i * SEG * dir;
+      const wx = axis === 'x' ? val : anchor.x;
+      const wz = axis === 'z' ? val : anchor.z;
+      segments.push({ x: wx, z: wz, meshType, valid: this.validateWallSegment(wx, wz) });
+    }
+
+    return segments;
+  }
+
+  private validateWallSegment(x: number, z: number): boolean {
+    if (x < 2 || x > 254 || z < 2 || z > 254) return false;
+    if (!this.terrainData.isPassable(x, z)) return false;
+
+    const buildings = this.world.query(BUILDING, POSITION);
+    for (const e of buildings) {
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      const ddx = pos.x - x;
+      const ddz = pos.z - z;
+      if (ddx * ddx + ddz * ddz < WALL_OVERLAP_DIST_SQ) return false;
+    }
+
+    const sites = this.world.query(CONSTRUCTION, POSITION);
+    for (const e of sites) {
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      const ddx = pos.x - x;
+      const ddz = pos.z - z;
+      if (ddx * ddx + ddz * ddz < WALL_OVERLAP_DIST_SQ) return false;
+    }
+
+    return true;
+  }
+
+  private snapToExistingWall(wx: number, wz: number): { x: number; z: number; axis: 'x' | 'z' | null } {
+    const SNAP_RANGE = 2.5;
+    const SEG = WALL_SEGMENT_LENGTH;
+    const C = WALL_CORNER_SIZE;
+
+    let bestDist = SNAP_RANGE;
+    let bestSnap: { x: number; z: number; axis: 'x' | 'z' } | null = null;
+
+    const entities = this.world.query(BUILDING, POSITION);
+    for (const e of entities) {
+      const building = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (building.buildingType !== BuildingType.Wall) continue;
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      const renderable = this.world.getComponent<RenderableComponent>(e, RENDERABLE);
+      const mt = renderable?.meshType ?? 'wall_x';
+
+      const ends: { ex: number; ez: number; axis: 'x' | 'z'; dir: number }[] = [];
+      if (mt === 'wall_x') {
+        ends.push({ ex: pos.x + SEG / 2, ez: pos.z, axis: 'x', dir: 1 });
+        ends.push({ ex: pos.x - SEG / 2, ez: pos.z, axis: 'x', dir: -1 });
+      } else if (mt === 'wall_z') {
+        ends.push({ ex: pos.x, ez: pos.z + SEG / 2, axis: 'z', dir: 1 });
+        ends.push({ ex: pos.x, ez: pos.z - SEG / 2, axis: 'z', dir: -1 });
+      } else if (mt === 'wall_corner') {
+        ends.push({ ex: pos.x + C / 2, ez: pos.z, axis: 'x', dir: 1 });
+        ends.push({ ex: pos.x - C / 2, ez: pos.z, axis: 'x', dir: -1 });
+        ends.push({ ex: pos.x, ez: pos.z + C / 2, axis: 'z', dir: 1 });
+        ends.push({ ex: pos.x, ez: pos.z - C / 2, axis: 'z', dir: -1 });
+      }
+
+      for (const end of ends) {
+        const ddx = wx - end.ex;
+        const ddz = wz - end.ez;
+        const dist = Math.sqrt(ddx * ddx + ddz * ddz);
+        if (dist < bestDist) {
+          bestDist = dist;
+          if (end.axis === 'x') {
+            bestSnap = { x: end.ex + (SEG / 2) * end.dir, z: end.ez, axis: 'x' };
+          } else {
+            bestSnap = { x: end.ex, z: end.ez + (SEG / 2) * end.dir, axis: 'z' };
+          }
+        }
+      }
+    }
+
+    return bestSnap ?? { x: wx, z: wz, axis: null };
   }
 
   private pickEntity(sx: number, sy: number): Entity | null {

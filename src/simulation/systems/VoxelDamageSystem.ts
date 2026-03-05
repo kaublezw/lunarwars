@@ -72,11 +72,6 @@ export class VoxelDamageSystem implements System {
     let localY = impact.impactY - pos.y;
     let localZ = impact.impactZ - pos.z;
 
-    // Convert bullet direction to local space (undo rotation for units)
-    let localDirX = impact.dirX;
-    let localDirY = impact.dirY;
-    let localDirZ = impact.dirZ;
-
     if (!isBuilding && rotation !== 0) {
       const cos = Math.cos(-rotation);
       const sin = Math.sin(-rotation);
@@ -84,12 +79,6 @@ export class VoxelDamageSystem implements System {
       const rz = localX * sin + localZ * cos;
       localX = rx;
       localZ = rz;
-
-      // Rotate direction too
-      const rdx = localDirX * cos - localDirZ * sin;
-      const rdz = localDirX * sin + localDirZ * cos;
-      localDirX = rdx;
-      localDirZ = rdz;
     }
 
     // Convert to grid coordinates (clamped to valid range for surface boundary safety)
@@ -97,16 +86,7 @@ export class VoxelDamageSystem implements System {
     const gridY = Math.max(0, Math.min(model.sizeY - 1, Math.floor(localY / VOXEL_SIZE)));
     const gridZ = Math.max(0, Math.min(model.sizeZ - 1, Math.floor((localZ + halfZ) / VOXEL_SIZE)));
 
-    // Convert bullet direction to grid-space step for "behind" check
-    const absDX = Math.abs(localDirX);
-    const absDY = Math.abs(localDirY);
-    const absDZ = Math.abs(localDirZ);
-    const maxAbs = Math.max(absDX, absDY, absDZ) || 1;
-    const stepX = Math.round(localDirX / maxAbs);
-    const stepY = Math.round(localDirY / maxAbs);
-    const stepZ = Math.round(localDirZ / maxAbs);
-
-    // World-space bullet direction (for debris, which needs world coords)
+    // World-space bullet direction (for debris at impact center)
     const worldDirX = impact.dirX;
     const worldDirY = impact.dirY;
     const worldDirZ = impact.dirZ;
@@ -140,44 +120,41 @@ export class VoxelDamageSystem implements System {
           const bitIdx = solidIdx & 7;
           if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) continue;
 
-          // Determine debris direction: check if there's a voxel "behind" this one
-          const behindX = gx + stepX;
-          const behindY = gy + stepY;
-          const behindZ = gz + stepZ;
-
-          let ricochet = false;
-          if (
-            behindX >= 0 && behindX < model.sizeX &&
-            behindY >= 0 && behindY < model.sizeY &&
-            behindZ >= 0 && behindZ < model.sizeZ
-          ) {
-            const behindGridIdx = behindX + behindZ * model.sizeX + behindY * model.sizeX * model.sizeZ;
-            if (model.grid[behindGridIdx] !== 0) {
-              const behindSolidIdx = model.gridToSolid[behindGridIdx];
-              if (behindSolidIdx !== -1) {
-                const bByte = behindSolidIdx >> 3;
-                const bBit = behindSolidIdx & 7;
-                if (!(voxelState.destroyed[bByte] & (1 << bBit))) {
-                  ricochet = true;
-                }
-              }
-            }
-          }
-
-          // Compute debris direction in world-space
+          // Debris direction: radial outward from impact center (explosion-style)
           const scatter = 0.4;
+          let radX = dx;
+          let radY = dy;
+          let radZ = dz;
+          const radLen = Math.sqrt(radX * radX + radY * radY + radZ * radZ);
+
           let debrisDirX: number;
           let debrisDirY: number;
           let debrisDirZ: number;
 
-          if (ricochet) {
+          if (radLen < 0.001) {
+            // Voxel is at impact center: bounce back along bullet direction
             debrisDirX = -worldDirX + (Math.random() - 0.5) * scatter;
             debrisDirY = -worldDirY + Math.random() * 0.5;
             debrisDirZ = -worldDirZ + (Math.random() - 0.5) * scatter;
           } else {
-            debrisDirX = worldDirX + (Math.random() - 0.5) * scatter;
-            debrisDirY = worldDirY + Math.random() * 0.5;
-            debrisDirZ = worldDirZ + (Math.random() - 0.5) * scatter;
+            // Radial outward from impact center (in grid/local space)
+            let outX = radX / radLen;
+            let outY = radY / radLen;
+            let outZ = radZ / radLen;
+
+            // Rotate back to world space for non-building entities
+            if (!isBuilding && rotation !== 0) {
+              const cos = Math.cos(rotation);
+              const sin = Math.sin(rotation);
+              const wx = outX * cos - outZ * sin;
+              const wz = outX * sin + outZ * cos;
+              outX = wx;
+              outZ = wz;
+            }
+
+            debrisDirX = outX + (Math.random() - 0.5) * scatter;
+            debrisDirY = outY + Math.random() * 0.5;
+            debrisDirZ = outZ + (Math.random() - 0.5) * scatter;
           }
 
           // Destroy this voxel

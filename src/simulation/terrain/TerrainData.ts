@@ -63,7 +63,7 @@ export class TerrainData {
       for (let attempt = 0; attempt < 40; attempt++) {
         const bw = 10 + Math.floor(next() * 21); // 10-30 tiles width
         const bd = 10 + Math.floor(next() * 21); // 10-30 tiles depth
-        const bh = 10 + Math.floor(next() * 11); // 10-20 voxel units height
+        const bh = 30; // match border wall height
         const bx = 15 + Math.floor(next() * (this.width - 30 - bw));
         const bz = 15 + Math.floor(next() * (this.height - 30 - bd));
 

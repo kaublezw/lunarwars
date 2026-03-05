@@ -34,6 +34,7 @@ export class Minimap {
   private rightDownPos: { x: number; y: number } | null = null;
 
   onRightClick?: (worldX: number, worldZ: number) => void;
+  onLeftClick?: (worldX: number, worldZ: number) => void;
 
   constructor(terrain: TerrainData, energyNodes: EnergyNode[]) {
     this.energyNodes = energyNodes;
@@ -44,17 +45,29 @@ export class Minimap {
     this.canvas.width = 280;
     this.canvas.height = 280;
     this.canvas.style.cssText =
-      'position:absolute;bottom:24px;right:24px;border:1px solid #444;pointer-events:auto;transform:rotate(45deg) scale(0.71);cursor:default;';
+      'position:absolute;bottom:24px;right:24px;border:1px solid #444;pointer-events:auto;transform:rotate(45deg) scale(0.71);cursor:default;z-index:15;';
 
     this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+    // Left-click: navigate camera (works for mouse + synthetic click from touch)
+    this.canvas.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const world = this.screenToWorld(e.clientX, e.clientY);
+      if (world && this.onLeftClick) {
+        this.onLeftClick(world.x, world.z);
+      }
+    });
+
+    // Right-click: issue move command
     this.canvas.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
       if (e.button === 2) {
         this.rightDownPos = { x: e.clientX, y: e.clientY };
       }
     });
 
     this.canvas.addEventListener('mouseup', (e) => {
+      e.stopPropagation();
       if (e.button === 2 && this.rightDownPos) {
         const dx = e.clientX - this.rightDownPos.x;
         const dy = e.clientY - this.rightDownPos.y;
@@ -67,6 +80,20 @@ export class Minimap {
         this.rightDownPos = null;
       }
     });
+
+    // Prevent touch events from propagating to the game canvas
+    this.canvas.addEventListener('touchstart', (e) => {
+      e.stopPropagation();
+    }, { passive: false });
+
+    this.canvas.addEventListener('touchend', (e) => {
+      e.stopPropagation();
+    }, { passive: false });
+
+    this.canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    }, { passive: false });
 
     this.ctx = this.canvas.getContext('2d')!;
     const w = this.canvas.width;

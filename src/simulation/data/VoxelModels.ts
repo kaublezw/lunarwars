@@ -307,6 +307,43 @@ export const CONSTRUCTION_SITE_MODEL = createModel(14, 4, 14, (g, sx, _sy, sz) =
   fillBox(g, sx, sz, 13, 3, 1, 13, 3, 12, PAL_ORANGE);
 });
 
+// Wall segment aligned along X axis: 20 long (X), 10 tall (Y), 5 deep (Z)
+export const WALL_X_MODEL = createModel(20, 10, 5, (g, sx, _sy, sz) => {
+  // Main wall body
+  fillBox(g, sx, sz, 0, 0, 0, 19, 9, 4, PAL_TEAM_PRIMARY);
+  // Base reinforcement
+  fillBox(g, sx, sz, 0, 0, 0, 19, 1, 4, PAL_DARK_GREY);
+  // Top crenellation pattern (every 4 voxels)
+  for (let x = 0; x < 20; x += 4) {
+    fillBox(g, sx, sz, x, 8, 0, Math.min(x + 1, 19), 9, 4, PAL_TEAM_ACCENT);
+  }
+});
+
+// Wall segment aligned along Z axis: 5 deep (X), 10 tall (Y), 20 long (Z)
+export const WALL_Z_MODEL = createModel(5, 10, 20, (g, sx, _sy, sz) => {
+  // Main wall body
+  fillBox(g, sx, sz, 0, 0, 0, 4, 9, 19, PAL_TEAM_PRIMARY);
+  // Base reinforcement
+  fillBox(g, sx, sz, 0, 0, 0, 4, 1, 19, PAL_DARK_GREY);
+  // Top crenellation pattern (every 4 voxels)
+  for (let z = 0; z < 20; z += 4) {
+    fillBox(g, sx, sz, 0, 8, z, 4, 9, Math.min(z + 1, 19), PAL_TEAM_ACCENT);
+  }
+});
+
+// Wall corner piece: 5x10x5 pillar (matches wall cross-section, connects perpendicular segments)
+export const WALL_CORNER_MODEL = createModel(5, 10, 5, (g, sx, _sy, sz) => {
+  // Main body
+  fillBox(g, sx, sz, 0, 0, 0, 4, 9, 4, PAL_TEAM_PRIMARY);
+  // Base reinforcement
+  fillBox(g, sx, sz, 0, 0, 0, 4, 1, 4, PAL_DARK_GREY);
+  // Top accent
+  fillBox(g, sx, sz, 0, 8, 0, 1, 9, 1, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 4, 8, 0, 4, 9, 1, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 0, 8, 4, 1, 9, 4, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 4, 8, 4, 4, 9, 4, PAL_TEAM_ACCENT);
+});
+
 // Map meshType -> VoxelModel
 export const VOXEL_MODELS: Record<string, VoxelModel> = {
   combat_drone: COMBAT_DRONE_MODEL,
@@ -319,6 +356,9 @@ export const VOXEL_MODELS: Record<string, VoxelModel> = {
   supply_depot: SUPPLY_DEPOT_MODEL,
   drone_factory: DRONE_FACTORY_MODEL,
   construction_site: CONSTRUCTION_SITE_MODEL,
+  wall_x: WALL_X_MODEL,
+  wall_z: WALL_Z_MODEL,
+  wall_corner: WALL_CORNER_MODEL,
 };
 
 /** Get the world-space bounding box dimensions for a voxel model */

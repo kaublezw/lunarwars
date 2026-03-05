@@ -76,11 +76,18 @@ export class SelectionController {
   ) {
     input.onMouseDown((x, y, button) => {
       if (button === 0) {
+        // Don't start box selection during building placement
+        if (this.placementCheck?.()) return;
         this.leftDownPos = { x, y };
         this.isDragging = false;
       } else if (button === 2) {
         this.rightDownPos = { x, y };
       }
+    });
+
+    // Double-tap: select all visible units of same type
+    input.onDoubleTap((x, y) => {
+      this.handleDoubleTap(x, y);
     });
 
     input.onMouseMove((x, y, _dx, _dy) => {
@@ -128,10 +135,16 @@ export class SelectionController {
   private handleClick(sx: number, sy: number): void {
     if (this.placementCheck?.()) return;
     const shift = this.input.isKeyDown('shift');
+    const isTouch = this.input.isLastInputTouch();
 
     const selectables = this.world.query(POSITION, SELECTABLE);
-    let bestEntity: Entity | null = null;
-    let bestDistSq = Infinity;
+    let bestUnit: Entity | null = null;
+    let bestUnitDistSq = Infinity;
+    let bestBuilding: Entity | null = null;
+    let bestBuildingDistSq = Infinity;
+
+    const unitPickRadius = 30;
+    const buildingPickRadius = isTouch ? 35 : 60;
 
     const tmpVec = new THREE.Vector3();
     for (const e of selectables) {
@@ -151,16 +164,51 @@ export class SelectionController {
       const dy = screenPos.y - sy;
       const distSq = dx * dx + dy * dy;
 
-      // Buildings get a larger pick radius than units
       const isBuilding = this.world.hasComponent(e, BUILDING);
-      const pickRadius = isBuilding ? 60 : 30;
-      if (distSq < pickRadius * pickRadius && distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestEntity = e;
+      if (isBuilding) {
+        if (distSq < buildingPickRadius * buildingPickRadius && distSq < bestBuildingDistSq) {
+          bestBuildingDistSq = distSq;
+          bestBuilding = e;
+        }
+      } else {
+        if (distSq < unitPickRadius * unitPickRadius && distSq < bestUnitDistSq) {
+          bestUnitDistSq = distSq;
+          bestUnit = e;
+        }
       }
     }
 
+    // Prefer units over buildings so tapping near a building still picks nearby units
+    const bestEntity = bestUnit ?? bestBuilding;
+
     if (bestEntity !== null) {
+      // Touch: tapping an enemy issues attack/move command instead of selecting
+      if (isTouch) {
+        const team = this.world.getComponent<TeamComponent>(bestEntity, TEAM);
+        if (team && team.team !== this.playerTeam) {
+          this.handleRightClick(sx, sy);
+          return;
+        }
+
+        // Touch: tapping a construction site or damaged building with workers selected
+        // delegates to right-click logic (assign build / assign repair)
+        if (team && team.team === this.playerTeam && this.hasSelectedWorkers()) {
+          if (this.world.hasComponent(bestEntity, CONSTRUCTION)) {
+            this.handleRightClick(sx, sy);
+            return;
+          }
+          const health = this.world.getComponent<HealthComponent>(bestEntity, HEALTH);
+          if (
+            health && !health.dead && health.current < health.max &&
+            this.world.hasComponent(bestEntity, BUILDING) &&
+            !this.world.hasComponent(bestEntity, CONSTRUCTION)
+          ) {
+            this.handleRightClick(sx, sy);
+            return;
+          }
+        }
+      }
+
       // Check if we clicked on a friendly completed Supply Depot while a worker is selected
       if (!shift && this.tryAssignWorkerToDepot(bestEntity)) {
         return;
@@ -172,6 +220,11 @@ export class SelectionController {
       } else {
         this.deselectAll();
         sel.selected = true;
+      }
+    } else if (isTouch) {
+      // Touch: tapping empty ground with units selected issues move command
+      if (this.hasAnySelected()) {
+        this.handleRightClick(sx, sy);
       }
     } else if (!shift) {
       this.deselectAll();
@@ -916,6 +969,85 @@ export class SelectionController {
     }
 
     this.events.emit('command:move', destX, destZ);
+  }
+
+  /** Check if any selected unit is a worker drone. */
+  private hasSelectedWorkers(): boolean {
+    const selectables = this.world.query(SELECTABLE, UNIT_TYPE);
+    for (const e of selectables) {
+      const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
+      if (!sel.selected) continue;
+      const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
+      if (ut.category === UnitCategory.WorkerDrone) return true;
+    }
+    return false;
+  }
+
+  /** Check if any entity is currently selected. */
+  private hasAnySelected(): boolean {
+    const selectables = this.world.query(SELECTABLE);
+    for (const e of selectables) {
+      const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
+      if (sel.selected) return true;
+    }
+    return false;
+  }
+
+  /** Double-tap: select all visible friendly units of the same type as the tapped unit. */
+  private handleDoubleTap(sx: number, sy: number): void {
+    if (this.placementCheck?.()) return;
+
+    // Find the friendly entity at the tap position
+    const selectables = this.world.query(POSITION, SELECTABLE, UNIT_TYPE, TEAM);
+    let bestEntity: Entity | null = null;
+    let bestDistSq = Infinity;
+    const tmpVec = new THREE.Vector3();
+
+    for (const e of selectables) {
+      const team = this.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (team.team !== this.playerTeam) continue;
+
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      tmpVec.set(pos.x, pos.y, pos.z);
+      const screenPos = this.camera.worldToScreen(tmpVec);
+      const dx = screenPos.x - sx;
+      const dy = screenPos.y - sy;
+      const distSq = dx * dx + dy * dy;
+
+      const pickRadius = 30;
+      if (distSq < pickRadius * pickRadius && distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestEntity = e;
+      }
+    }
+
+    if (!bestEntity) return;
+
+    const tappedUt = this.world.getComponent<UnitTypeComponent>(bestEntity, UNIT_TYPE);
+    if (!tappedUt) return;
+
+    // Select all visible friendly units of the same category
+    this.deselectAll();
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    for (const e of selectables) {
+      const team = this.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (team.team !== this.playerTeam) continue;
+
+      const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
+      if (ut.category !== tappedUt.category) continue;
+
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      tmpVec.set(pos.x, pos.y, pos.z);
+      const screenPos = this.camera.worldToScreen(tmpVec);
+
+      // Only select units currently on screen
+      if (screenPos.x < 0 || screenPos.x > w || screenPos.y < 0 || screenPos.y > h) continue;
+
+      const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
+      sel.selected = true;
+    }
   }
 
   private deselectAll(): void {

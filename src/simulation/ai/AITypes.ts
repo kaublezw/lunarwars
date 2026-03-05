@@ -40,6 +40,11 @@ export const MIN_MAIN_ARMY_FOR_HARASS = 8;
 export const DEFENSE_RADIUS = 35;
 export const EXTRACTOR_DEFENSE_RADIUS = 20;
 
+// Wall Building
+export const WALL_SEGMENT_COST = 12;
+export const MAX_AI_WALLS = 24;
+export const WALL_NEARBY_RADIUS_SQ = 64; // 8wu squared
+
 // Dynamic Economy
 export const WORKER_SCALING_BASE = 3;
 
@@ -110,6 +115,12 @@ export interface AIWorldState {
   totalArmySize: number;
   rememberedEnemyBuildings: EnemyMemoryEntry[];
   rememberedEnemyUnits: EnemyMemoryEntry[];
+}
+
+export interface WallSegmentPlan {
+  x: number;
+  z: number;
+  meshType: 'wall_x' | 'wall_z' | 'wall_corner';
 }
 
 export interface AIContext {

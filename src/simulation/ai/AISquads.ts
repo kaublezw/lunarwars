@@ -261,8 +261,38 @@ function executeDefenseOrders(ctx: AIContext, state: AIWorldState, squad: Squad)
     return;
   }
 
-  // Idle: patrol near rally point
+  // Idle: patrol between extractors (or rally point if none)
   squad.state = 'idle';
+
+  const extractorEntities = state.myBuildings.get(BuildingType.EnergyExtractor) ?? [];
+  if (extractorEntities.length > 0) {
+    // Build list of extractor positions
+    const extractorPositions: { x: number; z: number }[] = [];
+    for (const eid of extractorEntities) {
+      const epos = ctx.world.getComponent<PositionComponent>(eid, POSITION);
+      if (epos) extractorPositions.push({ x: epos.x, z: epos.z });
+    }
+
+    if (extractorPositions.length > 0) {
+      // Clamp waypointIdx to valid range
+      if (squad.waypointIdx >= extractorPositions.length) squad.waypointIdx = 0;
+      const patrolTarget = extractorPositions[squad.waypointIdx];
+
+      // Check if centroid is near the current patrol target
+      const centroid = getSquadCentroid(ctx, squad);
+      const pdx = centroid.x - patrolTarget.x;
+      const pdz = centroid.z - patrolTarget.z;
+      if (pdx * pdx + pdz * pdz < 10 * 10) {
+        squad.waypointIdx = (squad.waypointIdx + 1) % extractorPositions.length;
+      }
+
+      const dest = extractorPositions[squad.waypointIdx];
+      sendSquadTo(ctx, squad, dest.x, dest.z);
+      return;
+    }
+  }
+
+  // Fallback: rally point
   for (const unitId of squad.unitIds) {
     if (ctx.world.hasComponent(unitId, RESUPPLY_SEEK)) continue;
     if (ctx.world.hasComponent(unitId, MOVE_COMMAND)) continue;

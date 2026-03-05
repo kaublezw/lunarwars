@@ -1,7 +1,8 @@
 import type { System, World } from '@core/ECS';
-import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, MATTER_STORAGE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE } from '@sim/components/ComponentTypes';
+import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, MATTER_STORAGE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { ConstructionComponent } from '@sim/components/Construction';
+import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { HealthComponent } from '@sim/components/Health';
@@ -12,6 +13,7 @@ import type { VisionComponent } from '@sim/components/Vision';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
+import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
@@ -88,7 +90,12 @@ export class BuildSystem implements System {
         const def = BUILDING_DEFS[construction.buildingType];
         if (def) {
           const renderable = world.getComponent<RenderableComponent>(site, RENDERABLE);
-          if (renderable) {
+
+          // For walls, meshType is already correct per-segment (wall_x or wall_z)
+          const isWall = construction.buildingType === BuildingType.Wall;
+          const finalMeshType = isWall ? (renderable?.meshType ?? def.meshType) : def.meshType;
+
+          if (renderable && !isWall) {
             renderable.meshType = def.meshType;
           }
 
@@ -110,10 +117,10 @@ export class BuildSystem implements System {
           }
 
           // Update voxel state for the final building model
-          const finalVoxelModel = VOXEL_MODELS[def.meshType];
+          const finalVoxelModel = VOXEL_MODELS[finalMeshType];
           if (finalVoxelModel) {
             world.addComponent<VoxelStateComponent>(site, VOXEL_STATE, {
-              modelId: def.meshType,
+              modelId: finalMeshType,
               totalVoxels: finalVoxelModel.totalSolid,
               destroyedCount: 0,
               destroyed: new Uint8Array(Math.ceil(finalVoxelModel.totalSolid / 8)),
@@ -125,11 +132,11 @@ export class BuildSystem implements System {
 
           // DroneFactory gets a production queue
           if (construction.buildingType === BuildingType.DroneFactory && !world.hasComponent(site, PRODUCTION_QUEUE)) {
-            const sitePos = world.getComponent<PositionComponent>(site, POSITION)!;
+            const sitePos2 = world.getComponent<PositionComponent>(site, POSITION)!;
             world.addComponent<ProductionQueueComponent>(site, PRODUCTION_QUEUE, {
               queue: [],
-              rallyX: sitePos.x + 5,
-              rallyZ: sitePos.z + 5,
+              rallyX: sitePos2.x + 5,
+              rallyZ: sitePos2.z + 5,
             });
           }
 
@@ -154,6 +161,37 @@ export class BuildSystem implements System {
 
         // Remove build command from worker
         world.removeComponent(e, BUILD_COMMAND);
+
+        // Check for wall build queue continuation
+        const wallQueue = world.getComponent<WallBuildQueueComponent>(e, WALL_BUILD_QUEUE);
+        if (wallQueue) {
+          wallQueue.currentIndex++;
+          // Skip destroyed or already-completed segments
+          let foundNext = false;
+          while (wallQueue.currentIndex < wallQueue.siteEntities.length) {
+            const nextSite = wallQueue.siteEntities[wallQueue.currentIndex];
+            const nextPos = world.getComponent<PositionComponent>(nextSite, POSITION);
+            const nextCon = world.getComponent<ConstructionComponent>(nextSite, CONSTRUCTION);
+            if (nextPos && nextCon) {
+              nextCon.builderEntity = e;
+              world.addComponent<MoveCommandComponent>(e, MOVE_COMMAND, {
+                path: [], currentWaypoint: 0,
+                destX: nextPos.x, destZ: nextPos.z,
+              });
+              world.addComponent<BuildCommandComponent>(e, BUILD_COMMAND, {
+                buildingType: nextCon.buildingType,
+                targetX: nextPos.x, targetZ: nextPos.z,
+                state: 'moving', siteEntity: nextSite,
+              });
+              foundNext = true;
+              break;
+            }
+            wallQueue.currentIndex++;
+          }
+          if (!foundNext) {
+            world.removeComponent(e, WALL_BUILD_QUEUE);
+          }
+        }
       }
     }
   }

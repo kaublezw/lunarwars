@@ -1,9 +1,14 @@
 import type { System, World } from '@core/ECS';
-import { POSITION, PROJECTILE, HEALTH, VOXEL_STATE, IMPACT_EVENT } from '@sim/components/ComponentTypes';
+import { POSITION, PROJECTILE, HEALTH, VOXEL_STATE, IMPACT_EVENT, BUILDING, TEAM, RENDERABLE } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { ProjectileComponent } from '@sim/components/Projectile';
 import type { HealthComponent } from '@sim/components/Health';
 import type { ImpactEventComponent } from '@sim/components/ImpactEvent';
+import type { BuildingComponent } from '@sim/components/Building';
+import { BuildingType } from '@sim/components/Building';
+import type { TeamComponent } from '@sim/components/Team';
+import type { RenderableComponent } from '@sim/components/Renderable';
+import { VOXEL_MODELS, VOXEL_SIZE } from '@sim/data/VoxelModels';
 
 const HIT_RADIUS_SQ = 0.5 * 0.5; // within 0.5 units = impact
 
@@ -11,6 +16,9 @@ export class ProjectileSystem implements System {
   readonly name = 'ProjectileSystem';
 
   update(world: World, dt: number): void {
+    // Cache wall AABBs for projectile collision
+    const wallAABBs = this.getWallAABBs(world);
+
     const projectiles = world.query(POSITION, PROJECTILE);
 
     for (const e of projectiles) {
@@ -55,8 +63,51 @@ export class ProjectileSystem implements System {
 
         // Update rotation to face direction of travel
         pos.rotation = Math.atan2(nx, nz);
+
+        // Check wall collision (skip friendly walls)
+        for (const wall of wallAABBs) {
+          if (wall.team === proj.team) continue;
+          if (
+            pos.x >= wall.minX && pos.x <= wall.maxX &&
+            pos.y >= wall.minY && pos.y <= wall.maxY &&
+            pos.z >= wall.minZ && pos.z <= wall.maxZ
+          ) {
+            // Redirect impact to wall
+            proj.targetEntity = wall.entity;
+            this.onImpact(world, e, proj, pos);
+            break;
+          }
+        }
       }
     }
+  }
+
+  private getWallAABBs(world: World): { entity: number; team: number; minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number }[] {
+    const walls: { entity: number; team: number; minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number }[] = [];
+    const wallEntities = world.query(BUILDING, POSITION, HEALTH);
+    for (const e of wallEntities) {
+      const bldg = world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (bldg.buildingType !== BuildingType.Wall) continue;
+      const health = world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (health.dead) continue;
+      const wPos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const renderable = world.getComponent<RenderableComponent>(e, RENDERABLE);
+      const meshType = renderable?.meshType ?? 'wall_x';
+      const model = VOXEL_MODELS[meshType];
+      if (!model) continue;
+      const team = world.getComponent<TeamComponent>(e, TEAM);
+
+      const halfX = (model.sizeX * VOXEL_SIZE) / 2;
+      const halfZ = (model.sizeZ * VOXEL_SIZE) / 2;
+      walls.push({
+        entity: e,
+        team: team ? team.team : -1,
+        minX: wPos.x - halfX, maxX: wPos.x + halfX,
+        minY: wPos.y, maxY: wPos.y + model.sizeY * VOXEL_SIZE,
+        minZ: wPos.z - halfZ, maxZ: wPos.z + halfZ,
+      });
+    }
+    return walls;
   }
 
   private onImpact(world: World, projectileEntity: number, proj: ProjectileComponent, impactPos: PositionComponent): void {

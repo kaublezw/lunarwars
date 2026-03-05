@@ -163,6 +163,7 @@ export class TerrainVoxelRenderer {
 
     const geometry = this.greedyMesh(grid, gridX, gridY, gridZ);
     const mesh = new THREE.Mesh(geometry, this.material);
+    mesh.castShadow = true;
     mesh.receiveShadow = true;
 
     // Position the chunk in world space
@@ -233,6 +234,7 @@ export class TerrainVoxelRenderer {
 
     const geometry = createBufferGeometry(positions, normals, colors, indices);
     const mesh = new THREE.Mesh(geometry, this.material);
+    mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.position.set(startTileX, -VOXEL_SIZE, startTileZ);
 

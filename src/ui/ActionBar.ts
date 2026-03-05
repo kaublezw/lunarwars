@@ -17,6 +17,7 @@ const BUILD_BUTTONS: { type: BuildingType; label: string }[] = [
   { type: BuildingType.MatterPlant, label: 'Matter Plant' },
   { type: BuildingType.SupplyDepot, label: 'Supply Depot' },
   { type: BuildingType.DroneFactory, label: 'Drone Factory' },
+  { type: BuildingType.Wall, label: 'Wall' },
 ];
 
 const FACTORY_TRAIN_BUTTONS: { unitType: UnitCategory; label: string }[] = [
@@ -25,7 +26,9 @@ const FACTORY_TRAIN_BUTTONS: { unitType: UnitCategory; label: string }[] = [
   { unitType: UnitCategory.AerialDrone, label: 'Aerial Drone' },
 ];
 
-type BarMode = 'hidden' | 'worker' | 'hq' | 'factory' | 'construction';
+const DEMOLISH_REFUND_RATE = 0.7; // 70% matter refund
+
+type BarMode = 'hidden' | 'worker' | 'hq' | 'factory' | 'construction' | 'building';
 
 export class ActionBar {
   private container: HTMLDivElement;
@@ -33,6 +36,7 @@ export class ActionBar {
   private progressDiv: HTMLDivElement;
   private onBuild: ((type: BuildingType) => void) | null = null;
   private onTrain: ((unitType: string) => void) | null = null;
+  private onDemolish: ((entity: number) => void) | null = null;
 
   // Cached state to avoid rebuilding DOM every frame
   private currentMode: BarMode = 'hidden';
@@ -79,6 +83,10 @@ export class ActionBar {
     this.onTrain = cb;
   }
 
+  onDemolishRequest(cb: (entity: number) => void): void {
+    this.onDemolish = cb;
+  }
+
   update(world: World, resources: ResourceState, playerTeam: number): void {
     const entities = world.query(SELECTABLE);
     let workerSelected = false;
@@ -88,6 +96,9 @@ export class ActionBar {
     let factoryEntity = -1;
     let constructionSelected = false;
     let constructionProgress = 0;
+    let buildingSelected = false;
+    let buildingEntity = -1;
+    let buildingType: BuildingType | null = null;
 
     for (const e of entities) {
       const sel = world.getComponent<SelectableComponent>(e, SELECTABLE)!;
@@ -110,6 +121,12 @@ export class ActionBar {
           factorySelected = true;
           factoryEntity = e;
         }
+        // Track any non-HQ completed building for demolish
+        if (building.buildingType !== BuildingType.HQ && !world.hasComponent(e, CONSTRUCTION)) {
+          buildingSelected = true;
+          buildingEntity = e;
+          buildingType = building.buildingType;
+        }
       }
 
       const construction = world.getComponent<ConstructionComponent>(e, CONSTRUCTION);
@@ -125,6 +142,7 @@ export class ActionBar {
     else if (workerSelected) targetMode = 'worker';
     else if (factorySelected) targetMode = 'factory';
     else if (hqSelected) targetMode = 'hq';
+    else if (buildingSelected) targetMode = 'building';
 
     const totalMatter = resources.get(playerTeam).matter;
 
@@ -190,6 +208,44 @@ export class ActionBar {
           this.buttonsDiv.appendChild(button);
           this.buttonElements.set(key, button);
           this.buttonAffordable.set(key, affordable);
+        }
+        // Demolish button for factory
+        {
+          const factoryDef = BUILDING_DEFS[BuildingType.DroneFactory];
+          const refund = factoryDef ? Math.floor(factoryDef.matterCost * DEMOLISH_REFUND_RATE) : 0;
+          const capturedEntity = factoryEntity;
+          const button = this.createButton(
+            'demolish',
+            'Demolish',
+            `+${refund}m`,
+            true,
+            () => this.onDemolish?.(capturedEntity),
+          );
+          button.style.background = 'rgba(180, 60, 60, 0.3)';
+          button.style.borderColor = 'rgba(180, 60, 60, 0.6)';
+          this.buttonsDiv.appendChild(button);
+          this.buttonElements.set('demolish', button);
+          this.buttonAffordable.set('demolish', true);
+        }
+      } else if (targetMode === 'building') {
+        // Demolish button for non-HQ completed buildings
+        if (buildingType) {
+          const def = BUILDING_DEFS[buildingType];
+          const refund = def ? Math.floor(def.matterCost * DEMOLISH_REFUND_RATE) : 0;
+          const capturedEntity = buildingEntity;
+          const button = this.createButton(
+            'demolish',
+            'Demolish',
+            `+${refund}m`,
+            true,
+            () => this.onDemolish?.(capturedEntity),
+          );
+          // Style as destructive action
+          button.style.background = 'rgba(180, 60, 60, 0.3)';
+          button.style.borderColor = 'rgba(180, 60, 60, 0.6)';
+          this.buttonsDiv.appendChild(button);
+          this.buttonElements.set('demolish', button);
+          this.buttonAffordable.set('demolish', true);
         }
       }
     }

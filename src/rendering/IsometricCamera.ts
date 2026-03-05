@@ -10,6 +10,11 @@ export class IsometricCamera {
   private readonly distance = 500;
   private raycaster = new THREE.Raycaster();
   private groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private canvasElement: HTMLCanvasElement | null = null;
+
+  setCanvas(canvas: HTMLCanvasElement): void {
+    this.canvasElement = canvas;
+  }
 
   constructor(width: number, height: number) {
     const aspect = width / height;
@@ -79,9 +84,18 @@ export class IsometricCamera {
     this.updateCameraPosition();
   }
 
+  private getViewport(): { left: number; top: number; width: number; height: number } {
+    if (this.canvasElement) {
+      const rect = this.canvasElement.getBoundingClientRect();
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    }
+    return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+  }
+
   screenToWorld(sx: number, sy: number): THREE.Vector3 | null {
-    const ndcX = (sx / window.innerWidth) * 2 - 1;
-    const ndcY = -(sy / window.innerHeight) * 2 + 1;
+    const vp = this.getViewport();
+    const ndcX = ((sx - vp.left) / vp.width) * 2 - 1;
+    const ndcY = -((sy - vp.top) / vp.height) * 2 + 1;
     this.raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
     const hit = new THREE.Vector3();
     const result = this.raycaster.ray.intersectPlane(this.groundPlane, hit);
@@ -89,10 +103,11 @@ export class IsometricCamera {
   }
 
   worldToScreen(pos: THREE.Vector3): THREE.Vector2 {
+    const vp = this.getViewport();
     const projected = pos.clone().project(this.camera);
     return new THREE.Vector2(
-      (projected.x + 1) / 2 * window.innerWidth,
-      (-projected.y + 1) / 2 * window.innerHeight
+      (projected.x + 1) / 2 * vp.width + vp.left,
+      (-projected.y + 1) / 2 * vp.height + vp.top
     );
   }
 

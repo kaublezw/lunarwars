@@ -3,6 +3,7 @@ import {
   BUILDING, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND,
   PRODUCTION_QUEUE, MATTER_STORAGE, SUPPLY_ROUTE,
   VOXEL_STATE, RESUPPLY_SEEK, REPAIR_COMMAND,
+  WALL_BUILD_QUEUE,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
@@ -17,6 +18,7 @@ import type { SelectableComponent } from '@sim/components/Selectable';
 import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { RepairCommandComponent } from '@sim/components/RepairCommand';
+import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
@@ -24,7 +26,7 @@ import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 
-import type { AIContext, AIWorldState, Squad, EnemyMemoryEntry } from '@sim/ai/AITypes';
+import type { AIContext, AIWorldState, Squad, EnemyMemoryEntry, WallSegmentPlan } from '@sim/ai/AITypes';
 import {
   TEAM_COLORS, RETREAT_HP_FRACTION, OVERWHELMING_ARMY,
   MAX_QUEUE_DEPTH, MEMORY_DECAY_TICKS,
@@ -370,6 +372,119 @@ export function pickAttackTarget(
   }
 
   return null;
+}
+
+export function createWallSegments(
+  ctx: AIContext,
+  segments: WallSegmentPlan[],
+  workerEntity: number,
+): void {
+  if (segments.length === 0) return;
+
+  // Clear existing worker commands
+  if (ctx.world.hasComponent(workerEntity, BUILD_COMMAND)) {
+    ctx.world.removeComponent(workerEntity, BUILD_COMMAND);
+  }
+  if (ctx.world.hasComponent(workerEntity, SUPPLY_ROUTE)) {
+    ctx.world.removeComponent(workerEntity, SUPPLY_ROUTE);
+  }
+  if (ctx.world.hasComponent(workerEntity, REPAIR_COMMAND)) {
+    ctx.world.removeComponent(workerEntity, REPAIR_COMMAND);
+  }
+  if (ctx.world.hasComponent(workerEntity, WALL_BUILD_QUEUE)) {
+    ctx.world.removeComponent(workerEntity, WALL_BUILD_QUEUE);
+  }
+
+  const def = BUILDING_DEFS[BuildingType.Wall];
+  if (!def) return;
+
+  const siteEntities: number[] = [];
+  for (const seg of segments) {
+    const site = ctx.world.createEntity();
+    const siteY = ctx.terrain.getHeight(seg.x, seg.z);
+
+    ctx.world.addComponent<PositionComponent>(site, POSITION, {
+      x: seg.x, y: siteY, z: seg.z,
+      prevX: seg.x, prevY: siteY, prevZ: seg.z,
+      rotation: 0,
+    });
+
+    ctx.world.addComponent<RenderableComponent>(site, RENDERABLE, {
+      meshType: seg.meshType,
+      color: TEAM_COLORS[ctx.team],
+      scale: 1.0,
+    });
+
+    ctx.world.addComponent<TeamComponent>(site, TEAM, { team: ctx.team });
+
+    ctx.world.addComponent<BuildingComponent>(site, BUILDING, {
+      buildingType: BuildingType.Wall,
+    });
+
+    ctx.world.addComponent<HealthComponent>(site, HEALTH, {
+      current: 50,
+      max: def.hp,
+      dead: false,
+    });
+
+    ctx.world.addComponent<ConstructionComponent>(site, CONSTRUCTION, {
+      buildingType: BuildingType.Wall,
+      progress: 0,
+      buildTime: def.buildTime,
+      builderEntity: workerEntity,
+    });
+
+    ctx.world.addComponent<SelectableComponent>(site, SELECTABLE, { selected: false });
+
+    const finalModel = VOXEL_MODELS[seg.meshType];
+    if (finalModel) {
+      const destroyedMask = new Uint8Array(Math.ceil(finalModel.totalSolid / 8));
+      destroyedMask.fill(255);
+      for (let i = 0; i < finalModel.firstLayerCount; i++) {
+        const solidIdx = finalModel.buildOrder[i];
+        destroyedMask[solidIdx >> 3] &= ~(1 << (solidIdx & 7));
+      }
+      ctx.world.addComponent<VoxelStateComponent>(site, VOXEL_STATE, {
+        modelId: seg.meshType,
+        totalVoxels: finalModel.totalSolid,
+        destroyedCount: finalModel.totalSolid - finalModel.firstLayerCount,
+        destroyed: destroyedMask,
+        dirty: true,
+        pendingDebris: [],
+        pendingScorch: [],
+      });
+    }
+
+    siteEntities.push(site);
+  }
+
+  // Issue move + build command for first segment
+  const firstSeg = segments[0];
+  if (ctx.world.hasComponent(workerEntity, MOVE_COMMAND)) {
+    ctx.world.removeComponent(workerEntity, MOVE_COMMAND);
+  }
+  ctx.world.addComponent<MoveCommandComponent>(workerEntity, MOVE_COMMAND, {
+    path: [],
+    currentWaypoint: 0,
+    destX: firstSeg.x,
+    destZ: firstSeg.z,
+  });
+
+  ctx.world.addComponent<BuildCommandComponent>(workerEntity, BUILD_COMMAND, {
+    buildingType: BuildingType.Wall,
+    targetX: firstSeg.x,
+    targetZ: firstSeg.z,
+    state: 'moving',
+    siteEntity: siteEntities[0],
+  });
+
+  // Add wall build queue if multiple segments
+  if (siteEntities.length > 1) {
+    ctx.world.addComponent<WallBuildQueueComponent>(workerEntity, WALL_BUILD_QUEUE, {
+      siteEntities: siteEntities,
+      currentIndex: 0,
+    });
+  }
 }
 
 export function assignRepair(ctx: AIContext, worker: number, buildingEntity: number): void {

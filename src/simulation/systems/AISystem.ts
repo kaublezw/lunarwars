@@ -1,6 +1,10 @@
 import type { System, World } from '@core/ECS';
-import { POSITION, MOVE_COMMAND } from '@sim/components/ComponentTypes';
+import { POSITION, MOVE_COMMAND, UNIT_TYPE, RESUPPLY_SEEK, BUILDING, TEAM, CONSTRUCTION, HEALTH } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
+import type { UnitTypeComponent } from '@sim/components/UnitType';
+import type { BuildingComponent } from '@sim/components/Building';
+import type { TeamComponent } from '@sim/components/Team';
+import type { HealthComponent } from '@sim/components/Health';
 
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
@@ -19,6 +23,7 @@ import {
   TICK_INTERVAL, RALLY_OFFSET, INFLUENCE_GRID,
   WORKER_SCALING_BASE,
   SCOUT_WAYPOINTS,
+  WALL_SEGMENT_COST, MAX_AI_WALLS,
 } from '@sim/ai/AITypes';
 
 import {
@@ -27,10 +32,13 @@ import {
   getFerryCountByDepot, findIsolatedTarget, getNextScoutTarget,
   getDamagedBuildings,
 } from '@sim/ai/AIQueries';
-import { findBuildLocation, findEnergyNodeLocation } from '@sim/ai/AILocationFinder';
+import {
+  findBuildLocation, findEnergyNodeLocation,
+  findExtractorWallPlan, findChokepointWallPlan, findBasePerimeterWallPlan,
+} from '@sim/ai/AILocationFinder';
 import {
   issueMove, createConstructionSite, trainUnit,
-  trainFromHQ, assignFerry, assignRepair,
+  trainFromHQ, assignFerry, assignRepair, createWallSegments,
 } from '@sim/ai/AIActions';
 import { updateInfluenceGrid } from '@sim/ai/AIInfluence';
 import { updateSquads, executeSquadOrders } from '@sim/ai/AISquads';
@@ -205,6 +213,7 @@ export class AISystem implements System {
 
     // === ECONOMY ===
     this.executeBuildOrder(ctx, state, phase);
+    this.executeWallBuilding(ctx, state, phase);
     this.executeProduction(ctx, state, hq);
 
     // === LOGISTICS ===
@@ -269,30 +278,32 @@ export class AISystem implements System {
       { condition: extractors === 0, type: BuildingType.EnergyExtractor, save: true },
       // 2. No plants — fundamental
       { condition: plants === 0, type: BuildingType.MatterPlant, save: true },
-      // 3. Energy stalled (net <= 0) — emergency extractor
+      // 3. Plants behind extractors — enforce 1:1 parity early
+      { condition: plants < extractors && netEnergy >= 4, type: BuildingType.MatterPlant, save: false },
+      // 4. Energy stalled (net <= 0) — emergency extractor
       { condition: netEnergy <= 0 && extractors > 0, type: BuildingType.EnergyExtractor, save: false },
-      // 4. No factory — fundamental
+      // 5. No factory — fundamental
       { condition: factories === 0, type: BuildingType.DroneFactory, save: true },
-      // 5. No depot once factory exists
+      // 6. No depot once factory exists
       { condition: depots === 0 && factories >= 1, type: BuildingType.SupplyDepot, save: false },
-      // 6. Energy running low (net <= 2)
+      // 7. Energy running low (net <= 2)
       { condition: netEnergy <= 2, type: BuildingType.EnergyExtractor, save: false },
-      // 7. Factories starving for matter
-      { condition: matterIncome < targetMatter && netEnergy >= 4, type: BuildingType.MatterPlant, save: false },
-      // 8. Floating matter — add factory
+      // 8. Factories starving for matter
+      { condition: matterIncome < targetMatter && netEnergy >= 3, type: BuildingType.MatterPlant, save: false },
+      // 9. Floating matter — add factory
       { condition: state.totalMatter > 300 && factories < 8, type: BuildingType.DroneFactory, save: false },
-      // 9. Depot scaling
+      // 10. Depot scaling
       { condition: depots < 1 + Math.floor(factories / 2), type: BuildingType.SupplyDepot, save: false },
-      // 10. Energy headroom
-      { condition: extractors < Math.ceil((plants * 2 + factories) / 5) + 2, type: BuildingType.EnergyExtractor, save: false },
-      // 11. Matter scaling
+      // 11. Energy headroom (tighter +1 to avoid over-expanding extractors)
+      { condition: extractors < Math.ceil((plants * 2 + factories) / 5) + 1, type: BuildingType.EnergyExtractor, save: false },
+      // 12. Matter scaling
       { condition: matterIncome < factories * 1.5 && netEnergy >= 4, type: BuildingType.MatterPlant, save: false },
-      // 12. Late-game overflow
+      // 13. Late-game overflow
       { condition: state.totalMatter > 450 && factories < 8, type: BuildingType.DroneFactory, save: false },
-      // 13. Always expand to unclaimed energy nodes
+      // 14. Always expand to unclaimed energy nodes
       { condition: hasUnclaimedNode, type: BuildingType.EnergyExtractor, save: false },
-      // 14. Match plants to extractors
-      { condition: plants < Math.floor(extractors / 2) && netEnergy >= 6, type: BuildingType.MatterPlant, save: false },
+      // 15. Late-game catchup — reinforce 1:1 parity
+      { condition: plants < extractors && netEnergy >= 4, type: BuildingType.MatterPlant, save: false },
     ];
 
     for (const rule of rules) {
@@ -318,6 +329,92 @@ export class AISystem implements System {
       }
 
       createConstructionSite(ctx, rule.type, location.x, location.z, idleWorkers[0]);
+
+      // Escort remote builds with a combat drone
+      const dx = location.x - ctx.baseX;
+      const dz = location.z - ctx.baseZ;
+      if (dx * dx + dz * dz > 30 * 30) {
+        let bestEscort = -1;
+        let bestDistSq = Infinity;
+        for (const unit of state.myCombat) {
+          if (ctx.world.hasComponent(unit, MOVE_COMMAND)) continue;
+          if (ctx.world.hasComponent(unit, RESUPPLY_SEEK)) continue;
+          const ut = ctx.world.getComponent<UnitTypeComponent>(unit, UNIT_TYPE);
+          if (!ut || ut.category !== UnitCategory.CombatDrone) continue;
+          const upos = ctx.world.getComponent<PositionComponent>(unit, POSITION);
+          if (!upos) continue;
+          const edx = upos.x - location.x;
+          const edz = upos.z - location.z;
+          const distSq = edx * edx + edz * edz;
+          if (distSq < bestDistSq) {
+            bestDistSq = distSq;
+            bestEscort = unit;
+          }
+        }
+        if (bestEscort >= 0) {
+          issueMove(ctx, bestEscort, location.x, location.z);
+        }
+      }
+
+      return;
+    }
+  }
+
+  // --- Wall Building ---
+
+  private executeWallBuilding(ctx: AIContext, state: AIWorldState, phase: AIPhase): void {
+    if (phase === 'early') return;
+
+    const idleWorkers = getIdleWorkers(ctx, state);
+    if (idleWorkers.length < 2) return; // Keep at least one worker free
+
+    // Count existing walls + wall constructions
+    let wallCount = 0;
+    const buildings = ctx.world.query(BUILDING, TEAM, HEALTH);
+    for (const e of buildings) {
+      const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (team.team !== ctx.team) continue;
+      const bldg = ctx.world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (bldg.buildingType !== BuildingType.Wall) continue;
+      const health = ctx.world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (health.dead) continue;
+      wallCount++;
+    }
+    if (wallCount >= MAX_AI_WALLS) return;
+
+    // Priority order by phase
+    type PlanFinder = () => ReturnType<typeof findExtractorWallPlan>;
+    const planners: PlanFinder[] = [];
+
+    // 1. Extractor defense from buildup phase onward
+    if (phase === 'buildup' || phase === 'midgame' || phase === 'lategame') {
+      planners.push(() => findExtractorWallPlan(ctx, state, this.enemyMemory));
+    }
+
+    // 2. Chokepoint control from midgame with army >= 5
+    if ((phase === 'midgame' || phase === 'lategame') && state.totalArmySize >= 5) {
+      planners.push(() => findChokepointWallPlan(ctx, state, this.enemyMemory));
+    }
+
+    // 3. Base perimeter in lategame only
+    if (phase === 'lategame') {
+      planners.push(() => findBasePerimeterWallPlan(ctx, state, this.enemyMemory));
+    }
+
+    for (const planner of planners) {
+      const plan = planner();
+      if (!plan) continue;
+
+      // Cap segments so we don't exceed MAX_AI_WALLS
+      const maxNew = MAX_AI_WALLS - wallCount;
+      const segments = plan.slice(0, maxNew);
+      if (segments.length < 2) continue;
+
+      const totalCost = segments.length * WALL_SEGMENT_COST;
+      if (!ctx.resources.canAffordMatter(ctx.team, totalCost)) continue;
+
+      ctx.resources.spendMatter(ctx.team, totalCost);
+      createWallSegments(ctx, segments, idleWorkers[0]);
       return;
     }
   }

@@ -52,4 +52,14 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     meshType: 'drone_factory',
     needsEnergyNode: false,
   },
+  [BuildingType.Wall]: {
+    type: BuildingType.Wall,
+    energyCost: 0,
+    matterCost: 12,
+    buildTime: 3.5,
+    hp: 500,
+    visionRange: 3,
+    meshType: 'wall_x',
+    needsEnergyNode: false,
+  },
 };

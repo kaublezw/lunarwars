@@ -53,7 +53,7 @@ import { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { VoxelMeshManager } from '@render/VoxelMeshManager';
 import { DepotRangeRenderer } from '@render/DepotRangeRenderer';
 import { SupplySystem } from '@sim/systems/SupplySystem';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE, TURRET, MATTER_STORAGE } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE, TURRET, MATTER_STORAGE, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import type { BuildingComponent } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -76,6 +76,7 @@ import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
+import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 
 // --- Renderer ---
 const app = document.getElementById('app')!;
@@ -95,15 +96,8 @@ const scenarioMode = new URLSearchParams(window.location.search).get('scenario')
 // --- Scene ---
 const sceneManager = new SceneManager();
 const isoCamera = new IsometricCamera(window.innerWidth, window.innerHeight);
+isoCamera.setCanvas(renderer.domElement);
 
-// Zoom slider: slider value 10–200, mapping zoom = 210 - value
-// (slider max at top = value 200 = zoom 10 = zoomed in; slider min at bottom = zoom out)
-const zoomSlider = document.getElementById('zoom-slider') as HTMLInputElement | null;
-if (zoomSlider) {
-  zoomSlider.addEventListener('input', () => {
-    isoCamera.setZoom(210 - Number(zoomSlider.value));
-  });
-}
 
 // --- Save/Load Detection ---
 const SAVE_KEY = 'lunarwars_save';
@@ -123,7 +117,7 @@ if (savedRaw) {
   try {
     const parsed = JSON.parse(savedRaw);
     // Reject old saves or saves from mismatched mode
-    if (parsed.version >= 12 && !!parsed.spectator === spectatorMode) {
+    if (parsed.version >= 13 && !!parsed.spectator === spectatorMode) {
       saveData = parsed;
     } else {
       sessionStorage.removeItem(SAVE_KEY);
@@ -526,6 +520,9 @@ if (!spectatorMode && scenarioMode !== 'sandbox') {
   minimap.onRightClick = (worldX, worldZ) => {
     selectionController!.issueMoveTo(worldX, worldZ);
   };
+  minimap.onLeftClick = (worldX, worldZ) => {
+    isoCamera.setTarget(worldX, 0, worldZ);
+  };
 }
 
 // --- Renderers ---
@@ -555,6 +552,7 @@ const voxelMeshManager = new VoxelMeshManager(sceneManager.scene);
 voxelMeshManager.setFogState(fogState, initialFogTeam);
 voxelMeshManager.setDebrisRenderer(debrisRenderer);
 selectionRenderer.setVoxelMeshManager(voxelMeshManager);
+xrayRenderer.setVoxelMeshManager(voxelMeshManager);
 const depotRangeRenderer = new DepotRangeRenderer(sceneManager.scene);
 depotRangeRenderer.setPlayerTeam(initialFogTeam);
 
@@ -564,9 +562,11 @@ if (selectionController) {
   selectionController.onBoxSelectEnd = () => boxSelectRenderer.hide();
 }
 
-// --- Wire Action Bar + Placement (player mode only) ---
-if (actionBar && placementController) {
-  actionBar.onBuildRequest((type) => {
+// --- Wire Action Bar + Placement ---
+let wallWorkerEntity = -1; // captured when Wall button is clicked so it survives deselection during drag
+
+function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void {
+  ab.onBuildRequest((type) => {
     // Find a selected worker belonging to the player
     const selectables = world.query(SELECTABLE, UNIT_TYPE, TEAM);
     let workerEntity = -1;
@@ -590,10 +590,22 @@ if (actionBar && placementController) {
     if (!def) return;
     if (!resourceState.canAfford(PLAYER_TEAM, def.energyCost)) return;
 
-    placementController!.enterPlacementMode(type);
+    if (type === BuildingType.Wall) {
+      wallWorkerEntity = workerEntity;
+      pc.enterWallPlacementMode();
+    } else {
+      pc.enterPlacementMode(type);
+    }
   });
 
-  actionBar.onTrainRequest((unitType) => {
+  pc.setWallMaxSegments(() => {
+    const def = BUILDING_DEFS[BuildingType.Wall];
+    if (!def || def.matterCost === 0) return Infinity;
+    const matter = resourceState.get(PLAYER_TEAM).matter;
+    return Math.floor(matter / def.matterCost);
+  });
+
+  ab.onTrainRequest((unitType) => {
     const def = UNIT_DEFS[unitType];
     if (!def) return;
     if (!resourceState.canAfford(PLAYER_TEAM, def.energyCost)) return;
@@ -632,7 +644,26 @@ if (actionBar && placementController) {
     }
   });
 
-  placementController.onPlacementConfirmed((type, x, z) => {
+  ab.onDemolishRequest((entity) => {
+    // Verify entity is a valid non-HQ building belonging to player
+    const building = world.getComponent<BuildingComponent>(entity, BUILDING);
+    if (!building || building.buildingType === BuildingType.HQ) return;
+    const team = world.getComponent<TeamComponent>(entity, TEAM);
+    if (!team || team.team !== PLAYER_TEAM) return;
+    // Don't demolish buildings still under construction
+    if (world.hasComponent(entity, CONSTRUCTION)) return;
+
+    // Refund 70% of matter cost
+    const def = BUILDING_DEFS[building.buildingType];
+    if (def) {
+      const refund = Math.floor(def.matterCost * 0.7);
+      resourceState.get(PLAYER_TEAM).matter += refund;
+    }
+
+    world.destroyEntity(entity);
+  });
+
+  pc.onPlacementConfirmed((type, x, z) => {
     const def = BUILDING_DEFS[type];
     if (!def) return;
     if (!resourceState.canAfford(PLAYER_TEAM, def.energyCost)) return;
@@ -745,17 +776,153 @@ if (actionBar && placementController) {
     ghostRenderer.hide();
   });
 
-  placementController.onPlacementCancelled(() => {
+  pc.onPlacementCancelled(() => {
     ghostRenderer.hide();
   });
 
-  placementController.onPlacementUpdate((x, z, valid) => {
+  pc.onPlacementUpdate((x, z, valid) => {
     ghostRenderer.update(
-      placementController!.isActive(),
-      placementController!.getBuildingType(),
+      pc.isActive(),
+      pc.getBuildingType(),
       x, z, valid,
     );
   });
+
+  // --- Wall placement callbacks ---
+
+  pc.onWallPlacementConfirmed((segments) => {
+    const def = BUILDING_DEFS[BuildingType.Wall];
+    if (!def) return;
+
+    const totalMatterCost = segments.length * def.matterCost;
+
+    // Use the worker captured when Wall button was clicked (survives deselection during drag)
+    const workerEntity = wallWorkerEntity;
+    wallWorkerEntity = -1;
+    if (workerEntity === -1) return;
+    // Verify the worker is still alive and not building
+    if (!world.getComponent<PositionComponent>(workerEntity, POSITION)) return;
+    if (world.hasComponent(workerEntity, BUILD_COMMAND)) return;
+
+    // Check and deduct matter
+    if (totalMatterCost > 0) {
+      if (!resourceState.canAffordMatter(PLAYER_TEAM, totalMatterCost)) return;
+      resourceState.spendMatter(PLAYER_TEAM, totalMatterCost);
+    }
+
+    // Deduct energy
+    if (def.energyCost > 0) {
+      if (!resourceState.canAfford(PLAYER_TEAM, def.energyCost * segments.length)) return;
+      resourceState.spend(PLAYER_TEAM, def.energyCost * segments.length);
+    }
+
+    // Cancel ferry if worker was ferrying
+    if (world.hasComponent(workerEntity, SUPPLY_ROUTE)) {
+      world.removeComponent(workerEntity, SUPPLY_ROUTE);
+    }
+
+    // Create construction site entities for each segment
+    const siteEntities: number[] = [];
+    for (const seg of segments) {
+      const site = world.createEntity();
+      const siteY = terrainData.getHeight(seg.x, seg.z);
+
+      world.addComponent<PositionComponent>(site, POSITION, {
+        x: seg.x, y: siteY, z: seg.z,
+        prevX: seg.x, prevY: siteY, prevZ: seg.z,
+        rotation: 0,
+      });
+
+      world.addComponent<RenderableComponent>(site, RENDERABLE, {
+        meshType: seg.meshType,
+        color: TEAM_COLORS[PLAYER_TEAM],
+        scale: 1.0,
+      });
+
+      world.addComponent<TeamComponent>(site, TEAM, { team: PLAYER_TEAM });
+
+      world.addComponent<BuildingComponent>(site, BUILDING, {
+        buildingType: BuildingType.Wall,
+      });
+
+      world.addComponent<HealthComponent>(site, HEALTH, {
+        current: 50,
+        max: def.hp,
+        dead: false,
+      });
+
+      world.addComponent<ConstructionComponent>(site, CONSTRUCTION, {
+        buildingType: BuildingType.Wall,
+        progress: 0,
+        buildTime: def.buildTime,
+        builderEntity: workerEntity,
+      });
+
+      world.addComponent<SelectableComponent>(site, SELECTABLE, { selected: false });
+
+      // Voxel state: start with first layer visible, rest destroyed
+      const finalModel = VOXEL_MODELS[seg.meshType];
+      if (finalModel) {
+        const destroyedMask = new Uint8Array(Math.ceil(finalModel.totalSolid / 8));
+        destroyedMask.fill(255);
+        for (let i = 0; i < finalModel.firstLayerCount; i++) {
+          const solidIdx = finalModel.buildOrder[i];
+          destroyedMask[solidIdx >> 3] &= ~(1 << (solidIdx & 7));
+        }
+        world.addComponent<VoxelStateComponent>(site, VOXEL_STATE, {
+          modelId: seg.meshType,
+          totalVoxels: finalModel.totalSolid,
+          destroyedCount: finalModel.totalSolid - finalModel.firstLayerCount,
+          destroyed: destroyedMask,
+          dirty: true,
+          pendingDebris: [],
+          pendingScorch: [],
+        });
+      }
+
+      siteEntities.push(site);
+    }
+
+    // Issue move + build command for first segment
+    const firstSeg = segments[0];
+    world.addComponent<MoveCommandComponent>(workerEntity, MOVE_COMMAND, {
+      path: [],
+      currentWaypoint: 0,
+      destX: firstSeg.x,
+      destZ: firstSeg.z,
+    });
+
+    world.addComponent<BuildCommandComponent>(workerEntity, BUILD_COMMAND, {
+      buildingType: BuildingType.Wall,
+      targetX: firstSeg.x,
+      targetZ: firstSeg.z,
+      state: 'moving',
+      siteEntity: siteEntities[0],
+    });
+
+    // Add wall build queue if multiple segments
+    if (siteEntities.length > 1) {
+      world.addComponent<WallBuildQueueComponent>(workerEntity, WALL_BUILD_QUEUE, {
+        siteEntities: siteEntities,
+        currentIndex: 0,
+      });
+    }
+
+    ghostRenderer.hideWall();
+  });
+
+  pc.onWallPlacementUpdate((segments) => {
+    ghostRenderer.updateWall(segments);
+  });
+
+  pc.onWallPlacementCancelled(() => {
+    ghostRenderer.hideWall();
+  });
+}
+
+// Call for normal game mode
+if (actionBar && placementController) {
+  wireActionBarAndPlacement(actionBar, placementController);
 }
 
 // --- Wire Spectator Panel ---
@@ -826,10 +993,16 @@ const gameLoop = new GameLoop(
     }
     if (sandboxPanel) {
       sandboxPanel.update();
+      if (sandboxPanel.getMode() === 'play') {
+        for (let t = 0; t < 2; t++) {
+          const res = resourceState.get(t);
+          if (res.energy < 100000) res.energy += 100000;
+          if (res.matter < 100000) res.matter += 100000;
+        }
+      }
     }
     renderer.render(sceneManager.scene, isoCamera.getCamera());
 
-    if (zoomSlider) zoomSlider.value = String(Math.round(210 - isoCamera.getZoom()));
 
     const now = performance.now();
     const frameDelta = now - lastFrameTime;
@@ -859,20 +1032,84 @@ let sandboxPanel: SandboxPanel | null = null;
 if (scenarioMode === 'sandbox') {
   sandboxPanel = new SandboxPanel(
     world, terrainData, isoCamera, inputManager,
-    spawnCombatUnit, spawnBuilding,
+    spawnCombatUnit, spawnBuilding, ghostRenderer,
     sceneManager.scene, sceneManager.dirLight, sceneManager.ambientLight,
   );
   sandboxPanel.mount(app);
 
+  sandboxPanel.onSpawnWallSegments = (segments, team) => {
+    for (const seg of segments) {
+      const e = spawnBuilding(seg.x, seg.z, team, BuildingType.Wall);
+      // Fix meshType to match the segment orientation (spawnBuilding defaults to wall_x)
+      if (seg.meshType !== 'wall_x') {
+        const renderable = world.getComponent<RenderableComponent>(e, RENDERABLE);
+        if (renderable) {
+          renderable.meshType = seg.meshType;
+        }
+        const vs = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE);
+        if (vs) {
+          vs.modelId = seg.meshType;
+          const voxelModel = VOXEL_MODELS[seg.meshType];
+          if (voxelModel) {
+            vs.totalVoxels = voxelModel.totalSolid;
+            vs.destroyed = new Uint8Array(Math.ceil(voxelModel.totalSolid / 8));
+            vs.destroyedCount = 0;
+            vs.dirty = true;
+          }
+        }
+      }
+    }
+  };
+
   sandboxPanel.onPlay = () => {
     // Create SelectionController for play mode (no fog check, all entities pickable)
     selectionController = new SelectionController(inputManager, isoCamera, world, eventBus);
-    // Don't set fogState -- null fogState skips fog visibility checks
     selectionController.onBoxSelectUpdate = (x0, y0, x1, y1) => boxSelectRenderer.show(x0, y0, x1, y1);
     selectionController.onBoxSelectEnd = () => boxSelectRenderer.hide();
     minimap.onRightClick = (worldX, worldZ) => {
       selectionController!.issueMoveTo(worldX, worldZ);
     };
+    minimap.onLeftClick = (worldX, worldZ) => {
+      isoCamera.setTarget(worldX, 0, worldZ);
+    };
+
+    // Create PlacementController + ActionBar for sandbox play mode
+    placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, PLAYER_TEAM);
+    selectionController.setPlacementCheck(() => placementController!.isActive());
+
+    if (!actionBar) {
+      actionBar = new ActionBar();
+      actionBar.mount(app);
+    }
+    if (!resourceDisplay) {
+      resourceDisplay = new ResourceDisplay();
+      resourceDisplay.mount(app);
+    }
+
+    // Grant effectively infinite resources for sandbox
+    for (let t = 0; t < 2; t++) {
+      const res = resourceState.get(t);
+      res.energy += 999999;
+      res.matter += 999999;
+    }
+
+    // Auto-spawn a worker if player team has none
+    const units = world.query(UNIT_TYPE, TEAM);
+    let hasWorker = false;
+    for (const e of units) {
+      const unit = world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
+      const team = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (team.team === PLAYER_TEAM && unit.category === UnitCategory.WorkerDrone) {
+        hasWorker = true;
+        break;
+      }
+    }
+    if (!hasWorker) {
+      spawnCombatUnit(128, 128, PLAYER_TEAM, UnitCategory.WorkerDrone);
+    }
+
+    // Wire all action bar + placement callbacks (shared with normal game mode)
+    wireActionBarAndPlacement(actionBar, placementController);
 
     gameLoop.togglePause(); // unpause
     pauseOverlay.hide();
@@ -961,7 +1198,7 @@ if (scenarioMode !== 'sandbox') {
   setInterval(() => {
     try {
       const data: Record<string, unknown> = {
-        version: 12,
+        version: 13,
         seed,
         spectator: spectatorMode,
         world: world.serialize(),

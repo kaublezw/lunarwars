@@ -6,6 +6,7 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { TeamComponent } from '@sim/components/Team';
 import type { HealthComponent } from '@sim/components/Health';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
+import type { VoxelMeshManager } from '@render/VoxelMeshManager';
 
 const XRAY_VS = `
 void main() {
@@ -36,6 +37,7 @@ export class XRayRenderer {
   private fogState: FogOfWarState | null = null;
   private playerTeam = 0;
   private objectGetter: ((e: Entity) => THREE.Object3D | undefined) | null = null;
+  private voxelMeshManager: VoxelMeshManager | null = null;
 
   private webglRenderer: THREE.WebGLRenderer | null = null;
   private camera: THREE.Camera | null = null;
@@ -107,6 +109,10 @@ export class XRayRenderer {
     this.objectGetter = fn;
   }
 
+  setVoxelMeshManager(vmm: VoxelMeshManager): void {
+    this.voxelMeshManager = vmm;
+  }
+
   sync(world: World, alpha: number): void {
     this.renderBuildingDepth();
 
@@ -114,9 +120,9 @@ export class XRayRenderer {
     const activeEntities = new Set<Entity>();
 
     for (const e of entities) {
-      // Player units only
+      // Player units only (spectator mode shows all teams)
       const team = world.getComponent<TeamComponent>(e, TEAM)!;
-      if (team.team !== this.playerTeam) continue;
+      if (this.playerTeam >= 0 && team.team !== this.playerTeam) continue;
 
       // Skip dead units
       const health = world.getComponent<HealthComponent>(e, HEALTH);
@@ -181,6 +187,21 @@ export class XRayRenderer {
   }
 
   private createSilhouette(entity: Entity): THREE.Mesh | null {
+    // Try VoxelMeshManager first (all units/buildings use voxel rendering)
+    if (this.voxelMeshManager) {
+      const bounds = this.voxelMeshManager.getEntityBounds(entity);
+      if (bounds) {
+        const size = new THREE.Vector3();
+        bounds.getSize(size);
+        const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
+        geo.translate(0, size.y / 2, 0);
+        const mesh = new THREE.Mesh(geo, this.xrayMaterial);
+        mesh.renderOrder = 999;
+        return mesh;
+      }
+    }
+
+    // Fallback to RenderSync path for non-voxel entities
     if (!this.objectGetter) return null;
     const obj = this.objectGetter(entity);
     if (!obj) return null;
@@ -191,7 +212,6 @@ export class XRayRenderer {
     const geos: THREE.BufferGeometry[] = [];
     obj.traverse((child) => {
       if (!(child instanceof THREE.Mesh) || !child.geometry) return;
-      // Skip wireframe overlay meshes
       const mat = child.material;
       if (mat instanceof THREE.MeshBasicMaterial && mat.wireframe) return;
 

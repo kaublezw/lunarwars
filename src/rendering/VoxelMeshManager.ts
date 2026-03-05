@@ -133,6 +133,12 @@ export class VoxelMeshManager {
     return this.entityBounds.get(entity);
   }
 
+  /** Get the body mesh for an entity */
+  getEntityMesh(entity: Entity): THREE.Mesh | null {
+    const state = this.entityStates.get(entity);
+    return state ? state.bodyMesh : null;
+  }
+
   /** Check if an entity is managed by this renderer */
   hasEntity(entity: Entity): boolean {
     return this.entityStates.has(entity);
@@ -152,11 +158,11 @@ export class VoxelMeshManager {
       const existing = this.entityStates.get(e);
 
       if (!existing) {
-        this.addEntity(e, voxelState, renderable, teamNum);
+        this.addEntity(e, voxelState, renderable, teamNum, world);
       } else if (existing.meshType !== voxelState.modelId) {
         // Model changed (e.g., construction_site -> building)
         this.removeEntity(e);
-        this.addEntity(e, voxelState, renderable, teamNum);
+        this.addEntity(e, voxelState, renderable, teamNum, world);
       } else if (voxelState.dirty) {
         // Damage changed - mark for rebuild and handle debris
         const pos = world.getComponent<PositionComponent>(e, POSITION)!;
@@ -442,7 +448,7 @@ export class VoxelMeshManager {
     return cached;
   }
 
-  private addEntity(e: Entity, voxelState: VoxelStateComponent, _renderable: RenderableComponent | undefined, team: number): void {
+  private addEntity(e: Entity, voxelState: VoxelStateComponent, _renderable: RenderableComponent | undefined, team: number, world: World): void {
     const model = VOXEL_MODELS[voxelState.modelId];
     if (!model) return;
     if (model.totalSolid === 0) return;
@@ -471,12 +477,21 @@ export class VoxelMeshManager {
     bodyMesh.receiveShadow = false;
     this.scene.add(bodyMesh);
 
+    // Enable layer 1 on building meshes for XRay depth pass
+    if (world.hasComponent(e, BUILDING)) {
+      bodyMesh.layers.enable(1);
+    }
+
     let turretMesh: THREE.Mesh | null = null;
     if (turretGeo) {
       turretMesh = new THREE.Mesh(turretGeo, _material);
       turretMesh.castShadow = true;
       turretMesh.receiveShadow = false;
       this.scene.add(turretMesh);
+
+      if (world.hasComponent(e, BUILDING)) {
+        turretMesh.layers.enable(1);
+      }
     }
 
     this.entityStates.set(e, {
