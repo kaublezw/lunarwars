@@ -33,6 +33,7 @@ interface DebrisParticle {
   isRubble: boolean;
   emissive: number; // 0-1 glow intensity
   glowColor: THREE.Color;
+  dieOnGlowFade: boolean;
 }
 
 // Temp objects
@@ -123,6 +124,7 @@ export class DebrisRenderer {
         isRubble: false,
         emissive: 0,
         glowColor: new THREE.Color(1, 1, 1),
+        dieOnGlowFade: false,
       });
     }
 
@@ -143,6 +145,7 @@ export class DebrisRenderer {
     color: number,
     initialEmissive = 0,
     glowColor = 0xffffff,
+    dieOnGlowFade = false,
   ): void {
     // Find a dead particle slot
     let slot = -1;
@@ -181,6 +184,7 @@ export class DebrisRenderer {
     p.color.setHex(color);
     p.emissive = initialEmissive;
     p.glowColor.setHex(glowColor);
+    p.dieOnGlowFade = dieOnGlowFade;
 
     this.activeCount = Math.max(this.activeCount, slot + 1);
   }
@@ -261,6 +265,13 @@ export class DebrisRenderer {
       // Decay emissive glow
       if (p.emissive > 0) {
         p.emissive = Math.max(0, p.emissive - dt * EMISSIVE_DECAY_RATE);
+        if (p.emissive === 0 && p.dieOnGlowFade) {
+          p.alive = false;
+          _mat4.makeScale(0, 0, 0);
+          this.instancedMesh.setMatrixAt(i, _mat4);
+          this.emissiveArray[i] = 0;
+          continue;
+        }
       }
 
       // Physics: gravity + velocity

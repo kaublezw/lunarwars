@@ -22,6 +22,10 @@ export function findBuildLocation(
     return findEnergyNodeLocation(ctx);
   }
 
+  if (type === BuildingType.MatterPlant) {
+    return findOreDepositLocation(ctx);
+  }
+
   if (type === BuildingType.SupplyDepot) {
     return findDepotLocation(ctx, state, enemyMemory);
   }
@@ -169,6 +173,62 @@ export function findEnergyNodeLocation(ctx: AIContext): { x: number; z: number }
 
   if (bestNode) {
     return { x: Math.round(bestNode.x), z: Math.round(bestNode.z) };
+  }
+
+  return null;
+}
+
+export function findOreDepositLocation(ctx: AIContext): { x: number; z: number } | null {
+  const claimedDeposits = new Set<string>();
+
+  const buildings = ctx.world.query(BUILDING, POSITION);
+  for (const e of buildings) {
+    const building = ctx.world.getComponent<BuildingComponent>(e, BUILDING)!;
+    if (building.buildingType === BuildingType.MatterPlant) {
+      const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
+      for (const dep of ctx.oreDeposits) {
+        const dx = dep.x - pos.x;
+        const dz = dep.z - pos.z;
+        if (dx * dx + dz * dz < 25) {
+          claimedDeposits.add(`${dep.x},${dep.z}`);
+        }
+      }
+    }
+  }
+
+  const constructions = ctx.world.query(CONSTRUCTION, POSITION);
+  for (const e of constructions) {
+    const construction = ctx.world.getComponent<ConstructionComponent>(e, CONSTRUCTION)!;
+    if (construction.buildingType === BuildingType.MatterPlant) {
+      const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
+      for (const dep of ctx.oreDeposits) {
+        const dx = dep.x - pos.x;
+        const dz = dep.z - pos.z;
+        if (dx * dx + dz * dz < 25) {
+          claimedDeposits.add(`${dep.x},${dep.z}`);
+        }
+      }
+    }
+  }
+
+  let bestDeposit: { x: number; z: number } | null = null;
+  let bestDistSq = Infinity;
+
+  for (const dep of ctx.oreDeposits) {
+    if (claimedDeposits.has(`${dep.x},${dep.z}`)) continue;
+    if (!ctx.fog.isExplored(ctx.team, dep.x, dep.z)) continue;
+
+    const dx = dep.x - ctx.baseX;
+    const dz = dep.z - ctx.baseZ;
+    const distSq = dx * dx + dz * dz;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestDeposit = { x: dep.x, z: dep.z };
+    }
+  }
+
+  if (bestDeposit) {
+    return { x: Math.round(bestDeposit.x), z: Math.round(bestDeposit.z) };
   }
 
   return null;

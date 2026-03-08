@@ -2,7 +2,7 @@ import type { World } from '@core/ECS';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
-import type { EnergyNode } from '@sim/terrain/MapFeatures';
+import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -10,18 +10,19 @@ import { UnitCategory } from '@sim/components/UnitType';
 // --- Constants ---
 
 export const TEAM_COLORS = [0x4488ff, 0xff4444];
-export const TICK_INTERVAL = 30;
+export const TICK_INTERVAL = 10;
 export const BASE_DEFENSE_RADIUS = 30;
 export const RALLY_OFFSET = 15;
-export const ATTACK_THRESHOLD = 10;
+export const ATTACK_THRESHOLD = 5;
 export const RETREAT_HP_FRACTION = 0.3;
 export const MAX_QUEUE_DEPTH = 3;
-export const FORCE_ATTACK_TICKS = 900;
+export const FORCE_ATTACK_TICKS = 600;
 export const REATTACK_COOLDOWN_TICKS = 120;
-export const OVERWHELMING_ARMY = 12;
-export const REATTACK_THRESHOLD = 6;
+export const OVERWHELMING_ARMY = 8;
+export const REATTACK_THRESHOLD = 3;
 export const STAGING_RADIUS = 15;
-export const STAGING_READY_FRACTION = 0.75;
+export const STAGING_READY_FRACTION = 0.6;
+export const STAGING_TIMEOUT_TICKS = 60;
 
 // Enemy Memory
 export const MEMORY_DECAY_TICKS = 600;
@@ -48,12 +49,56 @@ export const WALL_NEARBY_RADIUS_SQ = 64; // 8wu squared
 // Dynamic Economy
 export const WORKER_SCALING_BASE = 3;
 
-// Scout waypoints: 5x5 grid covering the 256x256 map at 48-unit spacing
-export const SCOUT_WAYPOINTS: { x: number; z: number }[] = [];
-for (let row = 0; row < 5; row++) {
-  for (let col = 0; col < 5; col++) {
-    SCOUT_WAYPOINTS.push({ x: 32 + col * 48, z: 32 + row * 48 });
+// Generate spiral scout waypoints expanding outward from a team's base position.
+// Spacing 24wu ensures full coverage with aerial vision radius ~16wu.
+export function generateSpiralWaypoints(baseX: number, baseZ: number): { x: number; z: number }[] {
+  const SPACING = 24;
+  const MIN = 10;
+  const MAX = 246;
+  const result: { x: number; z: number }[] = [];
+  const seen = new Set<string>();
+
+  // Start at base
+  const clampedBase = {
+    x: Math.max(MIN, Math.min(MAX, Math.round(baseX))),
+    z: Math.max(MIN, Math.min(MAX, Math.round(baseZ))),
+  };
+  const key0 = `${clampedBase.x},${clampedBase.z}`;
+  seen.add(key0);
+  result.push(clampedBase);
+
+  // Walk concentric square rings outward
+  // Ring r has side length 2r, perimeter = 8r points
+  // Direction order: right, down, left, up (clockwise spiral)
+  const maxRing = Math.ceil(256 / SPACING);
+  for (let r = 1; r <= maxRing; r++) {
+    // Top-left corner of this ring relative to base (in grid units)
+    let gx = -r;
+    let gz = -r;
+    // Walk 4 sides: top (right), right (down), bottom (left), left (up)
+    const moves: [number, number, number][] = [
+      [1, 0, 2 * r],   // top edge: move right
+      [0, 1, 2 * r],   // right edge: move down
+      [-1, 0, 2 * r],  // bottom edge: move left
+      [0, -1, 2 * r],  // left edge: move up
+    ];
+    for (const [dx, dz, steps] of moves) {
+      for (let s = 0; s < steps; s++) {
+        const wx = Math.round(baseX + gx * SPACING);
+        const wz = Math.round(baseZ + gz * SPACING);
+        const cx = Math.max(MIN, Math.min(MAX, wx));
+        const cz = Math.max(MIN, Math.min(MAX, wz));
+        const key = `${cx},${cz}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push({ x: cx, z: cz });
+        }
+        gx += dx;
+        gz += dz;
+      }
+    }
   }
+  return result;
 }
 
 // --- Types ---
@@ -130,10 +175,26 @@ export interface AIContext {
   terrain: TerrainData;
   fog: FogOfWarState;
   energyNodes: EnergyNode[];
+  oreDeposits: OreDeposit[];
   occupancy: BuildingOccupancy;
   baseX: number;
   baseZ: number;
   rallyX: number;
   rallyZ: number;
+  hqEntity: number;
   totalTicks: number;
+}
+
+export interface IntelligenceReport {
+  state: AIWorldState;
+  phase: AIPhase;
+  influenceGrid: Float32Array;
+  enemyMemory: Map<number, EnemyMemoryEntry>;
+}
+
+export interface AISerializedState {
+  totalTicks?: number;
+  intel: Record<string, unknown>;
+  economy: Record<string, unknown>;
+  military: Record<string, unknown>;
 }

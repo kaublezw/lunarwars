@@ -14,7 +14,7 @@ import {
   DEFENSE_SQUAD_SIZE, HARASS_SQUAD_SIZE, MIN_MAIN_ARMY_FOR_HARASS,
   DEFENSE_RADIUS, ATTACK_THRESHOLD, REATTACK_THRESHOLD,
   REATTACK_COOLDOWN_TICKS, FORCE_ATTACK_TICKS, STAGING_RADIUS,
-  STAGING_READY_FRACTION,
+  STAGING_READY_FRACTION, STAGING_TIMEOUT_TICKS,
 } from '@sim/ai/AITypes';
 import { issueMove, sendSquadTo, retreatWounded, pickAttackTarget } from '@sim/ai/AIActions';
 import { findInfluenceAwarePath, getInfluenceThreat, getInfluenceValue } from '@sim/ai/AIInfluence';
@@ -97,12 +97,12 @@ export function updateSquads(
     for (const id of squad.unitIds) assigned.add(id);
   }
 
-  // Aerial units beyond the 2 scouts are army-eligible
-  const armyAerial = state.myAerial.slice(2);
+  // Aerial units beyond the 1 scout are army-eligible
+  const armyAerial = state.myAerial.slice(1);
 
   // 3. Ensure defense squad exists (if total army >= 6)
   let defenseSquad = currentSquads.find(s => s.type === 'defense');
-  if (state.totalArmySize >= 6 && !defenseSquad) {
+  if (state.totalArmySize >= 8 && !defenseSquad) {
     defenseSquad = {
       id: currentNextId++, type: 'defense', mission: 'defend',
       unitIds: [], targetX: ctx.baseX, targetZ: ctx.baseZ,
@@ -139,8 +139,8 @@ export function updateSquads(
     }
   }
 
-  // Dissolve defense squad if army shrinks below 6
-  if (defenseSquad && state.totalArmySize < 6) {
+  // Dissolve defense squad if army shrinks below 8
+  if (defenseSquad && state.totalArmySize < 8) {
     currentSquads = currentSquads.filter(s => s !== defenseSquad);
     defenseSquad = undefined;
   }
@@ -384,7 +384,7 @@ function executeMainOrders(
   const armySize = squad.unitIds.length;
 
   // Trickle fix: abort attack if army decimated
-  if (attack.attackPhase !== 'idle' && armySize < 5) {
+  if (attack.attackPhase !== 'idle' && armySize < 3) {
     attack.attackPhase = 'idle';
     attack.reattackTimer = REATTACK_COOLDOWN_TICKS;
   }
@@ -406,7 +406,7 @@ function executeMainOrders(
     }
 
     const readyFraction = totalActive > 0 ? nearStaging / totalActive : 0;
-    if (readyFraction >= STAGING_READY_FRACTION || attack.stagingTimer >= 60) {
+    if (readyFraction >= STAGING_READY_FRACTION || attack.stagingTimer >= STAGING_TIMEOUT_TICKS) {
       attack.attackPhase = 'attacking';
       const centroid = getSquadCentroid(ctx, squad);
       squad.waypoints = findInfluenceAwarePath(influenceGrid, centroid.x, centroid.z, attack.attackTargetX, attack.attackTargetZ);

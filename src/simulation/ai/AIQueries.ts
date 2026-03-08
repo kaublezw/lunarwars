@@ -22,7 +22,7 @@ import type {
 } from '@sim/ai/AITypes';
 import {
   BASE_DEFENSE_RADIUS, EXTRACTOR_DEFENSE_RADIUS, MEMORY_DECAY_TICKS,
-  MEMORY_MAX_ENTRIES, SCOUT_WAYPOINTS,
+  MEMORY_MAX_ENTRIES,
 } from '@sim/ai/AITypes';
 
 export function findHQ(ctx: AIContext): number | null {
@@ -46,7 +46,6 @@ export function getBuildingCount(state: AIWorldState, type: BuildingType): numbe
 export function getIdleWorkers(ctx: AIContext, state: AIWorldState): number[] {
   return state.myWorkers.filter(
     e => !ctx.world.hasComponent(e, BUILD_COMMAND)
-      && !ctx.world.hasComponent(e, SUPPLY_ROUTE)
       && !ctx.world.hasComponent(e, REPAIR_COMMAND)
   );
 }
@@ -89,11 +88,15 @@ export function getFactoriesWithOpenSlots(ctx: AIContext, state: AIWorldState, m
   });
 }
 
-export function getFerryCountByDepot(ctx: AIContext, state: AIWorldState): Map<number, number> {
+export function getFerryCountByDepot(ctx: AIContext): Map<number, number> {
   const ferryCountByDepot = new Map<number, number>();
-  for (const w of state.myWorkers) {
-    if (!ctx.world.hasComponent(w, SUPPLY_ROUTE)) continue;
-    const route = ctx.world.getComponent<SupplyRouteComponent>(w, SUPPLY_ROUTE)!;
+  const units = ctx.world.query(UNIT_TYPE, TEAM, SUPPLY_ROUTE);
+  for (const e of units) {
+    const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+    if (team.team !== ctx.team) continue;
+    const ut = ctx.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
+    if (ut.category !== UnitCategory.FerryDrone) continue;
+    const route = ctx.world.getComponent<SupplyRouteComponent>(e, SUPPLY_ROUTE)!;
     const count = ferryCountByDepot.get(route.destEntity) ?? 0;
     ferryCountByDepot.set(route.destEntity, count + 1);
   }
@@ -254,7 +257,7 @@ export function assessWorldState(
     d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
   );
   const totalMatter = ctx.resources.get(ctx.team).matter;
-  const totalArmySize = myCombat.length + Math.max(0, myAerial.length - 2);
+  const totalArmySize = myCombat.length + Math.max(0, myAerial.length - 1);
 
   return {
     myWorkers, myCombat, myAerial, myBuildings, myConstructions,
@@ -350,19 +353,21 @@ export function findIsolatedTarget(state: AIWorldState): { x: number; z: number 
   return bestTarget;
 }
 
-export function getNextScoutTarget(ctx: AIContext, waypointIndex: number): { x: number; z: number } {
-  for (let i = 0; i < SCOUT_WAYPOINTS.length; i++) {
-    const idx = (waypointIndex + i) % SCOUT_WAYPOINTS.length;
-    const wp = SCOUT_WAYPOINTS[idx];
+export function getNextScoutTarget(
+  ctx: AIContext, waypointIndex: number, waypoints: { x: number; z: number }[],
+): { x: number; z: number } {
+  for (let i = 0; i < waypoints.length; i++) {
+    const idx = (waypointIndex + i) % waypoints.length;
+    const wp = waypoints[idx];
     if (!ctx.fog.isExplored(ctx.team, wp.x, wp.z)) {
       return wp;
     }
   }
 
   // Prefer far, non-visible waypoints for re-scouting
-  let bestWp = SCOUT_WAYPOINTS[waypointIndex % SCOUT_WAYPOINTS.length];
+  let bestWp = waypoints[waypointIndex % waypoints.length];
   let bestDistSq = -1;
-  for (const wp of SCOUT_WAYPOINTS) {
+  for (const wp of waypoints) {
     if (ctx.fog.isVisible(ctx.team, wp.x, wp.z)) continue;
     const dx = wp.x - ctx.baseX;
     const dz = wp.z - ctx.baseZ;

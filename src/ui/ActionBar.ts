@@ -28,7 +28,7 @@ const FACTORY_TRAIN_BUTTONS: { unitType: UnitCategory; label: string }[] = [
 
 const DEMOLISH_REFUND_RATE = 0.7; // 70% matter refund
 
-type BarMode = 'hidden' | 'worker' | 'hq' | 'factory' | 'construction' | 'building';
+type BarMode = 'hidden' | 'worker' | 'hq' | 'factory' | 'depot' | 'construction' | 'building';
 
 export class ActionBar {
   private container: HTMLDivElement;
@@ -94,6 +94,8 @@ export class ActionBar {
     let hqEntity = -1;
     let factorySelected = false;
     let factoryEntity = -1;
+    let depotSelected = false;
+    let depotEntity = -1;
     let constructionSelected = false;
     let constructionProgress = 0;
     let buildingSelected = false;
@@ -120,6 +122,9 @@ export class ActionBar {
         } else if (building.buildingType === BuildingType.DroneFactory && !world.hasComponent(e, CONSTRUCTION)) {
           factorySelected = true;
           factoryEntity = e;
+        } else if (building.buildingType === BuildingType.SupplyDepot && !world.hasComponent(e, CONSTRUCTION)) {
+          depotSelected = true;
+          depotEntity = e;
         }
         // Track any non-HQ completed building for demolish
         if (building.buildingType !== BuildingType.HQ && !world.hasComponent(e, CONSTRUCTION)) {
@@ -141,6 +146,7 @@ export class ActionBar {
     if (constructionSelected) targetMode = 'construction';
     else if (workerSelected) targetMode = 'worker';
     else if (factorySelected) targetMode = 'factory';
+    else if (depotSelected) targetMode = 'depot';
     else if (hqSelected) targetMode = 'hq';
     else if (buildingSelected) targetMode = 'building';
 
@@ -227,6 +233,40 @@ export class ActionBar {
           this.buttonElements.set('demolish', button);
           this.buttonAffordable.set('demolish', true);
         }
+      } else if (targetMode === 'depot') {
+        // Train Ferry Drone button
+        const ferryDef = UNIT_DEFS[UnitCategory.FerryDrone];
+        if (ferryDef) {
+          const affordable = resources.canAfford(playerTeam, ferryDef.energyCost) && totalMatter >= ferryDef.matterCost;
+          const button = this.createButton(
+            'train_ferry',
+            'Train Ferry Drone',
+            `${ferryDef.energyCost}e ${ferryDef.matterCost}m`,
+            affordable,
+            () => this.onTrain?.(UnitCategory.FerryDrone),
+          );
+          this.buttonsDiv.appendChild(button);
+          this.buttonElements.set('train_ferry', button);
+          this.buttonAffordable.set('train_ferry', affordable);
+        }
+        // Demolish button for depot
+        {
+          const depotDef = BUILDING_DEFS[BuildingType.SupplyDepot];
+          const refund = depotDef ? Math.floor(depotDef.matterCost * DEMOLISH_REFUND_RATE) : 0;
+          const capturedEntity = depotEntity;
+          const button = this.createButton(
+            'demolish',
+            'Demolish',
+            `+${refund}m`,
+            true,
+            () => this.onDemolish?.(capturedEntity),
+          );
+          button.style.background = 'rgba(180, 60, 60, 0.3)';
+          button.style.borderColor = 'rgba(180, 60, 60, 0.6)';
+          this.buttonsDiv.appendChild(button);
+          this.buttonElements.set('demolish', button);
+          this.buttonAffordable.set('demolish', true);
+        }
       } else if (targetMode === 'building') {
         // Demolish button for non-HQ completed buildings
         if (buildingType) {
@@ -286,6 +326,26 @@ export class ActionBar {
 
       // Show production progress
       const pq = world.getComponent<ProductionQueueComponent>(hqEntity, PRODUCTION_QUEUE);
+      if (pq && pq.queue.length > 0) {
+        const item = pq.queue[0];
+        const pct = Math.max(0, (1 - item.timeRemaining / item.totalTime) * 100);
+        this.progressDiv.innerHTML = `Training... ${Math.floor(pct)}%<br>` + this.barHtml(pct, '#4c4');
+      } else {
+        this.progressDiv.innerHTML = '';
+      }
+    } else if (targetMode === 'depot') {
+      const ferryDef = UNIT_DEFS[UnitCategory.FerryDrone];
+      if (ferryDef) {
+        const affordable = resources.canAfford(playerTeam, ferryDef.energyCost) && totalMatter >= ferryDef.matterCost;
+        if (affordable !== this.buttonAffordable.get('train_ferry')) {
+          this.buttonAffordable.set('train_ferry', affordable);
+          const el = this.buttonElements.get('train_ferry');
+          if (el) this.updateButtonStyle(el, 'Train Ferry Drone', `${ferryDef.energyCost}e ${ferryDef.matterCost}m`, affordable);
+        }
+      }
+
+      // Show production progress
+      const pq = world.getComponent<ProductionQueueComponent>(depotEntity, PRODUCTION_QUEUE);
       if (pq && pq.queue.length > 0) {
         const item = pq.queue[0];
         const pct = Math.max(0, (1 - item.timeRemaining / item.totalTime) * 100);

@@ -140,8 +140,16 @@ export class BuildSystem implements System {
             });
           }
 
-          // SupplyDepot gets matter storage and visual radius
+          // SupplyDepot gets matter storage, visual radius, and production queue
           if (construction.buildingType === BuildingType.SupplyDepot) {
+            if (!world.hasComponent(site, PRODUCTION_QUEUE)) {
+              const sitePos3 = world.getComponent<PositionComponent>(site, POSITION)!;
+              world.addComponent<ProductionQueueComponent>(site, PRODUCTION_QUEUE, {
+                queue: [],
+                rallyX: sitePos3.x + 3,
+                rallyZ: sitePos3.z + 3,
+              });
+            }
             if (!world.hasComponent(site, MATTER_STORAGE)) {
               world.addComponent<MatterStorageComponent>(site, MATTER_STORAGE, {
                 stored: 0,

@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { POSITION, TURRET, TEAM, HEALTH, MOVE_COMMAND, ATTACK_TARGET, UNIT_TYPE, PROJECTILE, VELOCITY } from '@sim/components/ComponentTypes';
+import { POSITION, TURRET, TEAM, HEALTH, MOVE_COMMAND, ATTACK_TARGET, UNIT_TYPE, PROJECTILE, VELOCITY, ENERGY_PACKET, MATTER_PACKET } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { TurretComponent } from '@sim/components/Turret';
 import type { TeamComponent } from '@sim/components/Team';
@@ -110,6 +110,10 @@ export class TurretSystem implements System {
           // Skip dead entities
           const otherHealth = world.getComponent<HealthComponent>(other, HEALTH);
           if (otherHealth && otherHealth.dead) continue;
+
+          // Skip energy packets (manual attack only, no auto-targeting)
+          if (world.hasComponent(other, ENERGY_PACKET)) continue;
+          if (world.hasComponent(other, MATTER_PACKET)) continue;
 
           const otherPos = world.getComponent<PositionComponent>(other, POSITION)!;
           const dx = otherPos.x - pos.x;

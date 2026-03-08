@@ -1,6 +1,6 @@
 import type { World } from '@core/ECS';
 import type { TerrainData } from '@sim/terrain/TerrainData';
-import type { EnergyNode } from '@sim/terrain/MapFeatures';
+import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { PositionComponent } from '@sim/components/Position';
 import type { TeamComponent } from '@sim/components/Team';
@@ -29,6 +29,7 @@ export class Minimap {
   private baseImage: ImageData;
   private frameImage: ImageData;
   private energyNodes: EnergyNode[];
+  private oreDeposits: OreDeposit[];
   private playableStart: number;
   private playableSize: number;
   private rightDownPos: { x: number; y: number } | null = null;
@@ -36,8 +37,9 @@ export class Minimap {
   onRightClick?: (worldX: number, worldZ: number) => void;
   onLeftClick?: (worldX: number, worldZ: number) => void;
 
-  constructor(terrain: TerrainData, energyNodes: EnergyNode[]) {
+  constructor(terrain: TerrainData, energyNodes: EnergyNode[], oreDeposits: OreDeposit[]) {
     this.energyNodes = energyNodes;
+    this.oreDeposits = oreDeposits;
     this.playableStart = BORDER_MARGIN;
     this.playableSize = terrain.width - 2 * BORDER_MARGIN;
 
@@ -162,6 +164,14 @@ export class Minimap {
       const mx = Math.floor(((node.x - this.playableStart) / this.playableSize) * w);
       const mz = Math.floor(((node.z - this.playableStart) / this.playableSize) * h);
       this.drawDot(mx, mz, 2, 0, 255, 255);
+    }
+
+    // Draw ore deposits (orange dots)
+    for (const deposit of this.oreDeposits) {
+      if (playerTeam >= 0 && !fogState.isExplored(playerTeam, deposit.x, deposit.z)) continue;
+      const mx = Math.floor(((deposit.x - this.playableStart) / this.playableSize) * w);
+      const mz = Math.floor(((deposit.z - this.playableStart) / this.playableSize) * h);
+      this.drawDot(mx, mz, 2, 120, 80, 40);
     }
 
     // Draw unit dots

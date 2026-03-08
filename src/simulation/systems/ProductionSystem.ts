@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE } from '@sim/components/ComponentTypes';
+import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
@@ -13,6 +13,9 @@ import type { HealthComponent } from '@sim/components/Health';
 import type { VisionComponent } from '@sim/components/Vision';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { TurretComponent } from '@sim/components/Turret';
+import type { BuildingComponent } from '@sim/components/Building';
+import { BuildingType } from '@sim/components/Building';
+import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
@@ -46,8 +49,11 @@ export class ProductionSystem implements System {
           continue;
         }
 
-        const spawnX = bldgPos.x + 4;
-        const spawnZ = bldgPos.z + 4;
+        const isHQ = world.hasComponent(e, BUILDING)
+          && world.getComponent<BuildingComponent>(e, BUILDING)!.buildingType === BuildingType.HQ;
+
+        const spawnX = isHQ ? bldgPos.x : bldgPos.x + 4;
+        const spawnZ = isHQ ? bldgPos.z + 2.0 : bldgPos.z + 4;
         const spawnY = this.terrainData.getHeight(spawnX, spawnZ) + 0.02;
 
         const unit = world.createEntity();
@@ -111,8 +117,37 @@ export class ProductionSystem implements System {
           });
         }
 
-        // Move to rally point
-        if (queue.rallyX !== bldgPos.x || queue.rallyZ !== bldgPos.z) {
+        // Auto-ferry: FerryDrones spawned from Supply Depots get a SUPPLY_ROUTE
+        const isDepotSpawn = def.category === UnitCategory.FerryDrone
+          && world.hasComponent(e, BUILDING)
+          && world.getComponent<BuildingComponent>(e, BUILDING)!.buildingType === BuildingType.SupplyDepot;
+
+        if (isDepotSpawn) {
+          const hq = this.findHQ(world, team.team);
+          if (hq !== null) {
+            const hqPos = world.getComponent<PositionComponent>(hq, POSITION)!;
+            world.addComponent<SupplyRouteComponent>(unit, SUPPLY_ROUTE, {
+              sourceEntity: hq,
+              destEntity: e,
+              state: 'to_source',
+              timer: 0,
+              carried: 0,
+              carryCapacity: 10,
+            });
+            // Move toward HQ to start ferrying
+            world.addComponent<MoveCommandComponent>(unit, MOVE_COMMAND, {
+              path: [], currentWaypoint: 0,
+              destX: hqPos.x, destZ: hqPos.z,
+            });
+          }
+        } else if (isHQ) {
+          // HQ spawns: always issue move so unit walks out the garage door
+          world.addComponent<MoveCommandComponent>(unit, MOVE_COMMAND, {
+            path: [], currentWaypoint: 0,
+            destX: queue.rallyX, destZ: queue.rallyZ,
+          });
+        } else if (queue.rallyX !== bldgPos.x || queue.rallyZ !== bldgPos.z) {
+          // Move to rally point
           world.addComponent<MoveCommandComponent>(unit, MOVE_COMMAND, {
             path: [], currentWaypoint: 0,
             destX: queue.rallyX, destZ: queue.rallyZ,
@@ -122,5 +157,19 @@ export class ProductionSystem implements System {
         queue.queue.shift();
       }
     }
+  }
+
+  private findHQ(world: World, team: number): number | null {
+    const buildings = world.query(BUILDING, TEAM, HEALTH);
+    for (const e of buildings) {
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const b = world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (b.buildingType !== BuildingType.HQ) continue;
+      const h = world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (h.dead) continue;
+      return e;
+    }
+    return null;
   }
 }

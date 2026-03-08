@@ -10,7 +10,7 @@ Free, zero-barrier, web-based RTS game set in a voxel arena. Competing factions 
 
 The defining mechanic is supply chain management:
 - **Global matter pool** per team — Matter Plants produce directly to the team's global pool
-- **Worker ferry system** — Workers shuttle matter from HQ to Supply Depots (select worker, right-click depot)
+- **Ferry drone system** — Ferry Drones (trained at Supply Depots) shuttle matter from HQ to depots automatically
 - **Supply Depots** have local MATTER_STORAGE; combat units auto-resupply (ammo + repair) at depots
 - **No ammo = no firing** — units must return to depots when empty, creating natural front-line logistics
 - **Future (Phase 6)**: Player-drawn supply lines with visible, capacity-limited, attackable routes
@@ -31,6 +31,7 @@ The defining mechanic is supply chain management:
 | Combat Drone | Marine-like ground unit | 100hp, speed 3, range 8, 38 ammo |
 | Heavy Assault Platform | Tank-like | 300hp, speed 1.5, range 12, 22 ammo |
 | Aerial Drone | Flyer/scout | 60hp, speed 6, range 6, 30 ammo |
+| Ferry Drone | Supply carrier | 60hp, speed 2.4, trained at Supply Depot, auto-shuttles matter HQ→depot |
 
 - Units consume ammo — **no ammo = no firing** (suppression mechanic)
 - Units gain veterancy (3/7/15 kills): +10% damage, +10% fire rate, +5% speed per level
@@ -43,7 +44,7 @@ The defining mechanic is supply chain management:
 | HQ | Free at start | 2000hp, win/lose condition |
 | Energy Extractor | 50 matter | +5 energy/s, must be on energy node |
 | Matter Plant | 100 energy | +2 matter/s |
-| Supply Depot | 50e + 50m | Stores matter locally (filled by worker ferries), auto-resupplies nearby combat units (ammo + repair) |
+| Supply Depot | 50e + 50m | Stores matter locally (filled by ferry drones), auto-resupplies nearby combat units (ammo + repair), trains Ferry Drones |
 | Drone Factory | 150e + 100m | Trains units |
 
 ### Starting Loadout (Per Player)
@@ -181,15 +182,15 @@ for (const e of entities) {
 | `src/rendering/GhostBuildingRenderer.ts` | Semi-transparent placement preview mesh |
 | `src/simulation/systems/MovementSystem.ts` | Moves entities, bounces off 256x256 bounds |
 | `src/simulation/systems/EconomySystem.ts` | Ticks extractors (+5e/s); plants produce matter to global pool (+2m/s) |
-| `src/simulation/systems/SupplySystem.ts` | Worker ferry: workers with SUPPLY_ROUTE shuttle matter from global pool to depot MATTER_STORAGE |
+| `src/simulation/systems/SupplySystem.ts` | Ferry system: units with SUPPLY_ROUTE shuttle matter from global pool to depot MATTER_STORAGE |
 | `src/simulation/systems/ResupplySystem.ts` | Auto-resupply: combat units with ammo=0 seek nearest depot for instant ammo refill + gradual repair (20 HP/s) |
 | `src/simulation/systems/GameOverSystem.ts` | Checks HQ health; fires onGameOver callback when an HQ is destroyed |
 | `src/simulation/systems/BuildSystem.ts` | Worker build orders: move to site, increment progress, complete building |
 | `src/simulation/systems/ProductionSystem.ts` | Ticks production queues, spawns units on completion |
-| `src/simulation/systems/AISystem.ts` | AI opponent (team 1), 30-tick decision cycle, build orders, army control, smart depot placement, ferry assignment |
+| `src/simulation/systems/AISystem.ts` | AI opponent (team 1), 30-tick decision cycle, build orders, army control, smart depot placement, ferry drone training |
 | `src/simulation/economy/ResourceState.ts` | Per-team energy/matter state (canAfford, spend, rates) |
 | `src/simulation/data/BuildingData.ts` | BUILDING_DEFS: costs, build times, HP for all building types |
-| `src/simulation/data/UnitData.ts` | UNIT_DEFS: costs, train times for WorkerDrone, CombatDrone, AssaultPlatform, AerialDrone |
+| `src/simulation/data/UnitData.ts` | UNIT_DEFS: costs, train times for WorkerDrone, CombatDrone, AssaultPlatform, AerialDrone, FerryDrone |
 | `src/simulation/economy/DepotUtils.ts` | findNearestDepot utility + resupply constants (AMMO_MATTER_COST, REPAIR_MATTER_COST, REPAIR_RATE) |
 | `src/rendering/effects/BuildingEffectsRenderer.ts` | Smoke particles for Matter Plants, glow lights for Extractors |
 | `src/input/InputManager.ts` | Mouse/keyboard event handling |
@@ -226,10 +227,10 @@ Fixed timestep simulation at 1/60s with accumulator pattern. Render callback rec
 - HQ production: train workers via production queue
 - Resource system: global matter pool per team, energy with per-second rates, cost gating
 - Matter Plants produce directly to global pool (+2m/s, costs 2e/s)
-- Worker ferry system: select worker, right-click depot to shuttle matter from HQ to depot MATTER_STORAGE (10 matter/trip, 2s load/unload)
+- Ferry drone system: Ferry Drones trained at Supply Depots auto-shuttle matter from HQ to depot MATTER_STORAGE (10 matter/trip, 2s load/unload)
 - Auto-resupply: combat units with ammo=0 auto-seek nearest depot for instant ammo refill + gradual repair (20 HP/s), costs matter from depot
 - Game over detection: HQ destruction triggers win/loss
-- AI opponent: build orders, smart forward depot placement, army control, scouting, ferry worker assignment, supply-aware economy
+- AI opponent: build orders, smart forward depot placement, army control, scouting, ferry drone training at depots, supply-aware economy
 
 ### System Execution Order
 

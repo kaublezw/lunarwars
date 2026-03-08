@@ -9,6 +9,7 @@ export interface BuildingDef {
   visionRange: number;
   meshType: string;
   needsEnergyNode: boolean;
+  needsOreDeposit: boolean;
 }
 
 export const BUILDING_DEFS: Record<string, BuildingDef> = {
@@ -21,6 +22,7 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     visionRange: 10,
     meshType: 'energy_extractor',
     needsEnergyNode: true,
+    needsOreDeposit: false,
   },
   [BuildingType.MatterPlant]: {
     type: BuildingType.MatterPlant,
@@ -31,6 +33,7 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     visionRange: 10,
     meshType: 'matter_plant',
     needsEnergyNode: false,
+    needsOreDeposit: true,
   },
   [BuildingType.SupplyDepot]: {
     type: BuildingType.SupplyDepot,
@@ -41,6 +44,7 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     visionRange: 10,
     meshType: 'supply_depot',
     needsEnergyNode: false,
+    needsOreDeposit: false,
   },
   [BuildingType.DroneFactory]: {
     type: BuildingType.DroneFactory,
@@ -51,6 +55,7 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     visionRange: 12,
     meshType: 'drone_factory',
     needsEnergyNode: false,
+    needsOreDeposit: false,
   },
   [BuildingType.Wall]: {
     type: BuildingType.Wall,
@@ -61,5 +66,6 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     visionRange: 3,
     meshType: 'wall_x',
     needsEnergyNode: false,
+    needsOreDeposit: false,
   },
 };

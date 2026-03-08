@@ -29,14 +29,18 @@ import { RepairSystem } from '@sim/systems/RepairSystem';
 import { GameOverSystem } from '@sim/systems/GameOverSystem';
 import { HealthSystem } from '@sim/systems/HealthSystem';
 import { EconomySystem } from '@sim/systems/EconomySystem';
+import { EnergyPacketSystem } from '@sim/systems/EnergyPacketSystem';
 import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
-import { AISystem } from '@sim/systems/AISystem';
+import { AISystem } from '@sim/systems/AIBrain';
 import { FogOfWarState } from '@sim/fog/FogOfWarState';
 import { ResourceState } from '@sim/economy/ResourceState';
 import { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import { TerrainData } from '@sim/terrain/TerrainData';
-import { generateEnergyNodes } from '@sim/terrain/MapFeatures';
+import { generateEnergyNodes, generateOreDeposits } from '@sim/terrain/MapFeatures';
+import type { OreDeposit } from '@sim/terrain/MapFeatures';
+import { OreDepositRenderer } from '@render/OreDepositRenderer';
+import { MatterPacketSystem } from '@sim/systems/MatterPacketSystem';
 import { Minimap } from '@ui/Minimap';
 import { UnitInfoPanel } from '@ui/UnitInfoPanel';
 import { ActionBar } from '@ui/ActionBar';
@@ -49,11 +53,12 @@ import { SpectatorPanel } from '@ui/SpectatorPanel';
 import type { FogMode } from '@ui/SpectatorPanel';
 import { ParticleRenderer } from '@render/effects/ParticleRenderer';
 import { BuildingEffectsRenderer } from '@render/effects/BuildingEffectsRenderer';
+import { GarageDoorRenderer } from '@render/effects/GarageDoorRenderer';
 import { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { VoxelMeshManager } from '@render/VoxelMeshManager';
 import { DepotRangeRenderer } from '@render/DepotRangeRenderer';
 import { SupplySystem } from '@sim/systems/SupplySystem';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE, TURRET, MATTER_STORAGE, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE, TURRET, MATTER_STORAGE, DEPOT_RADIUS, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import type { BuildingComponent } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -76,6 +81,7 @@ import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
+import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 
 // --- Renderer ---
@@ -108,16 +114,14 @@ let saveData: {
   world: ReturnType<World['serialize']>;
   resources: ReturnType<ResourceState['serialize']>;
   fogExplored: number[][];
-  aiState: Record<string, unknown>;
   spectator?: boolean;
-  aiState0?: Record<string, unknown>;
 } | null = null;
 
 if (savedRaw) {
   try {
     const parsed = JSON.parse(savedRaw);
     // Reject old saves or saves from mismatched mode
-    if (parsed.version >= 13 && !!parsed.spectator === spectatorMode) {
+    if (parsed.version >= 14 && !!parsed.spectator === spectatorMode) {
       saveData = parsed;
     } else {
       sessionStorage.removeItem(SAVE_KEY);
@@ -139,8 +143,13 @@ const energyNodes = generateEnergyNodes(terrainData, seed);
 const energyNodeRenderer = new EnergyNodeRenderer(energyNodes, terrainData);
 energyNodeRenderer.addTo(sceneManager.scene);
 
+// --- Ore Deposits ---
+const oreDeposits = generateOreDeposits(terrainData, seed, energyNodes);
+const oreDepositRenderer = new OreDepositRenderer(oreDeposits, terrainData);
+oreDepositRenderer.addTo(sceneManager.scene);
+
 // --- Minimap ---
-const minimap = new Minimap(terrainData, energyNodes);
+const minimap = new Minimap(terrainData, energyNodes, oreDeposits);
 minimap.mount(app);
 
 // --- Unit Info Panel ---
@@ -195,7 +204,7 @@ const TEAM_COLORS = [0x4488ff, 0xff4444];
 const PLAYER_TEAM = 0;
 const AI_TEAM = 1;
 
-// System order: pathfinding -> collision avoidance -> movement -> fog -> turret -> resupply -> repair -> gameOver -> health -> economy -> supply -> build -> production -> AI
+// System order: pathfinding -> collision avoidance -> movement -> fog -> turret -> projectile -> voxelDamage -> resupply -> repair -> gameOver -> health -> energyPacket -> economy -> supply -> build -> production -> AI
 const pathfindingSystem = new PathfindingSystem(terrainData);
 pathfindingSystem.setOccupancy(buildingOccupancy);
 const movementSystem = new MovementSystem(terrainData);
@@ -231,22 +240,17 @@ world.addSystem(new ResupplySystem());
 world.addSystem(new RepairSystem(resourceState, 2));
 world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem());
-world.addSystem(new EconomySystem(resourceState, 2));
+world.addSystem(new EnergyPacketSystem(resourceState));
+world.addSystem(new MatterPacketSystem(resourceState));
+world.addSystem(new EconomySystem(resourceState, 2, terrainData));
 world.addSystem(new SupplySystem(terrainData, resourceState));
 world.addSystem(new BuildSystem());
 world.addSystem(new ProductionSystem(resourceState, terrainData));
-
-// --- AI Systems (registered before potential restore, skip for sandbox) ---
-let aiSystem0: AISystem | null = null;
-let aiSystem: AISystem | null = null;
-if (scenarioMode !== 'sandbox') {
-  if (spectatorMode) {
-    aiSystem0 = new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, buildingOccupancy);
-    world.addSystem(aiSystem0);
-  }
-  aiSystem = new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, buildingOccupancy);
-  world.addSystem(aiSystem);
+world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
+if (spectatorMode) {
+  world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
 }
+
 
 // --- Scenario Helper: Spawn a combat unit ---
 function spawnCombatUnit(x: number, z: number, team: number, category: UnitCategory): number {
@@ -326,12 +330,13 @@ function spawnBuilding(x: number, z: number, team: number, type: BuildingType): 
   world.addComponent<BuildingComponent>(e, BUILDING, { buildingType: type });
   world.addComponent<VisionComponent>(e, VISION, { range: visionRange });
 
-  // Production queue for HQ and Drone Factory
-  if (type === BuildingType.HQ || type === BuildingType.DroneFactory) {
+  // Production queue for HQ, Drone Factory, and Supply Depot
+  if (type === BuildingType.HQ || type === BuildingType.DroneFactory || type === BuildingType.SupplyDepot) {
+    const isHQBuilding = type === BuildingType.HQ;
     world.addComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE, {
       queue: [],
-      rallyX: x + 5,
-      rallyZ: z + 5,
+      rallyX: isHQBuilding ? x : x + 5,
+      rallyZ: isHQBuilding ? z + 5 : z + 5,
     });
   }
 
@@ -341,6 +346,15 @@ function spawnBuilding(x: number, z: number, team: number, type: BuildingType): 
       stored: 100,
       capacity: 200,
     });
+  }
+
+  // HQ acts as fallback resupply point
+  if (type === BuildingType.HQ) {
+    world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
+      stored: 0,
+      capacity: 100,
+    });
+    world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
   }
 
   // Voxel state
@@ -366,10 +380,6 @@ if (saveData) {
     world.deserialize(saveData.world);
     resourceState.deserialize(saveData.resources);
     fogState.deserializeExplored(saveData.fogExplored);
-    if (aiSystem) aiSystem.deserialize(saveData.aiState);
-    if (aiSystem0 && saveData.aiState0) {
-      aiSystem0.deserialize(saveData.aiState0);
-    }
   } catch (err) {
     console.error('Save restore failed, starting fresh:', err);
     sessionStorage.removeItem(SAVE_KEY);
@@ -427,7 +437,7 @@ if (saveData) {
     // HQ has a production queue
     world.addComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE, {
       queue: [],
-      rallyX: hq.x + 5,
+      rallyX: hq.x,
       rallyZ: hq.z + 5,
     });
 
@@ -514,7 +524,7 @@ if (!spectatorMode && scenarioMode !== 'sandbox') {
   selectionController = new SelectionController(inputManager, isoCamera, world, eventBus);
   selectionController.setFogState(fogState, PLAYER_TEAM);
 
-  placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, PLAYER_TEAM);
+  placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, oreDeposits, PLAYER_TEAM);
   selectionController.setPlacementCheck(() => placementController!.isActive());
 
   minimap.onRightClick = (worldX, worldZ) => {
@@ -545,9 +555,11 @@ if (spectatorMode || scenarioMode) {
   fogRenderer.setVisible(false);
 }
 const ghostRenderer = new GhostBuildingRenderer(sceneManager.scene, terrainData);
-const buildingEffectsRenderer = new BuildingEffectsRenderer(sceneManager.scene, particleRenderer);
-buildingEffectsRenderer.setFogState(fogState, initialFogTeam);
 const debrisRenderer = new DebrisRenderer(sceneManager.scene, terrainData);
+const buildingEffectsRenderer = new BuildingEffectsRenderer(sceneManager.scene, particleRenderer, debrisRenderer);
+buildingEffectsRenderer.setFogState(fogState, initialFogTeam);
+const garageDoorRenderer = new GarageDoorRenderer(sceneManager.scene, debrisRenderer);
+garageDoorRenderer.setFogState(fogState, initialFogTeam);
 const voxelMeshManager = new VoxelMeshManager(sceneManager.scene);
 voxelMeshManager.setFogState(fogState, initialFogTeam);
 voxelMeshManager.setDebrisRenderer(debrisRenderer);
@@ -613,7 +625,9 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     // Determine which building type trains this unit
     const targetBuildingType = unitType === UnitCategory.WorkerDrone
       ? BuildingType.HQ
-      : BuildingType.DroneFactory;
+      : unitType === UnitCategory.FerryDrone
+        ? BuildingType.SupplyDepot
+        : BuildingType.DroneFactory;
 
     // Find selected building of the right type
     const selectables = world.query(SELECTABLE, BUILDING, TEAM, PRODUCTION_QUEUE, POSITION);
@@ -935,6 +949,7 @@ function setFogPerspective(team: number): void {
   selectionRenderer.setPlayerTeam(team);
   xrayRenderer.setPlayerTeam(team);
   buildingEffectsRenderer.setPlayerTeam(team);
+  garageDoorRenderer.setPlayerTeam(team);
   depotRangeRenderer.setPlayerTeam(team);
   if (team < 0) {
     fogRenderer.setVisible(false);
@@ -977,9 +992,11 @@ const gameLoop = new GameLoop(
     particleRenderer.update(1 / 60);
     debrisRenderer.update(1 / 60);
     buildingEffectsRenderer.update(world, 1 / 60);
+    garageDoorRenderer.update(world, 1 / 60);
     depotRangeRenderer.sync(world);
     fogRenderer.update();
     energyNodeRenderer.update(fogState, currentFogTeam);
+    oreDepositRenderer.update(fogState, currentFogTeam);
     minimap.update(fogState, currentFogTeam, world);
     unitInfoPanel.update(world);
     if (spectatorPanel) {
@@ -1023,6 +1040,14 @@ inputManager.onKeyDown((key: string) => {
       pauseOverlay.show();
     } else {
       pauseOverlay.hide();
+    }
+  }
+  // Toggle fog of war visibility (player mode only)
+  if (key === 'f' && !spectatorMode && !scenarioMode) {
+    if (currentFogTeam >= 0) {
+      setFogPerspective(-1);
+    } else {
+      setFogPerspective(PLAYER_TEAM);
     }
   }
 });
@@ -1074,7 +1099,7 @@ if (scenarioMode === 'sandbox') {
     };
 
     // Create PlacementController + ActionBar for sandbox play mode
-    placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, PLAYER_TEAM);
+    placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, oreDeposits, PLAYER_TEAM);
     selectionController.setPlacementCheck(() => placementController!.isActive());
 
     if (!actionBar) {
@@ -1198,17 +1223,13 @@ if (scenarioMode !== 'sandbox') {
   setInterval(() => {
     try {
       const data: Record<string, unknown> = {
-        version: 13,
+        version: 14,
         seed,
         spectator: spectatorMode,
         world: world.serialize(),
         resources: resourceState.serialize(),
         fogExplored: fogState.serializeExplored(),
-        aiState: aiSystem ? aiSystem.serialize() : {},
       };
-      if (aiSystem0) {
-        data.aiState0 = aiSystem0.serialize();
-      }
       sessionStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch {
       // sessionStorage full or serialization error — silently skip

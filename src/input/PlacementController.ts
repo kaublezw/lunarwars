@@ -2,7 +2,7 @@ import type { InputManager } from './InputManager';
 import type { IsometricCamera } from '@render/IsometricCamera';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { World } from '@core/ECS';
-import type { EnergyNode } from '@sim/terrain/MapFeatures';
+import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import { BUILDING, POSITION, CONSTRUCTION, RENDERABLE } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
@@ -11,6 +11,7 @@ import { BUILDING_DEFS } from '@sim/data/BuildingData';
 
 
 const ENERGY_NODE_SNAP_RANGE = 5;
+const ORE_DEPOSIT_SNAP_RANGE = 5;
 const BUILDING_MIN_SPACING = 5;
 
 const WALL_SEGMENT_LENGTH = 3.0; // 20 voxels * 0.15 wu
@@ -56,6 +57,7 @@ export class PlacementController {
     private terrainData: TerrainData,
     private world: World,
     private energyNodes: EnergyNode[],
+    private oreDeposits: OreDeposit[],
     private playerTeam: number,
   ) {
     input.onMouseMove((x, y) => {
@@ -171,13 +173,20 @@ export class PlacementController {
     let wx = worldPos.x;
     let wz = worldPos.z;
 
-    // Snap to energy node if building requires one
+    // Snap to energy node or ore deposit if building requires one
     const def = this.buildingType ? BUILDING_DEFS[this.buildingType] : null;
     if (def?.needsEnergyNode) {
       const closest = this.findClosestEnergyNode(wx, wz);
       if (closest && closest.dist < ENERGY_NODE_SNAP_RANGE) {
         wx = closest.node.x;
         wz = closest.node.z;
+      }
+    }
+    if (def?.needsOreDeposit) {
+      const closest = this.findClosestOreDeposit(wx, wz);
+      if (closest && closest.dist < ORE_DEPOSIT_SNAP_RANGE) {
+        wx = closest.deposit.x;
+        wz = closest.deposit.z;
       }
     }
 
@@ -555,6 +564,14 @@ export class PlacementController {
       }
     }
 
+    // Matter plants must be near an ore deposit
+    if (def?.needsOreDeposit) {
+      const closest = this.findClosestOreDeposit(x, z);
+      if (!closest || closest.dist > ORE_DEPOSIT_SNAP_RANGE) {
+        return false;
+      }
+    }
+
     return true;
   }
 
@@ -583,5 +600,29 @@ export class PlacementController {
       }
     }
     return best ? { node: best, dist: bestDist } : null;
+  }
+
+  private findClosestOreDeposit(x: number, z: number): { deposit: OreDeposit; dist: number } | null {
+    const buildings = this.world.query(BUILDING, POSITION);
+    const occupiedSet = new Set<string>();
+    for (const e of buildings) {
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      occupiedSet.add(`${Math.round(pos.x)},${Math.round(pos.z)}`);
+    }
+
+    let best: OreDeposit | null = null;
+    let bestDist = Infinity;
+    for (const deposit of this.oreDeposits) {
+      if (occupiedSet.has(`${Math.round(deposit.x)},${Math.round(deposit.z)}`)) continue;
+
+      const dx = deposit.x - x;
+      const dz = deposit.z - z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = deposit;
+      }
+    }
+    return best ? { deposit: best, dist: bestDist } : null;
   }
 }

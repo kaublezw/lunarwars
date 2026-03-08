@@ -15,7 +15,6 @@ import type { ConstructionComponent } from '@sim/components/Construction';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { SelectableComponent } from '@sim/components/Selectable';
-import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { RepairCommandComponent } from '@sim/components/RepairCommand';
 import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
@@ -26,7 +25,7 @@ import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 
-import type { AIContext, AIWorldState, Squad, EnemyMemoryEntry, WallSegmentPlan } from '@sim/ai/AITypes';
+import type { AIContext, AIWorldState, Squad, WallSegmentPlan } from '@sim/ai/AITypes';
 import {
   TEAM_COLORS, RETREAT_HP_FRACTION, OVERWHELMING_ARMY,
   MAX_QUEUE_DEPTH, MEMORY_DECAY_TICKS,
@@ -199,33 +198,6 @@ export function trainFromHQ(ctx: AIContext, unitType: UnitCategory, hq: number):
   });
 
   return true;
-}
-
-export function assignFerry(
-  ctx: AIContext,
-  worker: number,
-  depot: number,
-  hq: number,
-): void {
-  const hqPos = ctx.world.getComponent<PositionComponent>(hq, POSITION)!;
-
-  ctx.world.addComponent<SupplyRouteComponent>(worker, SUPPLY_ROUTE, {
-    sourceEntity: hq,
-    destEntity: depot,
-    state: 'to_source',
-    timer: 0,
-    carried: 0,
-    carryCapacity: 10,
-  });
-
-  if (ctx.world.hasComponent(worker, MOVE_COMMAND)) ctx.world.removeComponent(worker, MOVE_COMMAND);
-
-  ctx.world.addComponent<MoveCommandComponent>(worker, MOVE_COMMAND, {
-    path: [],
-    currentWaypoint: 0,
-    destX: hqPos.x,
-    destZ: hqPos.z,
-  });
 }
 
 export function retreatWounded(ctx: AIContext, squad: Squad): void {

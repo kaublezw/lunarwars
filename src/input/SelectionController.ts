@@ -5,7 +5,7 @@ import type { World, Entity } from '@core/ECS';
 import type { EventBus } from '@core/EventBus';
 import {
   POSITION, SELECTABLE, MOVE_COMMAND, UNIT_TYPE, TEAM, RESUPPLY_SEEK,
-  BUILDING, CONSTRUCTION, HEALTH, MATTER_STORAGE, SUPPLY_ROUTE, BUILD_COMMAND,
+  BUILDING, CONSTRUCTION, HEALTH, SUPPLY_ROUTE, BUILD_COMMAND,
   TURRET, ATTACK_TARGET, PRODUCTION_QUEUE, REPAIR_COMMAND,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
@@ -16,7 +16,6 @@ import type { TeamComponent } from '@sim/components/Team';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { HealthComponent } from '@sim/components/Health';
-import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { AttackTargetComponent } from '@sim/components/AttackTarget';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
@@ -207,11 +206,6 @@ export class SelectionController {
             return;
           }
         }
-      }
-
-      // Check if we clicked on a friendly completed Supply Depot while a worker is selected
-      if (!shift && this.tryAssignWorkerToDepot(bestEntity)) {
-        return;
       }
 
       const sel = this.world.getComponent<SelectableComponent>(bestEntity, SELECTABLE)!;
@@ -451,99 +445,6 @@ export class SelectionController {
       return;
     }
 
-    // Check if right-clicked on an allied completed Supply Depot (screen-space pick)
-    const depot = this.findDepotAtScreen(sx, sy);
-    const hq = depot !== null ? this.findHQ() : null;
-
-    if (depot !== null && hq !== null) {
-      // Separate workers and non-workers
-      const workers: typeof selected = [];
-      const nonWorkers: typeof selected = [];
-
-      for (const s of selected) {
-        const ut = this.world.getComponent<UnitTypeComponent>(s.entity, UNIT_TYPE);
-        if (ut && ut.category === UnitCategory.WorkerDrone) {
-          workers.push(s);
-        } else {
-          nonWorkers.push(s);
-        }
-      }
-
-      if (workers.length > 0) {
-        const hqPos = this.world.getComponent<PositionComponent>(hq, POSITION)!;
-
-        // Assign each worker to ferry
-        for (const w of workers) {
-          // Cancel existing commands
-          if (this.world.hasComponent(w.entity, BUILD_COMMAND)) {
-            this.world.removeComponent(w.entity, BUILD_COMMAND);
-          }
-          if (this.world.hasComponent(w.entity, SUPPLY_ROUTE)) {
-            this.world.removeComponent(w.entity, SUPPLY_ROUTE);
-          }
-          if (this.world.hasComponent(w.entity, RESUPPLY_SEEK)) {
-            this.world.removeComponent(w.entity, RESUPPLY_SEEK);
-          }
-          if (this.world.hasComponent(w.entity, REPAIR_COMMAND)) {
-            this.world.removeComponent(w.entity, REPAIR_COMMAND);
-          }
-
-          // Add ferry route
-          this.world.addComponent<SupplyRouteComponent>(w.entity, SUPPLY_ROUTE, {
-            sourceEntity: hq,
-            destEntity: depot,
-            state: 'to_source',
-            timer: 0,
-            carried: 0,
-            carryCapacity: 10,
-          });
-
-          // Move toward HQ approach point (not center, which is inside blocked tiles)
-          const approachDist = 3.5; // HQ footprint(2) + margin(1.5)
-          const adx = w.pos.x - hqPos.x;
-          const adz = w.pos.z - hqPos.z;
-          const aDist = Math.sqrt(adx * adx + adz * adz);
-          let apX = hqPos.x + approachDist;
-          let apZ = hqPos.z;
-          if (aDist > 0.01) {
-            apX = hqPos.x + (adx / aDist) * approachDist;
-            apZ = hqPos.z + (adz / aDist) * approachDist;
-          }
-
-          if (this.world.hasComponent(w.entity, MOVE_COMMAND)) {
-            this.world.removeComponent(w.entity, MOVE_COMMAND);
-          }
-          this.world.addComponent<MoveCommandComponent>(w.entity, MOVE_COMMAND, {
-            path: [],
-            currentWaypoint: 0,
-            destX: apX,
-            destZ: apZ,
-          });
-        }
-
-        // Non-workers get normal move (clear attack target too)
-        if (nonWorkers.length > 0) {
-          for (const s of nonWorkers) {
-            if (this.world.hasComponent(s.entity, RESUPPLY_SEEK)) {
-              this.world.removeComponent(s.entity, RESUPPLY_SEEK);
-            }
-            if (this.world.hasComponent(s.entity, ATTACK_TARGET)) {
-              this.world.removeComponent(s.entity, ATTACK_TARGET);
-            }
-            this.world.addComponent<MoveCommandComponent>(s.entity, MOVE_COMMAND, {
-              path: [],
-              currentWaypoint: 0,
-              destX,
-              destZ,
-            });
-          }
-        }
-
-        this.events.emit('command:move', destX, destZ);
-        return;
-      }
-    }
-
     // Normal move - cancel ferry and attack target for all selected units
     for (const s of selected) {
       if (this.world.hasComponent(s.entity, SUPPLY_ROUTE)) {
@@ -602,90 +503,6 @@ export class SelectionController {
     }
 
     this.events.emit('command:move', destX, destZ);
-  }
-
-  /** If a worker is selected and clickedEntity is a friendly Supply Depot, assign the ferry. */
-  private tryAssignWorkerToDepot(clickedEntity: Entity): boolean {
-    // Is the clicked entity a friendly completed Supply Depot?
-    const building = this.world.getComponent<BuildingComponent>(clickedEntity, BUILDING);
-    if (!building || building.buildingType !== BuildingType.SupplyDepot) return false;
-    if (this.world.hasComponent(clickedEntity, CONSTRUCTION)) return false;
-    const depotTeam = this.world.getComponent<TeamComponent>(clickedEntity, TEAM);
-    if (!depotTeam || depotTeam.team !== this.playerTeam) return false;
-    const depotHealth = this.world.getComponent<HealthComponent>(clickedEntity, HEALTH);
-    if (!depotHealth || depotHealth.dead) return false;
-
-    // Collect currently selected workers
-    const selectables = this.world.query(POSITION, SELECTABLE, UNIT_TYPE);
-    const workers: { entity: Entity; pos: PositionComponent }[] = [];
-    for (const e of selectables) {
-      const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
-      if (!sel.selected) continue;
-      const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
-      if (ut.category !== UnitCategory.WorkerDrone) continue;
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      workers.push({ entity: e, pos });
-    }
-
-    if (workers.length === 0) return false;
-
-    // Find HQ
-    const hq = this.findHQ();
-    if (hq === null) return false;
-    const hqPos = this.world.getComponent<PositionComponent>(hq, POSITION)!;
-
-    // Assign each worker to ferry
-    for (const w of workers) {
-      // Cancel existing commands
-      if (this.world.hasComponent(w.entity, BUILD_COMMAND)) {
-        this.world.removeComponent(w.entity, BUILD_COMMAND);
-      }
-      if (this.world.hasComponent(w.entity, SUPPLY_ROUTE)) {
-        this.world.removeComponent(w.entity, SUPPLY_ROUTE);
-      }
-      if (this.world.hasComponent(w.entity, RESUPPLY_SEEK)) {
-        this.world.removeComponent(w.entity, RESUPPLY_SEEK);
-      }
-
-      // Add ferry route
-      this.world.addComponent<SupplyRouteComponent>(w.entity, SUPPLY_ROUTE, {
-        sourceEntity: hq,
-        destEntity: clickedEntity,
-        state: 'to_source',
-        timer: 0,
-        carried: 0,
-        carryCapacity: 10,
-      });
-
-      // Move toward HQ approach point
-      const approachDist = 3.5;
-      const adx = w.pos.x - hqPos.x;
-      const adz = w.pos.z - hqPos.z;
-      const aDist = Math.sqrt(adx * adx + adz * adz);
-      let apX = hqPos.x + approachDist;
-      let apZ = hqPos.z;
-      if (aDist > 0.01) {
-        apX = hqPos.x + (adx / aDist) * approachDist;
-        apZ = hqPos.z + (adz / aDist) * approachDist;
-      }
-
-      if (this.world.hasComponent(w.entity, MOVE_COMMAND)) {
-        this.world.removeComponent(w.entity, MOVE_COMMAND);
-      }
-      this.world.addComponent<MoveCommandComponent>(w.entity, MOVE_COMMAND, {
-        path: [],
-        currentWaypoint: 0,
-        destX: apX,
-        destZ: apZ,
-      });
-    }
-
-    // Deselect the workers and select the depot
-    this.deselectAll();
-    const depotSel = this.world.getComponent<SelectableComponent>(clickedEntity, SELECTABLE);
-    if (depotSel) depotSel.selected = true;
-
-    return true;
   }
 
   /** If a worker is selected and clickedEntity is a friendly damaged building, assign repair. */
@@ -784,7 +601,7 @@ export class SelectionController {
   private findEnemyAtScreen(sx: number, sy: number): Entity | null {
     const entities = this.world.query(POSITION, HEALTH, TEAM);
     let bestEntity: Entity | null = null;
-    const pickRadiusPx = 30;
+    const pickRadiusPx = 50;
     let bestDistSq = pickRadiusPx * pickRadiusPx;
 
     const tmpVec = new THREE.Vector3();
@@ -800,38 +617,9 @@ export class SelectionController {
       // Must be visible in fog
       if (this.fogState && !this.fogState.isVisible(this.playerTeam, pos.x, pos.z)) continue;
 
-      tmpVec.set(pos.x, pos.y, pos.z);
-      const screenPos = this.camera.worldToScreen(tmpVec);
-      const dx = screenPos.x - sx;
-      const dy = screenPos.y - sy;
-      const distSq = dx * dx + dy * dy;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestEntity = e;
-      }
-    }
-
-    return bestEntity;
-  }
-
-  private findDepotAtScreen(sx: number, sy: number): Entity | null {
-    const buildings = this.world.query(BUILDING, TEAM, POSITION, HEALTH, MATTER_STORAGE);
-    let bestEntity: Entity | null = null;
-    const pickRadiusPx = 40; // screen-space pick radius in pixels
-    let bestDistSq = pickRadiusPx * pickRadiusPx;
-
-    const tmpVec = new THREE.Vector3();
-    for (const e of buildings) {
-      if (this.world.hasComponent(e, CONSTRUCTION)) continue;
-      const team = this.world.getComponent<TeamComponent>(e, TEAM)!;
-      if (team.team !== this.playerTeam) continue;
-      const building = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (building.buildingType !== BuildingType.SupplyDepot) continue;
-      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
-      if (health.dead) continue;
-
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      tmpVec.set(pos.x, pos.y, pos.z);
+      // Offset buildings upward so pick point matches visual center, not base
+      const yOffset = this.world.hasComponent(e, BUILDING) ? 0.75 : 0;
+      tmpVec.set(pos.x, pos.y + yOffset, pos.z);
       const screenPos = this.camera.worldToScreen(tmpVec);
       const dx = screenPos.x - sx;
       const dy = screenPos.y - sy;

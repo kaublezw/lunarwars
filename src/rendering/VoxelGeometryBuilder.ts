@@ -3,6 +3,7 @@ import type { VoxelModel } from '@sim/data/VoxelModels';
 import {
   VOXEL_SIZE, SHARED_PALETTE,
   PAL_TEAM_PRIMARY, PAL_TEAM_ACCENT,
+  PAL_BLUE_GLOW,
 } from '@sim/data/VoxelModels';
 
 const TEAM_COLORS = [0x4488ff, 0xff4444];
@@ -289,6 +290,10 @@ export function buildVoxelGeometry(
             // Normal voxel
             const palIdx = val - 1;
             resolveColor(palIdx, team, model.palette, _color);
+            // PAL_BLUE_GLOW voxels emit cyan light
+            if (palIdx === PAL_BLUE_GLOW) {
+              emR = 0.4; emG = 0.8; emB = 1.0;
+            }
           }
 
           // Determine which bucket to add to

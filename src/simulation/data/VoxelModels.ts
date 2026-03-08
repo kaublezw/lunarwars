@@ -224,31 +224,53 @@ export const WORKER_DRONE_MODEL = createModel(8, 6, 8, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 3, 5, 3, 4, 5, 4, PAL_TEAM_ACCENT);
 });
 
+export const FERRY_DRONE_MODEL = createModel(6, 4, 6, (g, sx, _sy, sz) => {
+  // Compact body
+  fillBox(g, sx, sz, 1, 1, 1, 4, 2, 4, PAL_TEAM_PRIMARY);
+  // Two skids (front-to-back rails)
+  fillBox(g, sx, sz, 1, 0, 0, 1, 0, 5, PAL_MED_GREY);
+  fillBox(g, sx, sz, 4, 0, 0, 4, 0, 5, PAL_MED_GREY);
+  // Cargo bay platform on top
+  fillBox(g, sx, sz, 1, 3, 1, 4, 3, 4, PAL_TEAM_ACCENT);
+});
+
 // --- Building Models ---
 
-export const HQ_MODEL = createModel(27, 36, 27, (g, sx, _sy, sz) => {
+export const HQ_MODEL = createModel(27, 38, 27, (g, sx, _sy, sz) => {
   // Wide base platform
   fillBox(g, sx, sz, 0, 0, 0, 26, 3, 26, PAL_DARK_GREY);
   // Main building block
   fillBox(g, sx, sz, 3, 4, 3, 23, 14, 23, PAL_TEAM_PRIMARY);
   // Command tower
   fillBox(g, sx, sz, 8, 15, 8, 18, 28, 18, PAL_TEAM_ACCENT);
-  // Antenna
+  // Antenna spire
   fillCylinder(g, sx, sz, 13, 13, 1, 29, 35, PAL_LIGHT_GREY);
   // Windows row
   fillBox(g, sx, sz, 5, 10, 3, 21, 11, 3, PAL_BLUE_GLOW);
   fillBox(g, sx, sz, 5, 10, 23, 21, 11, 23, PAL_BLUE_GLOW);
+  // Energy receiver cap on top of antenna spire
+  fillCylinder(g, sx, sz, 13, 13, 1.5, 36, 37, PAL_BLUE_GLOW);
+  // Garage door opening on +Z face (front-left in isometric view)
+  fillBox(g, sx, sz, 9, 1, 23, 17, 9, 26, 0);
+  // Interior bay for depth
+  fillBox(g, sx, sz, 10, 1, 20, 16, 8, 22, 0);
 });
 
-export const ENERGY_EXTRACTOR_MODEL = createModel(10, 17, 10, (g, sx, _sy, sz) => {
+export const ENERGY_EXTRACTOR_MODEL = createModel(10, 38, 10, (g, sx, _sy, sz) => {
   // Hexagonal base (approximated as cylinder)
   fillCylinder(g, sx, sz, 5, 5, 5, 0, 8, PAL_DARK_GREY);
   // Inner column
   fillCylinder(g, sx, sz, 5, 5, 2, 0, 12, PAL_TEAM_PRIMARY);
-  // Glowing orb on top
+  // Glowing orb
   fillCylinder(g, sx, sz, 5, 5, 3, 13, 16, PAL_BLUE_GLOW);
   // Ring at mid height
   fillCylinder(g, sx, sz, 5, 5, 4.5, 6, 7, PAL_TEAM_ACCENT);
+  // Transmission spire reaching HQ antenna height
+  fillCylinder(g, sx, sz, 5, 5, 1, 17, 35, PAL_LIGHT_GREY);
+  // Support ring at mid-spire
+  fillCylinder(g, sx, sz, 5, 5, 2, 26, 27, PAL_TEAM_ACCENT);
+  // Glowing emitter cap (energy packets originate here)
+  fillCylinder(g, sx, sz, 5, 5, 1.5, 36, 37, PAL_BLUE_GLOW);
 });
 
 export const MATTER_PLANT_MODEL = createModel(20, 14, 20, (g, sx, _sy, sz) => {
@@ -344,12 +366,30 @@ export const WALL_CORNER_MODEL = createModel(5, 10, 5, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 4, 8, 4, 4, 9, 4, PAL_TEAM_ACCENT);
 });
 
+export const ENERGY_PACKET_MODEL = createModel(2, 2, 2, (g, sx, _sy, sz) => {
+  fillBox(g, sx, sz, 0, 0, 0, 1, 1, 1, PAL_BLUE_GLOW);
+});
+
+export const MATTER_PACKET_MODEL = createModel(2, 2, 2, (g, sx, _sy, sz) => {
+  fillBox(g, sx, sz, 0, 0, 0, 1, 1, 1, PAL_DARK_GREY);
+});
+
+// Garage door model (7 wide x 8 tall x 2 deep) — renderer-managed, not ECS-managed
+export const GARAGE_DOOR_MODEL = createModel(7, 8, 2, (g, sx, _sy, sz) => {
+  // Main door panel
+  fillBox(g, sx, sz, 0, 0, 0, 6, 7, 1, PAL_TEAM_PRIMARY);
+  // Cross-brace detail
+  fillBox(g, sx, sz, 0, 3, 0, 6, 4, 0, PAL_DARK_GREY);
+  fillBox(g, sx, sz, 3, 0, 0, 3, 7, 0, PAL_DARK_GREY);
+});
+
 // Map meshType -> VoxelModel
 export const VOXEL_MODELS: Record<string, VoxelModel> = {
   combat_drone: COMBAT_DRONE_MODEL,
   assault_platform: ASSAULT_PLATFORM_MODEL,
   aerial_drone: AERIAL_DRONE_MODEL,
   worker_drone: WORKER_DRONE_MODEL,
+  ferry_drone: FERRY_DRONE_MODEL,
   hq: HQ_MODEL,
   energy_extractor: ENERGY_EXTRACTOR_MODEL,
   matter_plant: MATTER_PLANT_MODEL,
@@ -359,6 +399,8 @@ export const VOXEL_MODELS: Record<string, VoxelModel> = {
   wall_x: WALL_X_MODEL,
   wall_z: WALL_Z_MODEL,
   wall_corner: WALL_CORNER_MODEL,
+  energy_packet: ENERGY_PACKET_MODEL,
+  matter_packet: MATTER_PACKET_MODEL,
 };
 
 /** Get the world-space bounding box dimensions for a voxel model */

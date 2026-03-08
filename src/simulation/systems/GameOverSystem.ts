@@ -9,13 +9,27 @@ export class GameOverSystem implements System {
   readonly name = 'GameOverSystem';
   private gameOver = false;
   private onGameOver: ((losingTeam: number) => void) | null = null;
+  private deathTimer = 0;
+  private losingTeam = -1;
 
   setCallback(cb: (losingTeam: number) => void): void {
     this.onGameOver = cb;
   }
 
-  update(world: World, _dt: number): void {
+  update(world: World, dt: number): void {
     if (this.gameOver) return;
+
+    // If a dead HQ was already detected, count down the delay
+    if (this.losingTeam >= 0) {
+      this.deathTimer += dt;
+      if (this.deathTimer >= 5.0) {
+        this.gameOver = true;
+        if (this.onGameOver) {
+          this.onGameOver(this.losingTeam);
+        }
+      }
+      return;
+    }
 
     const entities = world.query(BUILDING, TEAM, HEALTH);
     for (const e of entities) {
@@ -25,10 +39,8 @@ export class GameOverSystem implements System {
       const health = world.getComponent<HealthComponent>(e, HEALTH)!;
       if (health.dead) {
         const team = world.getComponent<TeamComponent>(e, TEAM)!;
-        this.gameOver = true;
-        if (this.onGameOver) {
-          this.onGameOver(team.team);
-        }
+        this.losingTeam = team.team;
+        this.deathTimer = 0;
         return;
       }
     }
