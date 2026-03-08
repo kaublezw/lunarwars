@@ -624,6 +624,23 @@ export class RenderSync {
     });
   }
 
+  /** Remove all tracked meshes but keep the renderer alive (for world revert). */
+  clearAll(): void {
+    for (const e of this.trackedEntities) {
+      const obj = this.objects.get(e);
+      if (obj) {
+        this.scene.remove(obj);
+        this.disposeObject(obj);
+      }
+    }
+    this.objects.clear();
+    this.meshTypes.clear();
+    this.turrets.clear();
+    this.ghostedEntities.clear();
+    this.originalMaterials.clear();
+    this.trackedEntities.clear();
+  }
+
   private disposeObject(obj: THREE.Object3D): void {
     obj.traverse((child) => {
       if (child instanceof THREE.Mesh) {

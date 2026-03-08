@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE } from '@sim/components/ComponentTypes';
+import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
@@ -16,6 +16,7 @@ import type { TurretComponent } from '@sim/components/Turret';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
+import type { GarageExitComponent } from '@sim/components/GarageExit';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
@@ -53,7 +54,7 @@ export class ProductionSystem implements System {
           && world.getComponent<BuildingComponent>(e, BUILDING)!.buildingType === BuildingType.HQ;
 
         const spawnX = isHQ ? bldgPos.x : bldgPos.x + 4;
-        const spawnZ = isHQ ? bldgPos.z + 2.0 : bldgPos.z + 4;
+        const spawnZ = isHQ ? bldgPos.z + 0.5 : bldgPos.z + 4;
         const spawnY = this.terrainData.getHeight(spawnX, spawnZ) + 0.02;
 
         const unit = world.createEntity();
@@ -141,10 +142,11 @@ export class ProductionSystem implements System {
             });
           }
         } else if (isHQ) {
-          // HQ spawns: always issue move so unit walks out the garage door
-          world.addComponent<MoveCommandComponent>(unit, MOVE_COMMAND, {
-            path: [], currentWaypoint: 0,
-            destX: queue.rallyX, destZ: queue.rallyZ,
+          // HQ spawns: predetermined straight-line exit through garage door
+          world.addComponent<GarageExitComponent>(unit, GARAGE_EXIT, {
+            exitZ: bldgPos.z + 2.5,
+            rallyX: queue.rallyX,
+            rallyZ: queue.rallyZ,
           });
         } else if (queue.rallyX !== bldgPos.x || queue.rallyZ !== bldgPos.z) {
           // Move to rally point

@@ -650,7 +650,8 @@ export class VoxelMeshManager {
     return { x: _pos.x, y: _pos.y, z: _pos.z, color };
   }
 
-  dispose(): void {
+  /** Remove all tracked meshes but keep the manager alive (for world revert). */
+  clearAll(): void {
     for (const [, state] of this.entityStates) {
       this.scene.remove(state.bodyMesh);
       if (state.turretMesh) this.scene.remove(state.turretMesh);
@@ -660,6 +661,12 @@ export class VoxelMeshManager {
       }
     }
     this.entityStates.clear();
+    this.entityBounds.clear();
+    this.trackedEntities.clear();
+  }
+
+  dispose(): void {
+    this.clearAll();
 
     for (const [, cached] of this.templateCache) {
       cached.body.dispose();

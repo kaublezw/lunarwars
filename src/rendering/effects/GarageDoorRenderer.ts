@@ -6,7 +6,7 @@ import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
-import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import type { VoxelStateComponent, BufferedImpact } from '@sim/components/VoxelState';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import { VOXEL_SIZE, GARAGE_DOOR_MODEL, indexToCoords } from '@sim/data/VoxelModels';
@@ -36,6 +36,10 @@ const CLOSE_DELAY = 2.0;               // seconds after spawn before closing
 // Damage sync threshold: rebuild geometry when HQ damage changes by this much
 const DAMAGE_REBUILD_THRESHOLD = 0.01;
 
+// Scorch mark constants (mirrors VoxelMeshManager)
+const SCORCH_REBUILD_INTERVAL = 6;
+const HEAT_DECAY_PER_REBUILD = SCORCH_REBUILD_INTERVAL * (1 / 60) / 1.5;
+
 type DoorState = 'closed' | 'opening' | 'open' | 'closing';
 
 interface DoorTracker {
@@ -49,10 +53,15 @@ interface DoorTracker {
   team: number;
   destroyed: Uint8Array;    // door's own destroyed bitmask
   lastDamageRatio: number;  // last synced HQ damage ratio
+  clipPlane: THREE.Plane;
   isFlashing: boolean;
   hasExploded: boolean;
   // Stable random ordering for progressive damage (seeded by entity ID)
   damageOrder: number[];
+  // Scorch mark state
+  scorchHeat: Float32Array;
+  scorchRebuildTimer: number;
+  hasCoolingVoxels: boolean;
 }
 
 export class GarageDoorRenderer {
@@ -114,6 +123,7 @@ export class GarageDoorRenderer {
         if (deathTimer.timeRemaining > 0 && !deathTimer.exploded) {
           // Flash white
           if (!tracker.isFlashing) {
+            this.flashMaterial.clippingPlanes = [tracker.clipPlane];
             tracker.mesh.material = this.flashMaterial;
             tracker.isFlashing = true;
           }
@@ -138,6 +148,14 @@ export class GarageDoorRenderer {
           if (Math.abs(damageRatio - tracker.lastDamageRatio) > DAMAGE_REBUILD_THRESHOLD) {
             this.syncDamage(tracker, damageRatio);
           }
+        }
+
+        // Direct impact damage on the door (read from buffered impacts)
+        if (voxelState?.recentImpacts && voxelState.recentImpacts.length > 0) {
+          for (const impact of voxelState.recentImpacts) {
+            this.applyImpact(tracker, impact, pos);
+          }
+          voxelState.recentImpacts.length = 0;
         }
       }
 
@@ -206,10 +224,44 @@ export class GarageDoorRenderer {
       const doorY = pos.y + DOOR_CLOSED_Y_OFFSET + tracker.openAmount * DOOR_HEIGHT;
       tracker.mesh.position.set(pos.x, doorY, pos.z + DOOR_Z_OFFSET);
 
+      // Clip door geometry above HQ roof (voxel grid y=15 -> 15 * VOXEL_SIZE)
+      tracker.clipPlane.constant = pos.y + 15 * VOXEL_SIZE;
+
       // Fog visibility
       const visible = !this.fogState || this.playerTeam < 0
         || this.fogState.isVisible(this.playerTeam, pos.x, pos.z);
       tracker.mesh.visible = visible;
+    }
+
+    // Scorch heat decay for cooling doors
+    for (const [, tracker] of this.trackers) {
+      if (!tracker.hasCoolingVoxels || tracker.hasExploded) continue;
+
+      tracker.scorchRebuildTimer--;
+      if (tracker.scorchRebuildTimer > 0) continue;
+
+      tracker.scorchRebuildTimer = SCORCH_REBUILD_INTERVAL;
+
+      let stillCooling = false;
+      const heat = tracker.scorchHeat;
+      for (let i = 0; i < heat.length; i++) {
+        const h = heat[i];
+        if (h <= 0) continue;
+        heat[i] = h - HEAT_DECAY_PER_REBUILD;
+        if (heat[i] <= 0) {
+          heat[i] = -1; // Permanent ash
+        } else {
+          stillCooling = true;
+        }
+      }
+
+      tracker.hasCoolingVoxels = stillCooling;
+
+      // Rebuild geometry with updated scorch
+      const model = GARAGE_DOOR_MODEL;
+      const built = buildVoxelGeometry(model, tracker.destroyed, tracker.team, tracker.scorchHeat);
+      tracker.mesh.geometry.dispose();
+      tracker.mesh.geometry = built.bodyGeometry;
     }
 
     // Clean up destroyed HQs
@@ -228,12 +280,15 @@ export class GarageDoorRenderer {
   private createDoor(entity: number, team: number): DoorTracker {
     const model = GARAGE_DOOR_MODEL;
     const destroyed = new Uint8Array(Math.ceil(model.totalSolid / 8));
-    const built = buildVoxelGeometry(model, destroyed, team);
+    const scorchHeat = new Float32Array(model.totalSolid);
+    const built = buildVoxelGeometry(model, destroyed, team, scorchHeat);
 
+    const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
     const material = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 0.7,
       metalness: 0.3,
+      clippingPlanes: [clipPlane],
     });
     const mesh = new THREE.Mesh(built.bodyGeometry, material);
     mesh.castShadow = true;
@@ -264,9 +319,13 @@ export class GarageDoorRenderer {
       team,
       destroyed,
       lastDamageRatio: 0,
+      clipPlane,
       isFlashing: false,
       hasExploded: false,
       damageOrder,
+      scorchHeat,
+      scorchRebuildTimer: 0,
+      hasCoolingVoxels: false,
     };
   }
 
@@ -295,10 +354,118 @@ export class GarageDoorRenderer {
     }
 
     // Rebuild geometry
-    const built = buildVoxelGeometry(model, tracker.destroyed, tracker.team);
+    const built = buildVoxelGeometry(model, tracker.destroyed, tracker.team, tracker.scorchHeat);
     tracker.mesh.geometry.dispose();
     tracker.mesh.geometry = built.bodyGeometry;
     tracker.lastDamageRatio = hqDamageRatio;
+  }
+
+  private applyImpact(tracker: DoorTracker, impact: BufferedImpact, hqPos: PositionComponent): void {
+    const model = GARAGE_DOOR_MODEL;
+    const doorPos = tracker.mesh.position;
+    const halfX = (model.sizeX * VOXEL_SIZE) / 2;
+    const halfZ = (model.sizeZ * VOXEL_SIZE) / 2;
+
+    // Convert impact to door-local grid coordinates
+    const localX = impact.impactX - doorPos.x;
+    const localY = impact.impactY - doorPos.y;
+    const localZ = impact.impactZ - doorPos.z;
+
+    const gridX = Math.floor((localX + halfX) / VOXEL_SIZE);
+    const gridY = Math.floor(localY / VOXEL_SIZE);
+    const gridZ = Math.floor((localZ + halfZ) / VOXEL_SIZE);
+
+    // Check if impact is within or near the door grid
+    const blastR = impact.blastRadius;
+    if (gridX < -blastR || gridX >= model.sizeX + blastR) return;
+    if (gridY < -blastR || gridY >= model.sizeY + blastR) return;
+    if (gridZ < -blastR || gridZ >= model.sizeZ + blastR) return;
+
+    let anyDestroyed = false;
+
+    for (let dy = -blastR; dy <= blastR; dy++) {
+      for (let dz = -blastR; dz <= blastR; dz++) {
+        for (let dx = -blastR; dx <= blastR; dx++) {
+          const gx = gridX + dx;
+          const gy = gridY + dy;
+          const gz = gridZ + dz;
+
+          if (gx < 0 || gx >= model.sizeX || gy < 0 || gy >= model.sizeY || gz < 0 || gz >= model.sizeZ) continue;
+          if (dx * dx + dy * dy + dz * dz > blastR * blastR + 1) continue;
+
+          const gridIdx = gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ;
+          if (model.grid[gridIdx] === 0) continue;
+
+          const solidIdx = model.gridToSolid[gridIdx];
+          if (solidIdx === -1) continue;
+
+          const byteIdx = solidIdx >> 3;
+          const bitIdx = solidIdx & 7;
+          if (tracker.destroyed[byteIdx] & (1 << bitIdx)) continue;
+
+          // Destroy voxel
+          tracker.destroyed[byteIdx] |= (1 << bitIdx);
+          anyDestroyed = true;
+
+          // Spawn debris
+          const [svGx, svGy, svGz] = indexToCoords(gridIdx, model.sizeX, model.sizeZ);
+          const wx = doorPos.x - halfX + svGx * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+          const wy = doorPos.y + svGy * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+          const wz = doorPos.z - halfZ + svGz * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+
+          let color = TEAM_COLORS[tracker.team] ?? 0xffffff;
+          const palIdx = model.solidVoxels[solidIdx][1];
+          if (palIdx !== 254 && palIdx !== 253) {
+            color = model.palette[palIdx] ?? 0x333333;
+          }
+
+          this.debrisRenderer.spawn(
+            wx, wy, wz,
+            -impact.dirX + (Math.random() - 0.5) * 0.4,
+            -impact.dirY + Math.random() * 0.5,
+            -impact.dirZ + (Math.random() - 0.5) * 0.4,
+            color,
+            1.0,
+            0xffffff,
+          );
+        }
+      }
+    }
+
+    // Scorch surviving voxels near impact (blastR + 1 radius)
+    const scorchR = blastR + 1;
+    for (let dy = -scorchR; dy <= scorchR; dy++) {
+      for (let dz = -scorchR; dz <= scorchR; dz++) {
+        for (let dx = -scorchR; dx <= scorchR; dx++) {
+          const gx = gridX + dx;
+          const gy = gridY + dy;
+          const gz = gridZ + dz;
+
+          if (gx < 0 || gx >= model.sizeX || gy < 0 || gy >= model.sizeY || gz < 0 || gz >= model.sizeZ) continue;
+          if (dx * dx + dy * dy + dz * dz > scorchR * scorchR + 1) continue;
+
+          const gridIdx = gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ;
+          if (model.grid[gridIdx] === 0) continue;
+
+          const solidIdx = model.gridToSolid[gridIdx];
+          if (solidIdx === -1) continue;
+
+          // Skip destroyed voxels
+          if (tracker.destroyed[solidIdx >> 3] & (1 << (solidIdx & 7))) continue;
+
+          const randomHeat = 0.7 + Math.random() * 0.3;
+          tracker.scorchHeat[solidIdx] = Math.max(tracker.scorchHeat[solidIdx], randomHeat);
+        }
+      }
+    }
+    tracker.hasCoolingVoxels = true;
+    tracker.scorchRebuildTimer = 0;
+
+    if (anyDestroyed || tracker.hasCoolingVoxels) {
+      const built = buildVoxelGeometry(model, tracker.destroyed, tracker.team, tracker.scorchHeat);
+      tracker.mesh.geometry.dispose();
+      tracker.mesh.geometry = built.bodyGeometry;
+    }
   }
 
   private explodeDoor(tracker: DoorTracker, hqPos: PositionComponent): void {
@@ -349,15 +516,18 @@ export class GarageDoorRenderer {
     }
   }
 
-  dispose(): void {
+  /** Remove all tracked door meshes but keep the renderer alive (for world revert). */
+  clearAll(): void {
     for (const [, tracker] of this.trackers) {
       this.scene.remove(tracker.mesh);
       tracker.mesh.geometry.dispose();
-      if (tracker.mesh.material === tracker.material) {
-        tracker.material.dispose();
-      }
+      tracker.material.dispose();
     }
     this.trackers.clear();
+  }
+
+  dispose(): void {
+    this.clearAll();
     this.flashMaterial.dispose();
   }
 }

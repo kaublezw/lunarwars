@@ -313,7 +313,8 @@ export class BuildingEffectsRenderer {
     }
   }
 
-  dispose(): void {
+  /** Remove all tracked effects but keep the renderer alive (for world revert). */
+  clearAll(): void {
     for (const [, tracker] of this.glowTrackers) {
       this.scene.remove(tracker.light);
       tracker.light.dispose();
@@ -336,5 +337,9 @@ export class BuildingEffectsRenderer {
     this.matterPacketGlowTrackers.clear();
     this.trackedPackets.clear();
     this.smokeTrackers.clear();
+  }
+
+  dispose(): void {
+    this.clearAll();
   }
 }

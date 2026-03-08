@@ -10,6 +10,16 @@ export interface VoxelDebrisInfo {
   dirZ: number;
 }
 
+export interface BufferedImpact {
+  impactX: number;
+  impactY: number;
+  impactZ: number;
+  blastRadius: number;
+  dirX: number;
+  dirY: number;
+  dirZ: number;
+}
+
 export interface VoxelStateComponent {
   /** Key into VOXEL_MODELS */
   modelId: string;
@@ -25,4 +35,6 @@ export interface VoxelStateComponent {
   pendingDebris: VoxelDebrisInfo[];
   /** Solid voxel indices near impact that survived — renderer will scorch these */
   pendingScorch: number[];
+  /** Raw impact events buffered for renderer-side consumers (e.g. garage door) */
+  recentImpacts?: BufferedImpact[];
 }

@@ -17,6 +17,7 @@ import { GameLoop } from '@core/GameLoop';
 import { EventBus } from '@core/EventBus';
 import { RenderSync } from '@render/RenderSync';
 import { EnergyNodeRenderer } from '@render/EnergyNodeRenderer';
+import { GarageExitSystem } from '@sim/systems/GarageExitSystem';
 import { PathfindingSystem } from '@sim/systems/PathfindingSystem';
 import { CollisionAvoidanceSystem } from '@sim/systems/CollisionAvoidanceSystem';
 import { MovementSystem } from '@sim/systems/MovementSystem';
@@ -90,14 +91,17 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.shadowMap.enabled = true;
+renderer.localClippingEnabled = true;
 app.appendChild(renderer.domElement);
 
 // --- Spectator Mode ---
 const SPECTATOR_KEY = 'lunarwars_spectator';
 const spectatorMode = sessionStorage.getItem(SPECTATOR_KEY) === 'true';
 
-// --- Scenario Mode (URL param: ?scenario=tanks) ---
-const scenarioMode = new URLSearchParams(window.location.search).get('scenario');
+// --- Scenario Mode (URL param or sessionStorage) ---
+const SANDBOX_KEY = 'lunarwars_sandbox';
+const scenarioMode = new URLSearchParams(window.location.search).get('scenario')
+  || (sessionStorage.getItem(SANDBOX_KEY) === 'true' ? 'sandbox' : null);
 
 // --- Scene ---
 const sceneManager = new SceneManager();
@@ -229,6 +233,7 @@ gameOverSystem.setCallback((losingTeam: number) => {
 });
 }
 
+world.addSystem(new GarageExitSystem());
 world.addSystem(pathfindingSystem);
 world.addSystem(new CollisionAvoidanceSystem());
 world.addSystem(movementSystem);
@@ -1086,7 +1091,16 @@ if (scenarioMode === 'sandbox') {
     }
   };
 
+  // Snapshot for revert (captured before play starts)
+  let sandboxSnapshot: { world: ReturnType<typeof world.serialize>; resources: ReturnType<typeof resourceState.serialize> } | null = null;
+
   sandboxPanel.onPlay = () => {
+    // Deep-copy current state so Revert can restore it
+    sandboxSnapshot = structuredClone({
+      world: world.serialize(),
+      resources: resourceState.serialize(),
+    });
+
     // Create SelectionController for play mode (no fog check, all entities pickable)
     selectionController = new SelectionController(inputManager, isoCamera, world, eventBus);
     selectionController.onBoxSelectUpdate = (x0, y0, x1, y1) => boxSelectRenderer.show(x0, y0, x1, y1);
@@ -1175,6 +1189,36 @@ if (scenarioMode === 'sandbox') {
     }
   };
 
+  sandboxPanel.onRevert = () => {
+    if (!sandboxSnapshot) return;
+
+    // Clear all renderer caches so they rebuild from fresh ECS state
+    voxelMeshManager.clearAll();
+    renderSync.clearAll();
+    garageDoorRenderer.clearAll();
+    buildingEffectsRenderer.clearAll();
+
+    // Restore world and resources to pre-play state
+    world.deserialize(sandboxSnapshot.world);
+    resourceState.deserialize(sandboxSnapshot.resources);
+    sandboxSnapshot = null;
+
+    // Mark all voxel states dirty so renderers rebuild geometry
+    const voxelEntities = world.query(VOXEL_STATE);
+    for (const e of voxelEntities) {
+      const vs = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE);
+      if (vs) vs.dirty = true;
+    }
+
+    // Pause and switch back to editor mode
+    if (!gameLoop.isPaused()) {
+      gameLoop.togglePause();
+    }
+    gameLoop.setTimeScale(1);
+    pauseOverlay.show();
+    sandboxPanel!.enterEditorMode();
+  };
+
   sandboxPanel.onReset = () => {
     location.reload();
   };
@@ -1217,6 +1261,24 @@ modeBtn.addEventListener('click', () => {
   location.reload();
 });
 document.body.appendChild(modeBtn);
+
+// --- Sandbox Toggle Button ---
+const sandboxBtn = document.createElement('button');
+sandboxBtn.textContent = scenarioMode === 'sandbox' ? 'Exit Sandbox' : 'Sandbox';
+sandboxBtn.style.cssText = 'position:fixed;top:10px;right:250px;z-index:1000;padding:6px 16px;background:#3a2a1a;color:#ffcc88;border:1px solid #aa7744;border-radius:4px;cursor:pointer;font-family:monospace;font-size:14px;';
+sandboxBtn.addEventListener('mouseenter', () => { sandboxBtn.style.background = '#4a3a2a'; });
+sandboxBtn.addEventListener('mouseleave', () => { sandboxBtn.style.background = '#3a2a1a'; });
+sandboxBtn.addEventListener('click', () => {
+  sessionStorage.removeItem(SAVE_KEY);
+  if (scenarioMode === 'sandbox') {
+    sessionStorage.removeItem(SANDBOX_KEY);
+  } else {
+    sessionStorage.setItem(SANDBOX_KEY, 'true');
+    sessionStorage.removeItem(SPECTATOR_KEY);
+  }
+  location.reload();
+});
+document.body.appendChild(sandboxBtn);
 
 // --- Auto-Save (every 5 seconds, skip for sandbox) ---
 if (scenarioMode !== 'sandbox') {

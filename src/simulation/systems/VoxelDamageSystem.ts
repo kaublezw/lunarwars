@@ -48,6 +48,18 @@ export class VoxelDamageSystem implements System {
         voxelState.dirty = true;
       }
 
+      // Buffer impact for renderer-side consumers (e.g. garage door)
+      if (!voxelState.recentImpacts) voxelState.recentImpacts = [];
+      voxelState.recentImpacts.push({
+        impactX: impact.impactX,
+        impactY: impact.impactY,
+        impactZ: impact.impactZ,
+        blastRadius: impact.blastRadius,
+        dirX: impact.dirX,
+        dirY: impact.dirY,
+        dirZ: impact.dirZ,
+      });
+
       // Consume the impact event
       world.removeComponent(e, IMPACT_EVENT);
     }

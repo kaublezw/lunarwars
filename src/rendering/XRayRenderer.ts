@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Entity, World } from '@core/ECS';
-import { POSITION, UNIT_TYPE, TEAM, HEALTH } from '@sim/components/ComponentTypes';
+import { POSITION, UNIT_TYPE, TEAM, HEALTH, GARAGE_EXIT } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { TeamComponent } from '@sim/components/Team';
 import type { HealthComponent } from '@sim/components/Health';
@@ -127,6 +127,9 @@ export class XRayRenderer {
       // Skip dead units
       const health = world.getComponent<HealthComponent>(e, HEALTH);
       if (health && health.dead) continue;
+
+      // Skip units exiting the garage (hidden inside HQ)
+      if (world.hasComponent(e, GARAGE_EXIT)) continue;
 
       // Skip fogged units (shouldn't happen for own team, but safety check)
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;

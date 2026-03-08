@@ -87,6 +87,7 @@ export class SandboxPanel {
   onSpeedChange?: (scale: number) => void;
   onSelectAll?: () => void;
   onClearAll?: () => void;
+  onRevert?: () => void;
   onReset?: () => void;
   onGiveResources?: () => void;
   onSpawnWallSegments?: (segments: { x: number; z: number; meshType: string }[], team: number) => void;
@@ -296,14 +297,27 @@ export class SandboxPanel {
 
     this.playSection.appendChild(row2);
 
-    // Reset button
+    // Revert / Reset row
+    const row3 = document.createElement('div');
+    row3.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;';
+
+    const revertBtn = this.createPanelButton('Revert', () => {
+      this.onRevert?.();
+    });
+    revertBtn.style.cssText += 'flex:1;background:#2a3a5a;color:#aaccff;border-color:#4a6a8a;';
+    revertBtn.addEventListener('mouseenter', () => { revertBtn.style.background = '#3a4a6a'; });
+    revertBtn.addEventListener('mouseleave', () => { revertBtn.style.background = '#2a3a5a'; });
+    row3.appendChild(revertBtn);
+
     const resetBtn = this.createPanelButton('Reset', () => {
       this.onReset?.();
     });
-    resetBtn.style.cssText += 'width:100%;background:#5a3a2a;color:#ffccaa;border-color:#8a5a4a;';
+    resetBtn.style.cssText += 'flex:1;background:#5a3a2a;color:#ffccaa;border-color:#8a5a4a;';
     resetBtn.addEventListener('mouseenter', () => { resetBtn.style.background = '#6a4a3a'; });
     resetBtn.addEventListener('mouseleave', () => { resetBtn.style.background = '#5a3a2a'; });
-    this.playSection.appendChild(resetBtn);
+    row3.appendChild(resetBtn);
+
+    this.playSection.appendChild(row3);
   }
 
   private selectPalette(item: PaletteItem, btn: HTMLButtonElement): void {
@@ -363,6 +377,14 @@ export class SandboxPanel {
     this.editorSection.style.display = 'none';
     this.playSection.style.display = 'block';
     this.onPlay?.();
+  }
+
+  enterEditorMode(): void {
+    this.mode = 'editor';
+    this.selectedPalette = null;
+    this.draggingEntity = null;
+    this.editorSection.style.display = 'block';
+    this.playSection.style.display = 'none';
   }
 
   private wireEditorInput(): void {

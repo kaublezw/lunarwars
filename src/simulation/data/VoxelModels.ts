@@ -377,10 +377,10 @@ export const MATTER_PACKET_MODEL = createModel(2, 2, 2, (g, sx, _sy, sz) => {
 // Garage door model (7 wide x 8 tall x 2 deep) — renderer-managed, not ECS-managed
 export const GARAGE_DOOR_MODEL = createModel(7, 8, 2, (g, sx, _sy, sz) => {
   // Main door panel
-  fillBox(g, sx, sz, 0, 0, 0, 6, 7, 1, PAL_TEAM_PRIMARY);
+  fillBox(g, sx, sz, 0, 0, 0, 6, 7, 1, PAL_LIGHT_GREY);
   // Cross-brace detail
-  fillBox(g, sx, sz, 0, 3, 0, 6, 4, 0, PAL_DARK_GREY);
-  fillBox(g, sx, sz, 3, 0, 0, 3, 7, 0, PAL_DARK_GREY);
+  fillBox(g, sx, sz, 0, 3, 0, 6, 4, 0, PAL_MED_GREY);
+  fillBox(g, sx, sz, 3, 0, 0, 3, 7, 0, PAL_MED_GREY);
 });
 
 // Map meshType -> VoxelModel
