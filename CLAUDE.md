@@ -90,6 +90,210 @@ The defining mechanic is supply chain management:
 - `npm run build` — TypeScript check + Vite production bundle
 - `npm run preview` — Serve production build locally
 - `npm run convert-vox` — Convert `.vox` files in `assets/vox/` to `GeneratedVoxelModels.ts`
+- `npm run headless` — Run AI vs AI headless game (no browser/rendering)
+- `npm run rl` — Start ZMQ RL environment server for training agents
+
+## Headless Engine
+
+Runs a complete AI vs AI game without browser or Three.js dependencies. Useful for testing AI changes and training.
+
+**Usage:**
+```bash
+npm run headless                          # Random seed, 72,000 tick max
+SEED=12345 npm run headless               # Deterministic seed
+MAX_TICKS=36000 npm run headless          # Limit to 36,000 ticks (10 min)
+SEED=42 MAX_TICKS=72000 npm run headless  # Both
+```
+
+**Environment variables:**
+- `SEED` — Unsigned 32-bit integer for deterministic replay. Random if omitted.
+- `MAX_TICKS` — Tick limit. Default 72,000 (20 min game time at 60 ticks/s).
+
+**Output:**
+```
+Starting headless game (seed: 987654321, max ticks: 72000)...
+Seed: 987654321
+Winner: Team 0 in 38421 ticks (640.4s game time)
+Real time: 8.34s
+```
+
+**Determinism:** Same seed always produces identical results (winner + tick count). Uses `SeededRandom` (xorshift32 PRNG). Three systems take the RNG: CollisionAvoidanceSystem, TurretSystem, VoxelDamageSystem.
+
+**Browser replay:** `?replay=<seed>` URL param runs spectator mode with that seed.
+
+**Key files:**
+- `src/headless/HeadlessEngine.ts` — Engine: creates world, runs simulation loop (AI vs AI mode + RL mode with reset/step)
+- `src/headless/types.ts` — HeadlessConfig (unified AI vs AI + RL mode) and GameResult interfaces
+- `scripts/run-headless.ts` — CLI entry point
+- `src/simulation/utils/SeededRandom.ts` — Deterministic PRNG
+
+## RL Environment
+
+ZeroMQ-based reinforcement learning server. The RL agent controls team 1; the built-in AI controls team 0. Observations are fog-of-war filtered (agent only sees what its units see).
+
+**Usage:**
+```bash
+npm run rl                                # Default: port 5555, random seed
+PORT=5556 npm run rl                      # Custom port
+SEED=42 MAX_TICKS=3000 npm run rl         # Deterministic seed + tick limit
+TICKS_PER_STEP=30 npm run rl             # Ticks per RL step (default 30)
+```
+
+**Environment variables:**
+- `PORT` — ZMQ server port. Default 5555.
+- `SEED` — Unsigned 32-bit integer for deterministic replay. Random if omitted.
+- `MAX_TICKS` — Episode tick limit. Default 3,000 (50s game time at 60 ticks/s).
+- `TICKS_PER_STEP` — Simulation ticks per `step` call. Default 30.
+
+**Protocol:** ZMQ REQ/REP on `tcp://127.0.0.1:<PORT>`. All messages are JSON.
+
+**Commands:**
+
+| Command | Request | Response |
+|---------|---------|----------|
+| `reset` | `{ "command": "reset" }` | `{ "observation": {...}, "info": { "seed": ... } }` |
+| `step` | `{ "command": "step", "action": [{...}, ...] }` | `{ "observation": {...}, "reward": float, "done": bool, "truncated": bool, "info": {...} }` |
+| `close` | `{ "command": "close" }` | `{ "status": "closed" }` |
+
+**Action format (array of up to 4 actions per step):**
+```typescript
+[
+  {
+    actionType: number,  // RLActionType enum
+    sourceX: number,     // Source world X (nearest-entity spatial query)
+    sourceZ: number,     // Source world Z (nearest-entity spatial query)
+    targetX: number,     // Target X coordinate (destination or build site)
+    targetZ: number,     // Target Z coordinate (destination or build site)
+    param: number        // Unit category (TrainUnit) or building type (BuildStructure)
+  },
+  // ... up to 4 actions
+]
+```
+
+| RLActionType | Value | sourceX/Z | targetX/Z | param |
+|--------------|-------|-----------|-----------|-------|
+| NoOp | 0 | ignored | ignored | ignored |
+| MoveUnit | 1 | near unit | destination | ignored |
+| AttackMove | 2 | near unit | destination | ignored |
+| TrainUnit | 3 | near building | ignored | unit category (0-4) |
+| BuildStructure | 4 | near worker | build site | building type (1-5) |
+
+**Unit category indices** (for TrainUnit `param`):
+
+| Index | Unit |
+|-------|------|
+| 0 | WorkerDrone |
+| 1 | CombatDrone |
+| 2 | AssaultPlatform |
+| 3 | AerialDrone |
+| 4 | FerryDrone |
+
+**Building type indices** (for BuildStructure `param`):
+
+| Index | Building |
+|-------|----------|
+| 0 | (unused) |
+| 1 | EnergyExtractor |
+| 2 | MatterPlant |
+| 3 | SupplyDepot |
+| 4 | DroneFactory |
+| 5 | Wall |
+
+**Observation format:**
+```typescript
+{
+  resources: [energy, matter, energyRate, matterRate],  // 4 floats
+  mapGrid: number[],      // 32x32 flattened terrain (0=passable, 1=obstacle), cached
+  energyGrid: number[],   // 32x32 energy node locations (0/1), cached
+  oreGrid: number[],      // 32x32 ore deposit locations (0/1), cached
+  unitData: number[],     // 100 units x 9 features, own-first, zero-padded: [entityId, team, categoryIdx, posX, posZ, hp, maxHp, ammo, maxAmmo]
+  buildingData: number[], // 100 buildings x 8 features, own-first, zero-padded: [entityId, team, typeIdx, posX, posZ, hp, maxHp, constructionProgress]
+  gameState: number[],    // 12 binary features: [canAffordExtractor, canAffordPlant, canAffordDepot, canAffordFactory, canAffordWall, canAffordWorker, canAffordCombat, canAffordAssault, canAffordAerial, canAffordFerry, hasWorkers, hasProductionBuilding]
+  actionMask: number[],   // 32x32 grid: 0=nothing, 1=unclaimed energy node, 2=unclaimed ore deposit
+  tick: number            // Current simulation tick
+}
+```
+
+**Reward signal weights:**
+
+| Event | Weight |
+|-------|--------|
+| Income rate (energy + matter rate per step) | +0.0005 per unit |
+| Resource building placed (Extractor/Plant) | +0.15 each |
+| Own unit produced | +0.05 |
+| Own building completed | +0.1 |
+| Enemy unit killed | +0.1 |
+| Enemy building destroyed | +0.15 |
+| Own unit lost | -0.05 |
+| Own building lost | -0.1 |
+| Own HQ damage taken | -0.5 * (damage / 2000) |
+| Enemy HQ damage dealt | +0.5 * (damage / 2000) |
+| Win | +10.0 |
+| Lose | -10.0 |
+
+**Key files:**
+- `scripts/run-rl-server.ts` — ZMQ server entry point
+- `src/headless/RLTypes.ts` — RLActionType, AIAction, ObservationData, StepResult
+- `src/headless/RLObservation.ts` — Observation extraction (units, buildings, map grid, fog filtering)
+- `src/headless/RLReward.ts` — Reward calculation from state deltas
+
+**Python usage example:**
+```python
+import zmq, json
+
+ctx = zmq.Context()
+sock = ctx.socket(zmq.REQ)
+sock.connect("tcp://127.0.0.1:5555")
+
+# Reset
+sock.send_json({"command": "reset"})
+resp = sock.recv_json()
+obs = resp["observation"]
+
+# Step (multi-action: up to 4 actions per step, spatial source/target)
+sock.send_json({"command": "step", "action": [
+    {"actionType": 0, "sourceX": 0, "sourceZ": 0, "targetX": 0, "targetZ": 0, "param": 0},
+    {"actionType": 0, "sourceX": 0, "sourceZ": 0, "targetX": 0, "targetZ": 0, "param": 0},
+    {"actionType": 0, "sourceX": 0, "sourceZ": 0, "targetX": 0, "targetZ": 0, "param": 0},
+    {"actionType": 0, "sourceX": 0, "sourceZ": 0, "targetX": 0, "targetZ": 0, "param": 0},
+]})
+resp = sock.recv_json()
+obs, reward, done = resp["observation"], resp["reward"], resp["done"]
+
+# Close
+sock.send_json({"command": "close"})
+sock.recv_json()
+```
+
+## PPO Training (RL Agent)
+
+Train an RL agent to play as team 1 against the built-in AI (team 0) using PPO.
+
+**Local training:**
+```bash
+pip install -r training/requirements.txt
+python training/train.py                           # 500k steps, auto-starts game server
+python training/train.py --timesteps 1000000       # More steps
+python training/train.py --resume training/checkpoints/lunar_wars_ppo_500000_steps  # Resume
+```
+
+**Modal.com GPU training:**
+```bash
+pip install modal
+modal setup                                        # One-time auth
+modal run training/modal_train.py                  # Default 500k steps on T4 GPU
+modal run training/modal_train.py --timesteps 1000000
+```
+
+**Key files:**
+- `training/lunar_wars_env.py` — Gymnasium wrapper (obs/action space, ZMQ bridge)
+- `training/train.py` — Local PPO training with SB3
+- `training/modal_train.py` — Modal.com GPU deployment
+- `training/requirements.txt` — Python dependencies
+
+**Observation space:** Fixed 5813-float array (4 resources + 1024*3 grids [terrain/energy/ore] + 900 unit data + 800 building data + 12 game state + 1024 action mask + 1 tick), normalized.
+
+**Action space:** MultiDiscrete([5, 32, 32, 32, 32, 6] * 4) = 4 sub-actions of [actionType, srcGridX, srcGridZ, tgtGridX, tgtGridZ, param]. Shape (24,). 30 ticks/step default (0.5s game time per decision).
 
 ## Voxel Model Authoring (.vox workflow)
 
@@ -200,6 +404,16 @@ for (const e of entities) {
 | `src/ui/ActionBar.ts` | Context-sensitive build/train buttons at bottom center |
 | `src/ui/ResourceDisplay.ts` | Top-left HUD showing energy/matter with rates |
 | `src/main.ts` | Bootstraps everything, spawns HQs + workers, wires systems and UI |
+| `src/simulation/ai/PlacementValidator.ts` | Shared building placement validation (used by AI + RL) |
+| `src/headless/RLTypes.ts` | RL type definitions: actions, observations |
+| `src/headless/RLObservation.ts` | Observation extraction with fog-of-war filtering |
+| `src/headless/RLReward.ts` | Reward calculation from state deltas |
+| `scripts/run-rl-server.ts` | ZMQ RL server entry point |
+| `training/lunar_wars_env.py` | Gymnasium wrapper for RL training |
+| `training/train.py` | Local PPO training script (SB3) |
+| `src/simulation/systems/RLAISystem.ts` | PPO model inference for RL-trained agent (team 1) |
+| `src/simulation/ai/RLInference.ts` | MLP forward pass for PPO policy network |
+| `training/modal_train.py` | Modal.com GPU training deployment |
 
 ## World Coordinates
 

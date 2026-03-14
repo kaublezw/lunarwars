@@ -6,6 +6,7 @@ export class GameLoop {
   private paused = false;
   private rafId = 0;
   private timeScale = 1;
+  private tickCount = 0;
 
   constructor(
     private simulate: (dt: number) => void,
@@ -48,6 +49,10 @@ export class GameLoop {
     return this.timeScale;
   }
 
+  getTickCount(): number {
+    return this.tickCount;
+  }
+
   private loop = (): void => {
     if (!this.running) return;
     this.rafId = requestAnimationFrame(this.loop);
@@ -69,6 +74,7 @@ export class GameLoop {
 
       while (this.accumulator >= this.TICK_RATE) {
         this.simulate(this.TICK_RATE);
+        this.tickCount++;
         this.accumulator -= this.TICK_RATE;
       }
     }

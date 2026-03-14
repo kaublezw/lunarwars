@@ -8,8 +8,8 @@ import type { AIContext, AIWorldState, Squad, AttackState, IntelligenceReport } 
 import { WORKER_SCALING_BASE } from '@sim/ai/AITypes';
 
 import { getBuildingCount } from '@sim/ai/AIQueries';
-import { trainUnit, trainFromHQ } from '@sim/ai/AIActions';
 import { updateSquads, executeSquadOrders } from '@sim/ai/AISquads';
+import { trainUnit, type GameCommandContext } from '@sim/commands/GameCommands';
 
 export class MilitaryManager {
   private squads: Squad[] = [];
@@ -40,11 +40,23 @@ export class MilitaryManager {
     executeSquadOrders(ctx, state, this.squads, influenceGrid, this.attackState);
   }
 
+  private buildCmdCtx(ctx: AIContext): GameCommandContext {
+    return {
+      world: ctx.world,
+      resources: ctx.resources,
+      terrain: ctx.terrain,
+      energyNodes: ctx.energyNodes,
+      oreDeposits: ctx.oreDeposits,
+    };
+  }
+
   private executeProduction(ctx: AIContext, state: AIWorldState): void {
     const extractors = getBuildingCount(state, BuildingType.EnergyExtractor) + (state.myConstructions.get(BuildingType.EnergyExtractor) ?? 0);
     const plants = getBuildingCount(state, BuildingType.MatterPlant) + (state.myConstructions.get(BuildingType.MatterPlant) ?? 0);
     const factories = getBuildingCount(state, BuildingType.DroneFactory) + (state.myConstructions.get(BuildingType.DroneFactory) ?? 0);
     const currentEnergy = ctx.resources.get(ctx.team).energy;
+
+    const cmdCtx = this.buildCmdCtx(ctx);
 
     // Worker suppression: don't train workers while bootstrapping fundamentals
     const suppressWorkers = extractors === 0 || plants === 0
@@ -52,7 +64,10 @@ export class MilitaryManager {
 
     const targetWorkers = Math.min(8, WORKER_SCALING_BASE + state.depotCount);
     if (state.myWorkers.length < targetWorkers && !suppressWorkers) {
-      trainFromHQ(ctx, UnitCategory.WorkerDrone, ctx.hqEntity);
+      const hqPos = ctx.world.getComponent<PositionComponent>(ctx.hqEntity, POSITION);
+      const rallyX = hqPos ? hqPos.x : ctx.baseX;
+      const rallyZ = hqPos ? hqPos.z + 5 : ctx.baseZ;
+      trainUnit(cmdCtx, ctx.team, ctx.hqEntity, UnitCategory.WorkerDrone, rallyX, rallyZ);
     }
 
     const threatsNearBase = state.enemiesNearBase.length > 0;
@@ -104,7 +119,7 @@ export class MilitaryManager {
         rallyZ = this.attackState.stagingZ;
       }
 
-      if (trainUnit(ctx, factory, unitType, rallyX, rallyZ)) {
+      if (trainUnit(cmdCtx, ctx.team, factory, unitType, rallyX, rallyZ)) {
         this.unitsProduced++;
       }
     }

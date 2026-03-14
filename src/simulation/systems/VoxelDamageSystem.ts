@@ -6,9 +6,17 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { TurretComponent } from '@sim/components/Turret';
 import { VOXEL_MODELS, VOXEL_SIZE } from '@sim/data/VoxelModels';
 import type { VoxelModel } from '@sim/data/VoxelModels';
+import type { SeededRandom } from '@sim/utils/SeededRandom';
 
 export class VoxelDamageSystem implements System {
   readonly name = 'VoxelDamageSystem';
+  private rng: SeededRandom;
+  private headless: boolean;
+
+  constructor(rng: SeededRandom, headless: boolean = false) {
+    this.rng = rng;
+    this.headless = headless;
+  }
 
   update(world: World, _dt: number): void {
     const entities = world.query(VOXEL_STATE, IMPACT_EVENT);
@@ -49,16 +57,18 @@ export class VoxelDamageSystem implements System {
       }
 
       // Buffer impact for renderer-side consumers (e.g. garage door)
-      if (!voxelState.recentImpacts) voxelState.recentImpacts = [];
-      voxelState.recentImpacts.push({
-        impactX: impact.impactX,
-        impactY: impact.impactY,
-        impactZ: impact.impactZ,
-        blastRadius: impact.blastRadius,
-        dirX: impact.dirX,
-        dirY: impact.dirY,
-        dirZ: impact.dirZ,
-      });
+      if (!this.headless) {
+        if (!voxelState.recentImpacts) voxelState.recentImpacts = [];
+        voxelState.recentImpacts.push({
+          impactX: impact.impactX,
+          impactY: impact.impactY,
+          impactZ: impact.impactZ,
+          blastRadius: impact.blastRadius,
+          dirX: impact.dirX,
+          dirY: impact.dirY,
+          dirZ: impact.dirZ,
+        });
+      }
 
       // Consume the impact event
       world.removeComponent(e, IMPACT_EVENT);
@@ -145,9 +155,9 @@ export class VoxelDamageSystem implements System {
 
           if (radLen < 0.001) {
             // Voxel is at impact center: bounce back along bullet direction
-            debrisDirX = -worldDirX + (Math.random() - 0.5) * scatter;
-            debrisDirY = -worldDirY + Math.random() * 0.5;
-            debrisDirZ = -worldDirZ + (Math.random() - 0.5) * scatter;
+            debrisDirX = -worldDirX + (this.rng.next() - 0.5) * scatter;
+            debrisDirY = -worldDirY + this.rng.next() * 0.5;
+            debrisDirZ = -worldDirZ + (this.rng.next() - 0.5) * scatter;
           } else {
             // Radial outward from impact center (in grid/local space)
             let outX = radX / radLen;
@@ -164,27 +174,30 @@ export class VoxelDamageSystem implements System {
               outZ = wz;
             }
 
-            debrisDirX = outX + (Math.random() - 0.5) * scatter;
-            debrisDirY = outY + Math.random() * 0.5;
-            debrisDirZ = outZ + (Math.random() - 0.5) * scatter;
+            debrisDirX = outX + (this.rng.next() - 0.5) * scatter;
+            debrisDirY = outY + this.rng.next() * 0.5;
+            debrisDirZ = outZ + (this.rng.next() - 0.5) * scatter;
           }
 
           // Destroy this voxel
           voxelState.destroyed[byteIdx] |= (1 << bitIdx);
           voxelState.destroyedCount++;
 
-          // Queue debris info for renderer
-          voxelState.pendingDebris.push({
-            solidIndex: solidIdx,
-            dirX: debrisDirX,
-            dirY: debrisDirY,
-            dirZ: debrisDirZ,
-          });
+          // Queue debris info for renderer (skip in headless mode)
+          if (!this.headless) {
+            voxelState.pendingDebris.push({
+              solidIndex: solidIdx,
+              dirX: debrisDirX,
+              dirY: debrisDirY,
+              dirZ: debrisDirZ,
+            });
+          }
         }
       }
     }
 
-    // Scorch pass: mark surviving solid voxels in a slightly larger radius
+    // Scorch pass: mark surviving solid voxels in a slightly larger radius (skip in headless)
+    if (this.headless) return;
     const scorchR = blastR + 1;
     for (let dy = -scorchR; dy <= scorchR; dy++) {
       for (let dz = -scorchR; dz <= scorchR; dz++) {

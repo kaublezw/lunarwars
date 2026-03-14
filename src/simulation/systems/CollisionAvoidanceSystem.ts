@@ -6,15 +6,18 @@ import type { SteeringComponent } from '@sim/components/Steering';
 import { UnitCategory } from '@sim/components/UnitType';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
 import { SpatialHash } from '@sim/spatial/SpatialHash';
+import type { SeededRandom } from '@sim/utils/SeededRandom';
 
 const SEPARATION_WEIGHT = 5.0;
 
 export class CollisionAvoidanceSystem implements System {
   readonly name = 'CollisionAvoidanceSystem';
   private spatialHash: SpatialHash;
+  private rng: SeededRandom;
 
-  constructor() {
+  constructor(rng: SeededRandom) {
     this.spatialHash = new SpatialHash(4, 276, 276);
+    this.rng = rng;
   }
 
   update(world: World, _dt: number): void {
@@ -69,8 +72,8 @@ export class CollisionAvoidanceSystem implements System {
           sepZ += (dz / dist) * pushStrength;
         } else if (distSq <= 0.0001) {
           // Nearly on top of each other — push in arbitrary direction
-          sepX += (Math.random() - 0.5) * 2;
-          sepZ += (Math.random() - 0.5) * 2;
+          sepX += (this.rng.next() - 0.5) * 2;
+          sepZ += (this.rng.next() - 0.5) * 2;
         }
       }
 

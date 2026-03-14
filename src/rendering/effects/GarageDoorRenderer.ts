@@ -224,8 +224,8 @@ export class GarageDoorRenderer {
       const doorY = pos.y + DOOR_CLOSED_Y_OFFSET + tracker.openAmount * DOOR_HEIGHT;
       tracker.mesh.position.set(pos.x, doorY, pos.z + DOOR_Z_OFFSET);
 
-      // Clip door geometry above HQ roof (voxel grid y=15 -> 15 * VOXEL_SIZE)
-      tracker.clipPlane.constant = pos.y + 15 * VOXEL_SIZE;
+      // Clip door geometry above garage opening (y=10 is where solid wall starts)
+      tracker.clipPlane.constant = pos.y + 10 * VOXEL_SIZE;
 
       // Fog visibility
       const visible = !this.fogState || this.playerTeam < 0
@@ -291,8 +291,8 @@ export class GarageDoorRenderer {
       clippingPlanes: [clipPlane],
     });
     const mesh = new THREE.Mesh(built.bodyGeometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
     this.scene.add(mesh);
 
     // Build stable random damage order seeded by entity ID

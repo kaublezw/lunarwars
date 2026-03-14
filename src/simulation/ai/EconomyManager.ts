@@ -7,10 +7,9 @@ import type { HealthComponent } from '@sim/components/Health';
 
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
-import { BUILDING_DEFS } from '@sim/data/BuildingData';
 
 import type { AIContext, AIWorldState, AIPhase, IntelligenceReport } from '@sim/ai/AITypes';
-import { WALL_SEGMENT_COST, MAX_AI_WALLS } from '@sim/ai/AITypes';
+import { MAX_AI_WALLS } from '@sim/ai/AITypes';
 
 import {
   getBuildingCount, getIdleWorkers, getCompletedDepots,
@@ -20,13 +19,25 @@ import {
   findBuildLocation, findEnergyNodeLocation, findOreDepositLocation,
   findExtractorWallPlan, findChokepointWallPlan, findBasePerimeterWallPlan,
 } from '@sim/ai/AILocationFinder';
+import { issueMove, assignRepair } from '@sim/ai/AIActions';
 import {
-  issueMove, createConstructionSite, trainUnit, assignRepair, createWallSegments,
-} from '@sim/ai/AIActions';
+  buildStructure, buildWallSegments, trainUnit,
+  type GameCommandContext,
+} from '@sim/commands/GameCommands';
 
 import type { EnemyMemoryEntry } from '@sim/ai/AITypes';
 
 export class EconomyManager {
+  private buildCmdCtx(ctx: AIContext): GameCommandContext {
+    return {
+      world: ctx.world,
+      resources: ctx.resources,
+      terrain: ctx.terrain,
+      energyNodes: ctx.energyNodes,
+      oreDeposits: ctx.oreDeposits,
+    };
+  }
+
   update(ctx: AIContext, report: IntelligenceReport): void {
     const { state, phase, enemyMemory } = report;
 
@@ -81,29 +92,19 @@ export class EconomyManager {
       { condition: plants < extractors && netEnergy >= 4 && hasUnclaimedDeposit, type: BuildingType.MatterPlant, save: false },
     ];
 
+    const cmdCtx = this.buildCmdCtx(ctx);
+
     for (const rule of rules) {
       if (!rule.condition) continue;
-
-      const def = BUILDING_DEFS[rule.type];
-      if (!def) continue;
-
-      const canAfford = ctx.resources.canAfford(ctx.team, def.energyCost)
-        && ctx.resources.canAffordMatter(ctx.team, def.matterCost);
-
-      if (!canAfford) {
-        if (rule.save) return;
-        continue;
-      }
 
       const location = findBuildLocation(ctx, rule.type, state, enemyMemory);
       if (!location) continue;
 
-      ctx.resources.spend(ctx.team, def.energyCost);
-      if (def.matterCost > 0) {
-        ctx.resources.spendMatter(ctx.team, def.matterCost);
+      const success = buildStructure(cmdCtx, ctx.team, rule.type, location.x, location.z, idleWorkers[0]);
+      if (!success) {
+        if (rule.save) return;
+        continue;
       }
-
-      createConstructionSite(ctx, rule.type, location.x, location.z, idleWorkers[0]);
 
       // Escort remote builds with a combat drone
       const dx = location.x - ctx.baseX;
@@ -172,6 +173,8 @@ export class EconomyManager {
       planners.push(() => findBasePerimeterWallPlan(ctx, state, enemyMemory));
     }
 
+    const cmdCtx = this.buildCmdCtx(ctx);
+
     for (const planner of planners) {
       const plan = planner();
       if (!plan) continue;
@@ -180,12 +183,7 @@ export class EconomyManager {
       const segments = plan.slice(0, maxNew);
       if (segments.length < 2) continue;
 
-      const totalCost = segments.length * WALL_SEGMENT_COST;
-      if (!ctx.resources.canAffordMatter(ctx.team, totalCost)) continue;
-
-      ctx.resources.spendMatter(ctx.team, totalCost);
-      createWallSegments(ctx, segments, idleWorkers[0]);
-      return;
+      if (buildWallSegments(cmdCtx, ctx.team, segments, idleWorkers[0])) return;
     }
   }
 
@@ -195,6 +193,7 @@ export class EconomyManager {
     if (completedDepots.length === 0) return;
 
     const ferryCountMap = getFerryCountByDepot(ctx);
+    const cmdCtx = this.buildCmdCtx(ctx);
 
     for (const depot of completedDepots) {
       const depotPos = ctx.world.getComponent<PositionComponent>(depot, POSITION)!;
@@ -207,7 +206,7 @@ export class EconomyManager {
 
       if (currentFerries >= requiredFerries) continue;
 
-      trainUnit(ctx, depot, UnitCategory.FerryDrone, hqPos.x, hqPos.z);
+      trainUnit(cmdCtx, ctx.team, depot, UnitCategory.FerryDrone, hqPos.x, hqPos.z);
     }
   }
 

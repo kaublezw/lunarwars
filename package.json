@@ -6,10 +6,13 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "convert-vox": "tsx scripts/convert-vox.ts"
+    "convert-vox": "tsx scripts/convert-vox.ts",
+    "headless": "tsx scripts/run-headless.ts",
+    "rl": "tsx scripts/run-rl-server.ts"
   },
   "dependencies": {
-    "three": "^0.170.0"
+    "three": "^0.170.0",
+    "zeromq": "^6.5.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.13",

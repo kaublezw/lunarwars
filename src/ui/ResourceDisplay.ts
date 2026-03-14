@@ -25,14 +25,19 @@ export class ResourceDisplay {
     parent.appendChild(this.container);
   }
 
-  update(resources: ResourceState, team: number): void {
+  update(resources: ResourceState, team: number, tickCount: number = 0): void {
     const res = resources.get(team);
     const eSign = res.energyRate >= 0 ? '+' : '';
     const mSign = res.matterRate >= 0 ? '+' : '';
+    const totalSeconds = Math.floor(tickCount / 60);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const clock = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     this.container.innerHTML =
       `<span style="color:#ff4">Energy: ${Math.floor(res.energy)}</span>` +
       `<span style="color:#aa8;font-size:11px"> (${eSign}${res.energyRate.toFixed(1)}/s)</span>` +
       `  <span style="color:#4cf">Matter: ${Math.floor(res.matter)}</span>` +
-      `<span style="color:#8ab;font-size:11px"> (${mSign}${res.matterRate.toFixed(1)}/s)</span>`;
+      `<span style="color:#8ab;font-size:11px"> (${mSign}${res.matterRate.toFixed(1)}/s)</span>` +
+      `  <span style="color:#aaa">${clock}</span>`;
   }
 }

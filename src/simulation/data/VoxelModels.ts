@@ -47,6 +47,7 @@ export const PAL_BLUE_GLOW = 4;
 export const PAL_ORANGE = 5;
 export const PAL_BROWN = 6;
 export const PAL_CHIMNEY = 7;
+export const PAL_WHITE = 11;
 
 // Shared palette for all models
 export const SHARED_PALETTE: number[] = [];
@@ -57,6 +58,7 @@ SHARED_PALETTE[PAL_BLUE_GLOW] = 0x66ccff;
 SHARED_PALETTE[PAL_ORANGE] = 0xff8833;
 SHARED_PALETTE[PAL_BROWN] = 0x554433;
 SHARED_PALETTE[PAL_CHIMNEY] = 0x777777;
+SHARED_PALETTE[PAL_WHITE] = 0xffffff;
 SHARED_PALETTE[PAL_TEAM_PRIMARY] = 0xffffff; // placeholder, resolved at render
 SHARED_PALETTE[PAL_TEAM_ACCENT] = 0xffffff; // placeholder, resolved at render
 
@@ -374,13 +376,9 @@ export const MATTER_PACKET_MODEL = createModel(2, 2, 2, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 0, 0, 0, 1, 1, 1, PAL_DARK_GREY);
 });
 
-// Garage door model (7 wide x 8 tall x 2 deep) — renderer-managed, not ECS-managed
-export const GARAGE_DOOR_MODEL = createModel(7, 8, 2, (g, sx, _sy, sz) => {
-  // Main door panel
-  fillBox(g, sx, sz, 0, 0, 0, 6, 7, 1, PAL_LIGHT_GREY);
-  // Cross-brace detail
-  fillBox(g, sx, sz, 0, 3, 0, 6, 4, 0, PAL_MED_GREY);
-  fillBox(g, sx, sz, 3, 0, 0, 3, 7, 0, PAL_MED_GREY);
+// Garage door model (7 wide x 8 tall x 1 deep) — renderer-managed, not ECS-managed
+export const GARAGE_DOOR_MODEL = createModel(7, 8, 1, (g, sx, _sy, sz) => {
+  fillBox(g, sx, sz, 0, 0, 0, 6, 7, 0, PAL_WHITE);
 });
 
 // Map meshType -> VoxelModel

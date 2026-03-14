@@ -15,6 +15,7 @@ import { SpatialHash } from '@sim/spatial/SpatialHash';
 import { COUNTER_MULTIPLIERS, UNIT_DEFS } from '@sim/data/UnitData';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_SIZE, VOXEL_MODELS } from '@sim/data/VoxelModels';
+import type { SeededRandom } from '@sim/utils/SeededRandom';
 
 // Interpolate between two angles, handling wraparound
 function lerpAngle(a: number, b: number, t: number): number {
@@ -42,9 +43,11 @@ const TEAM_PROJECTILE_COLORS = [0xffffff, 0xffffff];
 export class TurretSystem implements System {
   readonly name = 'TurretSystem';
   private spatialHash: SpatialHash;
+  private rng: SeededRandom;
 
-  constructor() {
+  constructor(rng: SeededRandom) {
     this.spatialHash = new SpatialHash(4, 276, 276);
+    this.rng = rng;
   }
 
   update(world: World, dt: number): void {
@@ -210,8 +213,8 @@ export class TurretSystem implements System {
                 for (let attempt = 0; attempt < 8 && fGX < 0; attempt++) {
                   if (attackFromAbove) {
                     // Top-down ray march: random X/Z, march downward to find roof
-                    const gx = Math.floor(Math.random() * model.sizeX);
-                    const gz = Math.floor(Math.random() * model.sizeZ);
+                    const gx = this.rng.nextInt(model.sizeX);
+                    const gz = this.rng.nextInt(model.sizeZ);
                     for (let gy = model.sizeY - 1; gy >= 0; gy--) {
                       if (model.grid[gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ] !== 0) {
                         fGX = gx; fGY = gy; fGZ = gz;
@@ -219,8 +222,8 @@ export class TurretSystem implements System {
                       }
                     }
                   } else if (marchX) {
-                    const gy = Math.floor(Math.random() * model.sizeY);
-                    const gz = Math.floor(Math.random() * model.sizeZ);
+                    const gy = this.rng.nextInt(model.sizeY);
+                    const gz = this.rng.nextInt(model.sizeZ);
                     const startX = adx > 0 ? model.sizeX - 1 : 0;
                     const step = adx > 0 ? -1 : 1;
                     for (let gx = startX; gx >= 0 && gx < model.sizeX; gx += step) {
@@ -230,8 +233,8 @@ export class TurretSystem implements System {
                       }
                     }
                   } else {
-                    const gy = Math.floor(Math.random() * model.sizeY);
-                    const gx = Math.floor(Math.random() * model.sizeX);
+                    const gy = this.rng.nextInt(model.sizeY);
+                    const gx = this.rng.nextInt(model.sizeX);
                     const startZ = adz > 0 ? model.sizeZ - 1 : 0;
                     const step = adz > 0 ? -1 : 1;
                     for (let gz = startZ; gz >= 0 && gz < model.sizeZ; gz += step) {
@@ -280,9 +283,9 @@ export class TurretSystem implements System {
           } else {
             // Unit: positional scatter
             const SCATTER = 0.8;
-            impactX = aimX + (Math.random() - 0.5) * SCATTER;
-            impactY = targetPos.y + 0.3 + (Math.random() - 0.5) * 0.6;
-            impactZ = aimZ + (Math.random() - 0.5) * SCATTER;
+            impactX = aimX + (this.rng.next() - 0.5) * SCATTER;
+            impactY = targetPos.y + 0.3 + (this.rng.next() - 0.5) * 0.6;
+            impactZ = aimZ + (this.rng.next() - 0.5) * SCATTER;
           }
 
           // Step 3: Direction from pivot to impact (the ONE fire line)

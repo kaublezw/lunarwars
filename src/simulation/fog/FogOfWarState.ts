@@ -10,6 +10,7 @@ export const FOG_VISIBLE = 2;
 
 export class FogOfWarState {
   private grids: Uint8Array[];
+  private world: World | null = null;
   readonly width: number;
   readonly height: number;
   readonly teamCount: number;
@@ -31,6 +32,8 @@ export class FogOfWarState {
   }
 
   update(world: World): void {
+    this.world = world;
+
     // Demote VISIBLE -> EXPLORED for all teams
     for (let t = 0; t < this.teamCount; t++) {
       const grid = this.grids[t];
@@ -76,7 +79,18 @@ export class FogOfWarState {
   }
 
   isVisible(team: number, x: number, z: number): boolean {
-    return this.getState(team, x, z) === FOG_VISIBLE;
+    if (!this.world) return false;
+    const entities = this.world.query(POSITION, VISION, TEAM);
+    for (const e of entities) {
+      const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      const vision = this.world.getComponent<VisionComponent>(e, VISION)!;
+      const dx = pos.x - x;
+      const dz = pos.z - z;
+      if (dx * dx + dz * dz <= vision.range * vision.range) return true;
+    }
+    return false;
   }
 
   isExplored(team: number, x: number, z: number): boolean {

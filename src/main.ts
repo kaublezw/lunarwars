@@ -34,6 +34,7 @@ import { EnergyPacketSystem } from '@sim/systems/EnergyPacketSystem';
 import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { AISystem } from '@sim/systems/AIBrain';
+import { RLAISystem } from '@sim/systems/RLAISystem';
 import { FogOfWarState } from '@sim/fog/FogOfWarState';
 import { ResourceState } from '@sim/economy/ResourceState';
 import { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
@@ -59,7 +60,8 @@ import { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { VoxelMeshManager } from '@render/VoxelMeshManager';
 import { DepotRangeRenderer } from '@render/DepotRangeRenderer';
 import { SupplySystem } from '@sim/systems/SupplySystem';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE, TURRET, MATTER_STORAGE, DEPOT_RADIUS, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
+import { SeededRandom } from '@sim/utils/SeededRandom';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, VOXEL_STATE, TURRET, MATTER_STORAGE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import type { BuildingComponent } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -73,17 +75,14 @@ import type { HealthComponent } from '@sim/components/Health';
 import type { TeamComponent } from '@sim/components/Team';
 import type { VisionComponent } from '@sim/components/Vision';
 import type { TurretComponent } from '@sim/components/Turret';
-import type { BuildCommandComponent } from '@sim/components/BuildCommand';
-import type { ConstructionComponent } from '@sim/components/Construction';
-import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
+import * as GameCommands from '@sim/commands/GameCommands';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
-import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 
 // --- Renderer ---
 const app = document.getElementById('app')!;
@@ -94,9 +93,16 @@ renderer.shadowMap.enabled = true;
 renderer.localClippingEnabled = true;
 app.appendChild(renderer.domElement);
 
+// --- Replay Mode (URL param: ?replay=<seed>) ---
+const replaySeedParam = new URLSearchParams(window.location.search).get('replay');
+const replayMode = replaySeedParam !== null;
+
+// --- RL Model Mode (URL param: ?rl) — trained model vs built-in AI spectator ---
+const rlMode = new URLSearchParams(window.location.search).has('rl');
+
 // --- Spectator Mode ---
 const SPECTATOR_KEY = 'lunarwars_spectator';
-const spectatorMode = sessionStorage.getItem(SPECTATOR_KEY) === 'true';
+const spectatorMode = replayMode || rlMode || sessionStorage.getItem(SPECTATOR_KEY) === 'true';
 
 // --- Scenario Mode (URL param or sessionStorage) ---
 const SANDBOX_KEY = 'lunarwars_sandbox';
@@ -121,7 +127,7 @@ let saveData: {
   spectator?: boolean;
 } | null = null;
 
-if (savedRaw) {
+if (savedRaw && !replayMode) {
   try {
     const parsed = JSON.parse(savedRaw);
     // Reject old saves or saves from mismatched mode
@@ -135,7 +141,9 @@ if (savedRaw) {
   }
 }
 
-const seed = saveData ? saveData.seed : Math.floor(Math.random() * 2147483647);
+const seed = replayMode
+  ? (parseInt(replaySeedParam!, 10) || 1)
+  : saveData ? saveData.seed : Math.floor(Math.random() * 2147483647);
 
 // --- Terrain ---
 const terrainData = new TerrainData({ seed });
@@ -208,6 +216,9 @@ const TEAM_COLORS = [0x4488ff, 0xff4444];
 const PLAYER_TEAM = 0;
 const AI_TEAM = 1;
 
+// --- Seeded RNG for deterministic simulation ---
+const simRng = new SeededRandom(seed * 9973);
+
 // System order: pathfinding -> collision avoidance -> movement -> fog -> turret -> projectile -> voxelDamage -> resupply -> repair -> gameOver -> health -> energyPacket -> economy -> supply -> build -> production -> AI
 const pathfindingSystem = new PathfindingSystem(terrainData);
 pathfindingSystem.setOccupancy(buildingOccupancy);
@@ -235,12 +246,12 @@ gameOverSystem.setCallback((losingTeam: number) => {
 
 world.addSystem(new GarageExitSystem());
 world.addSystem(pathfindingSystem);
-world.addSystem(new CollisionAvoidanceSystem());
+world.addSystem(new CollisionAvoidanceSystem(simRng));
 world.addSystem(movementSystem);
 world.addSystem(new FogOfWarSystem(fogState));
-world.addSystem(new TurretSystem());
+world.addSystem(new TurretSystem(simRng));
 world.addSystem(new ProjectileSystem());
-world.addSystem(new VoxelDamageSystem());
+world.addSystem(new VoxelDamageSystem(simRng));
 world.addSystem(new ResupplySystem());
 world.addSystem(new RepairSystem(resourceState, 2));
 world.addSystem(gameOverSystem);
@@ -251,9 +262,15 @@ world.addSystem(new EconomySystem(resourceState, 2, terrainData));
 world.addSystem(new SupplySystem(terrainData, resourceState));
 world.addSystem(new BuildSystem());
 world.addSystem(new ProductionSystem(resourceState, terrainData));
-world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
-if (spectatorMode) {
+if (rlMode) {
+  // RL mode: built-in AI for team 0 (PLAYER_TEAM), trained model for team 1 (AI_TEAM)
   world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
+  world.addSystem(new RLAISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
+} else {
+  world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
+  if (spectatorMode) {
+    world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
+  }
 }
 
 
@@ -521,6 +538,14 @@ if (saveData) {
   }
 }
 
+// Extra starting resources (on top of constructor's 100e/100m)
+if (!saveData) {
+  resourceState.addEnergy(0, 100);
+  resourceState.addMatter(0, 100);
+  resourceState.addEnergy(1, 100);
+  resourceState.addMatter(1, 100);
+}
+
 // --- Player Input (disabled in spectator mode) ---
 let selectionController: SelectionController | null = null;
 let placementController: PlacementController | null = null;
@@ -583,6 +608,14 @@ if (selectionController) {
 let wallWorkerEntity = -1; // captured when Wall button is clicked so it survives deselection during drag
 
 function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void {
+  const cmdCtx: GameCommands.GameCommandContext = {
+    world,
+    resources: resourceState,
+    terrain: terrainData,
+    energyNodes,
+    oreDeposits,
+  };
+
   ab.onBuildRequest((type) => {
     // Find a selected worker belonging to the player
     const selectables = world.query(SELECTABLE, UNIT_TYPE, TEAM);
@@ -623,10 +656,6 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
   });
 
   ab.onTrainRequest((unitType) => {
-    const def = UNIT_DEFS[unitType];
-    if (!def) return;
-    if (!resourceState.canAfford(PLAYER_TEAM, def.energyCost)) return;
-
     // Determine which building type trains this unit
     const targetBuildingType = unitType === UnitCategory.WorkerDrone
       ? BuildingType.HQ
@@ -644,21 +673,8 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
       if (building.buildingType !== targetBuildingType) continue;
 
-      // Check and deduct matter from global pool
-      if (def.matterCost > 0) {
-        if (!resourceState.canAffordMatter(PLAYER_TEAM, def.matterCost)) continue;
-        resourceState.spendMatter(PLAYER_TEAM, def.matterCost);
-      }
-
-      // Spend energy globally
-      resourceState.spend(PLAYER_TEAM, def.energyCost);
-
-      const pq = world.getComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE)!;
-      pq.queue.push({
-        unitType,
-        timeRemaining: def.trainTime,
-        totalTime: def.trainTime,
-      });
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      GameCommands.trainUnit(cmdCtx, PLAYER_TEAM, e, unitType as UnitCategory, pos.x, pos.z + 5);
       break;
     }
   });
@@ -683,11 +699,7 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
   });
 
   pc.onPlacementConfirmed((type, x, z) => {
-    const def = BUILDING_DEFS[type];
-    if (!def) return;
-    if (!resourceState.canAfford(PLAYER_TEAM, def.energyCost)) return;
-
-    // Find a selected worker for this team
+    // Find a selected idle worker for this team
     const selectables = world.query(SELECTABLE, UNIT_TYPE, TEAM);
     let workerEntity = -1;
     for (const e of selectables) {
@@ -703,95 +715,7 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     }
     if (workerEntity === -1) return;
 
-    // Check and deduct matter from global pool
-    if (def.matterCost > 0) {
-      if (!resourceState.canAffordMatter(PLAYER_TEAM, def.matterCost)) return;
-      resourceState.spendMatter(PLAYER_TEAM, def.matterCost);
-    }
-
-    // Deduct energy globally
-    resourceState.spend(PLAYER_TEAM, def.energyCost);
-
-    // Create construction site entity
-    const site = world.createEntity();
-    const siteY = terrainData.getHeight(x, z);
-
-    world.addComponent<PositionComponent>(site, POSITION, {
-      x, y: siteY, z,
-      prevX: x, prevY: siteY, prevZ: z,
-      rotation: 0,
-    });
-
-    world.addComponent<RenderableComponent>(site, RENDERABLE, {
-      meshType: def.meshType,
-      color: TEAM_COLORS[PLAYER_TEAM],
-      scale: 1.0,
-    });
-
-    world.addComponent<TeamComponent>(site, TEAM, { team: PLAYER_TEAM });
-
-    world.addComponent<BuildingComponent>(site, BUILDING, {
-      buildingType: type as BuildingType,
-    });
-
-    world.addComponent<HealthComponent>(site, HEALTH, {
-      current: 50,
-      max: def.hp,
-      dead: false,
-    });
-
-    world.addComponent<ConstructionComponent>(site, CONSTRUCTION, {
-      buildingType: type,
-      progress: 0,
-      buildTime: def.buildTime,
-      builderEntity: workerEntity,
-    });
-
-    world.addComponent<SelectableComponent>(site, SELECTABLE, { selected: false });
-
-    // Voxel state: start with first layer visible, rest destroyed — BuildSystem reveals progressively
-    const finalModel = VOXEL_MODELS[def.meshType];
-    if (finalModel) {
-      const destroyedMask = new Uint8Array(Math.ceil(finalModel.totalSolid / 8));
-      destroyedMask.fill(255);
-      // Reveal the first Y layer immediately
-      for (let i = 0; i < finalModel.firstLayerCount; i++) {
-        const solidIdx = finalModel.buildOrder[i];
-        destroyedMask[solidIdx >> 3] &= ~(1 << (solidIdx & 7));
-      }
-      world.addComponent<VoxelStateComponent>(site, VOXEL_STATE, {
-        modelId: def.meshType,
-        totalVoxels: finalModel.totalSolid,
-        destroyedCount: finalModel.totalSolid - finalModel.firstLayerCount,
-        destroyed: destroyedMask,
-        dirty: true,
-        pendingDebris: [],
-        pendingScorch: [],
-      });
-    }
-
-    // Cancel ferry if worker was ferrying
-    if (world.hasComponent(workerEntity, SUPPLY_ROUTE)) {
-      world.removeComponent(workerEntity, SUPPLY_ROUTE);
-    }
-
-    // Issue move command to worker
-    world.addComponent<MoveCommandComponent>(workerEntity, MOVE_COMMAND, {
-      path: [],
-      currentWaypoint: 0,
-      destX: x,
-      destZ: z,
-    });
-
-    // Issue build command to worker
-    world.addComponent<BuildCommandComponent>(workerEntity, BUILD_COMMAND, {
-      buildingType: type,
-      targetX: x,
-      targetZ: z,
-      state: 'moving',
-      siteEntity: site,
-    });
-
+    GameCommands.buildStructure(cmdCtx, PLAYER_TEAM, type as BuildingType, x, z, workerEntity);
     ghostRenderer.hide();
   });
 
@@ -810,123 +734,14 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
   // --- Wall placement callbacks ---
 
   pc.onWallPlacementConfirmed((segments) => {
-    const def = BUILDING_DEFS[BuildingType.Wall];
-    if (!def) return;
-
-    const totalMatterCost = segments.length * def.matterCost;
-
     // Use the worker captured when Wall button was clicked (survives deselection during drag)
     const workerEntity = wallWorkerEntity;
     wallWorkerEntity = -1;
     if (workerEntity === -1) return;
-    // Verify the worker is still alive and not building
+    // Verify the worker is still alive
     if (!world.getComponent<PositionComponent>(workerEntity, POSITION)) return;
-    if (world.hasComponent(workerEntity, BUILD_COMMAND)) return;
 
-    // Check and deduct matter
-    if (totalMatterCost > 0) {
-      if (!resourceState.canAffordMatter(PLAYER_TEAM, totalMatterCost)) return;
-      resourceState.spendMatter(PLAYER_TEAM, totalMatterCost);
-    }
-
-    // Deduct energy
-    if (def.energyCost > 0) {
-      if (!resourceState.canAfford(PLAYER_TEAM, def.energyCost * segments.length)) return;
-      resourceState.spend(PLAYER_TEAM, def.energyCost * segments.length);
-    }
-
-    // Cancel ferry if worker was ferrying
-    if (world.hasComponent(workerEntity, SUPPLY_ROUTE)) {
-      world.removeComponent(workerEntity, SUPPLY_ROUTE);
-    }
-
-    // Create construction site entities for each segment
-    const siteEntities: number[] = [];
-    for (const seg of segments) {
-      const site = world.createEntity();
-      const siteY = terrainData.getHeight(seg.x, seg.z);
-
-      world.addComponent<PositionComponent>(site, POSITION, {
-        x: seg.x, y: siteY, z: seg.z,
-        prevX: seg.x, prevY: siteY, prevZ: seg.z,
-        rotation: 0,
-      });
-
-      world.addComponent<RenderableComponent>(site, RENDERABLE, {
-        meshType: seg.meshType,
-        color: TEAM_COLORS[PLAYER_TEAM],
-        scale: 1.0,
-      });
-
-      world.addComponent<TeamComponent>(site, TEAM, { team: PLAYER_TEAM });
-
-      world.addComponent<BuildingComponent>(site, BUILDING, {
-        buildingType: BuildingType.Wall,
-      });
-
-      world.addComponent<HealthComponent>(site, HEALTH, {
-        current: 50,
-        max: def.hp,
-        dead: false,
-      });
-
-      world.addComponent<ConstructionComponent>(site, CONSTRUCTION, {
-        buildingType: BuildingType.Wall,
-        progress: 0,
-        buildTime: def.buildTime,
-        builderEntity: workerEntity,
-      });
-
-      world.addComponent<SelectableComponent>(site, SELECTABLE, { selected: false });
-
-      // Voxel state: start with first layer visible, rest destroyed
-      const finalModel = VOXEL_MODELS[seg.meshType];
-      if (finalModel) {
-        const destroyedMask = new Uint8Array(Math.ceil(finalModel.totalSolid / 8));
-        destroyedMask.fill(255);
-        for (let i = 0; i < finalModel.firstLayerCount; i++) {
-          const solidIdx = finalModel.buildOrder[i];
-          destroyedMask[solidIdx >> 3] &= ~(1 << (solidIdx & 7));
-        }
-        world.addComponent<VoxelStateComponent>(site, VOXEL_STATE, {
-          modelId: seg.meshType,
-          totalVoxels: finalModel.totalSolid,
-          destroyedCount: finalModel.totalSolid - finalModel.firstLayerCount,
-          destroyed: destroyedMask,
-          dirty: true,
-          pendingDebris: [],
-          pendingScorch: [],
-        });
-      }
-
-      siteEntities.push(site);
-    }
-
-    // Issue move + build command for first segment
-    const firstSeg = segments[0];
-    world.addComponent<MoveCommandComponent>(workerEntity, MOVE_COMMAND, {
-      path: [],
-      currentWaypoint: 0,
-      destX: firstSeg.x,
-      destZ: firstSeg.z,
-    });
-
-    world.addComponent<BuildCommandComponent>(workerEntity, BUILD_COMMAND, {
-      buildingType: BuildingType.Wall,
-      targetX: firstSeg.x,
-      targetZ: firstSeg.z,
-      state: 'moving',
-      siteEntity: siteEntities[0],
-    });
-
-    // Add wall build queue if multiple segments
-    if (siteEntities.length > 1) {
-      world.addComponent<WallBuildQueueComponent>(workerEntity, WALL_BUILD_QUEUE, {
-        siteEntities: siteEntities,
-        currentIndex: 0,
-      });
-    }
-
+    GameCommands.buildWallSegments(cmdCtx, PLAYER_TEAM, segments as GameCommands.WallSegment[], workerEntity);
     ghostRenderer.hideWall();
   });
 
@@ -1011,7 +826,7 @@ const gameLoop = new GameLoop(
       actionBar.update(world, resourceState, PLAYER_TEAM);
     }
     if (resourceDisplay) {
-      resourceDisplay.update(resourceState, PLAYER_TEAM);
+      resourceDisplay.update(resourceState, PLAYER_TEAM, gameLoop.getTickCount());
     }
     if (sandboxPanel) {
       sandboxPanel.update();
@@ -1022,6 +837,9 @@ const gameLoop = new GameLoop(
           if (res.matter < 100000) res.matter += 100000;
         }
       }
+    }
+    if (tickLabel) {
+      tickLabel.textContent = `Tick: ${gameLoop.getTickCount()}`;
     }
     renderer.render(sceneManager.scene, isoCamera.getCamera());
 
@@ -1279,6 +1097,20 @@ sandboxBtn.addEventListener('click', () => {
   location.reload();
 });
 document.body.appendChild(sandboxBtn);
+
+// --- Seed Display ---
+const seedLabel = document.createElement('span');
+seedLabel.textContent = `Seed: ${seed}`;
+seedLabel.style.cssText = 'position:fixed;top:14px;right:370px;z-index:1000;color:#888;font-family:monospace;font-size:12px;';
+document.body.appendChild(seedLabel);
+
+// --- Tick Counter (replay mode only) ---
+let tickLabel: HTMLSpanElement | null = null;
+if (replayMode || rlMode) {
+  tickLabel = document.createElement('span');
+  tickLabel.style.cssText = 'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:1000;color:#fff;font-family:monospace;font-size:14px;';
+  document.body.appendChild(tickLabel);
+}
 
 // --- Auto-Save (every 5 seconds, skip for sandbox) ---
 if (scenarioMode !== 'sandbox') {

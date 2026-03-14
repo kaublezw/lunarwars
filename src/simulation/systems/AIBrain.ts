@@ -31,7 +31,7 @@ export class AISystem implements System {
   private economy: EconomyManager;
   private military: MilitaryManager;
 
-  private tickCounter = 0;
+  private tickCounter: number;
   private totalTicks = 0;
 
   constructor(
@@ -50,6 +50,8 @@ export class AISystem implements System {
     this.energyNodes = energyNodes;
     this.oreDeposits = oreDeposits;
     this.occupancy = occupancy;
+    // Stagger AI ticks so teams don't always act on the same frame
+    this.tickCounter = team * Math.floor(TICK_INTERVAL / 2);
 
     this.intel = new IntelligenceManager();
     this.economy = new EconomyManager();
