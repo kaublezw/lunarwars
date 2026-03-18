@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Entity, World } from '@core/ECS';
-import { POSITION, RENDERABLE, TEAM, VOXEL_STATE, BUILDING, DEATH_TIMER, TURRET } from '@sim/components/ComponentTypes';
+import { POSITION, RENDERABLE, TEAM, VOXEL_STATE, BUILDING, DEATH_TIMER, TURRET, RESOURCE_SILO } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { TeamComponent } from '@sim/components/Team';
@@ -13,6 +13,7 @@ import {
 import type { VoxelModel } from '@sim/data/VoxelModels';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
+import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import type { TurretComponent } from '@sim/components/Turret';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { buildVoxelGeometry } from '@render/VoxelGeometryBuilder';
@@ -409,6 +410,16 @@ export class VoxelMeshManager {
         _euler.set(0, rotation, 0);
         _quat.setFromEuler(_euler);
         state.bodyMesh.quaternion.copy(_quat);
+      }
+
+      // Silo visual scaling: Y-scale based on fill percentage (min 0.2, max 1.0)
+      const siloComp = world.getComponent<ResourceSiloComponent>(e, RESOURCE_SILO);
+      if (siloComp) {
+        const fillPct = siloComp.capacity > 0 ? siloComp.stored / siloComp.capacity : 0;
+        const yScale = 0.2 + 0.8 * fillPct;
+        state.bodyMesh.scale.set(1, yScale, 1);
+      } else {
+        state.bodyMesh.scale.set(1, 1, 1);
       }
 
       // Position turret mesh

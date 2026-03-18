@@ -1,7 +1,7 @@
 import {
   POSITION, HEALTH, TEAM,
-  BUILDING, BUILD_COMMAND, MOVE_COMMAND,
-  MATTER_STORAGE, SUPPLY_ROUTE, RESUPPLY_SEEK,
+  BUILDING, BUILD_COMMAND, MOVE_COMMAND, DEPOT_RADIUS,
+  SUPPLY_ROUTE, RESUPPLY_SEEK,
   REPAIR_COMMAND,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
@@ -51,7 +51,7 @@ export function sendSquadTo(ctx: AIContext, squad: Squad, x: number, z: number):
 export function retreatWounded(ctx: AIContext, squad: Squad): void {
   const depotEntities: number[] = [];
 
-  const buildings = ctx.world.query(BUILDING, TEAM, POSITION, HEALTH, MATTER_STORAGE);
+  const buildings = ctx.world.query(BUILDING, TEAM, POSITION, HEALTH, DEPOT_RADIUS);
   for (const e of buildings) {
     const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
     if (team.team !== ctx.team) continue;

@@ -2,7 +2,7 @@ import type { World } from '@core/ECS';
 import {
   POSITION, UNIT_TYPE, HEALTH, TEAM, BUILDING,
   BUILD_COMMAND, CONSTRUCTION, SUPPLY_ROUTE,
-  MATTER_STORAGE, RESUPPLY_SEEK, PRODUCTION_QUEUE,
+  DEPOT_RADIUS, RESUPPLY_SEEK, PRODUCTION_QUEUE,
   REPAIR_COMMAND,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
@@ -76,7 +76,7 @@ export function getDamagedBuildings(ctx: AIContext): { entity: number; hpFractio
 export function getCompletedDepots(ctx: AIContext, state: AIWorldState): number[] {
   const depots = state.myBuildings.get(BuildingType.SupplyDepot) ?? [];
   return depots.filter(
-    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
+    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, DEPOT_RADIUS)
   );
 }
 
@@ -254,7 +254,7 @@ export function assessWorldState(
   }
 
   const depotEntities = (myBuildings.get(BuildingType.SupplyDepot) ?? []).filter(
-    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
+    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, DEPOT_RADIUS)
   );
   const totalMatter = ctx.resources.get(ctx.team).matter;
   const totalArmySize = myCombat.length + Math.max(0, myAerial.length - 1);

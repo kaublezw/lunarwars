@@ -376,6 +376,43 @@ export const MATTER_PACKET_MODEL = createModel(2, 2, 2, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 0, 0, 0, 1, 1, 1, PAL_DARK_GREY);
 });
 
+// --- Silo Models ---
+
+// Matter silo: crate-like container (8x10x8 voxels, ~1.2x1.5x1.2 world units)
+export const MATTER_SILO_MODEL = createModel(8, 10, 8, (g, sx, _sy, sz) => {
+  // Base platform
+  fillBox(g, sx, sz, 0, 0, 0, 7, 0, 7, PAL_DARK_GREY);
+  // Main crate body
+  fillBox(g, sx, sz, 1, 1, 1, 6, 8, 6, PAL_BROWN);
+  // Corner reinforcement
+  fillBox(g, sx, sz, 0, 1, 0, 0, 8, 0, PAL_MED_GREY);
+  fillBox(g, sx, sz, 7, 1, 0, 7, 8, 0, PAL_MED_GREY);
+  fillBox(g, sx, sz, 0, 1, 7, 0, 8, 7, PAL_MED_GREY);
+  fillBox(g, sx, sz, 7, 1, 7, 7, 8, 7, PAL_MED_GREY);
+  // Lid
+  fillBox(g, sx, sz, 0, 9, 0, 7, 9, 7, PAL_MED_GREY);
+  // Team color band around middle
+  fillBox(g, sx, sz, 1, 4, 0, 6, 5, 0, PAL_TEAM_PRIMARY);
+  fillBox(g, sx, sz, 1, 4, 7, 6, 5, 7, PAL_TEAM_PRIMARY);
+  fillBox(g, sx, sz, 0, 4, 1, 0, 5, 6, PAL_TEAM_PRIMARY);
+  fillBox(g, sx, sz, 7, 4, 1, 7, 5, 6, PAL_TEAM_PRIMARY);
+});
+
+// Energy silo: glowing cylindrical container (8x10x8 voxels)
+export const ENERGY_SILO_MODEL = createModel(8, 10, 8, (g, sx, _sy, sz) => {
+  // Base platform
+  fillBox(g, sx, sz, 0, 0, 0, 7, 0, 7, PAL_DARK_GREY);
+  // Cylindrical body (approximated)
+  fillCylinder(g, sx, sz, 4, 4, 3, 1, 7, PAL_LIGHT_GREY);
+  // Glowing core
+  fillCylinder(g, sx, sz, 4, 4, 2, 2, 6, PAL_BLUE_GLOW);
+  // Team color ring at base and top
+  fillCylinder(g, sx, sz, 4, 4, 3.5, 1, 1, PAL_TEAM_PRIMARY);
+  fillCylinder(g, sx, sz, 4, 4, 3.5, 7, 7, PAL_TEAM_PRIMARY);
+  // Cap
+  fillCylinder(g, sx, sz, 4, 4, 2, 8, 9, PAL_BLUE_GLOW);
+});
+
 // Garage door model (7 wide x 8 tall x 1 deep) — renderer-managed, not ECS-managed
 export const GARAGE_DOOR_MODEL = createModel(7, 8, 1, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 0, 0, 0, 6, 7, 0, PAL_WHITE);
@@ -399,6 +436,8 @@ export const VOXEL_MODELS: Record<string, VoxelModel> = {
   wall_corner: WALL_CORNER_MODEL,
   energy_packet: ENERGY_PACKET_MODEL,
   matter_packet: MATTER_PACKET_MODEL,
+  matter_silo: MATTER_SILO_MODEL,
+  energy_silo: ENERGY_SILO_MODEL,
 };
 
 /** Get the world-space bounding box dimensions for a voxel model */
