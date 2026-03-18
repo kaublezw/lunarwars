@@ -301,7 +301,7 @@ export const SUPPLY_DEPOT_MODEL = createModel(24, 6, 24, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 10, 1, 10, 13, 1, 13, PAL_TEAM_PRIMARY);
 });
 
-export const DRONE_FACTORY_MODEL = createModel(24, 18, 24, (g, sx, _sy, sz) => {
+export const DRONE_FACTORY_MODEL = createModel(24, 30, 24, (g, sx, _sy, sz) => {
   // Main body
   fillBox(g, sx, sz, 0, 0, 0, 23, 10, 23, PAL_DARK_GREY);
   // Upper hull
@@ -314,6 +314,10 @@ export const DRONE_FACTORY_MODEL = createModel(24, 18, 24, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 8, 1, 23, 15, 8, 23, PAL_MED_GREY);
   // Roof stripe
   fillBox(g, sx, sz, 4, 13, 4, 19, 13, 19, PAL_TEAM_ACCENT);
+  // Antenna spire (for energy beam reception)
+  fillCylinder(g, sx, sz, 3, 12, 1, 18, 27, PAL_LIGHT_GREY);
+  // Energy receiver cap on antenna
+  fillCylinder(g, sx, sz, 3, 12, 1.5, 28, 29, PAL_BLUE_GLOW);
 });
 
 export const CONSTRUCTION_SITE_MODEL = createModel(14, 4, 14, (g, sx, _sy, sz) => {
