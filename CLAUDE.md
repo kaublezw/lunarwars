@@ -9,19 +9,23 @@ Free, zero-barrier, web-based RTS game set in a voxel arena. Competing factions 
 ### Core Differentiator: Explicit Logistics
 
 The defining mechanic is supply chain management:
-- **Global matter pool** per team — Matter Plants produce directly to the team's global pool
-- **Ferry drone system** — Ferry Drones (trained at Supply Depots) shuttle matter from HQ to depots automatically
-- **Supply Depots** have local MATTER_STORAGE; combat units auto-resupply (ammo + repair) at depots
+- **Physical resource storage** — All resources exist in physical silos adjacent to buildings. No abstract pool. Global pool = sum of all silo contents.
+- **Silos are raidable** — Destroying a silo permanently loses its stored resources. Silos are high-value targets.
+- **Energy beaming** — Energy transfers instantly tower-to-tower (no range limit). Visual: glowing voxels travel between antenna towers. Rate upgradeable at Supply Depots.
+- **Matter ferries** — Matter moves physically via ferry drones (production silos to depot silos). Temporary ferries spawn free at source for building/training costs.
+- **Supply Depots** with adjacent silos; combat units auto-resupply (ammo + repair) from depot silos
 - **No ammo = no firing** — units must return to depots when empty, creating natural front-line logistics
 - **Future (Phase 6)**: Player-drawn supply lines with visible, capacity-limited, attackable routes
 - This shifts gameplay from "biggest army wins" to "who controls terrain, logistics, and supply integrity"
 
 ### Economy
 
-- **Energy** — Mined from fixed energy nodes via Extractors (+5e/s each). Powers production and matter synthesis.
-- **Matter** — Manufactured by Matter Plants (+2m/s each, costs 2e/s). Global pool per team. Used for buildings, repairs, ammo, and unit training.
+- **Energy** — Mined from fixed energy nodes via Extractors (+5e/s each). Stored in adjacent energy silos. Beamed tower-to-tower for building/training costs.
+- **Matter** — Manufactured by Matter Plants (+2m/s each, free to operate). Stored in adjacent matter silos. Physically ferried to depots and build sites.
+- **Physical storage** — Production buildings auto-spawn silos (200 capacity, 100 HP each). Silos fill from bottom-to-top visually (voxel stacking). Destroying silos = losing resources.
+- **Global pool** = computed sum of all silo contents. `ResourceState.recalculate()` sums every tick.
+- **Spending** — Energy: deducted from silos + visual beam spawned. Matter: deducted from silos + temporary ferry spawned.
 - **Build anywhere** — No build radius restriction for building placement.
-- Building/training costs deducted from global matter pool.
 - Economy limits unit spam, encourages expansion and forward staging, makes logistics essential.
 
 ### Units (All Drones)
@@ -31,7 +35,7 @@ The defining mechanic is supply chain management:
 | Combat Drone | Marine-like ground unit | 100hp, speed 3, range 8, 38 ammo |
 | Heavy Assault Platform | Tank-like | 300hp, speed 1.5, range 12, 22 ammo |
 | Aerial Drone | Flyer/scout | 60hp, speed 6, range 6, 30 ammo |
-| Ferry Drone | Supply carrier | 60hp, speed 2.4, trained at Supply Depot, auto-shuttles matter HQ→depot |
+| Ferry Drone | Supply carrier | 60hp, speed 2.4, trained at Supply Depot, auto-shuttles matter from production silos to depot silos |
 
 - Units consume ammo — **no ammo = no firing** (suppression mechanic)
 - Units gain veterancy (3/7/15 kills): +10% damage, +10% fire rate, +5% speed per level
@@ -41,18 +45,18 @@ The defining mechanic is supply chain management:
 
 | Building | Cost | Function |
 |----------|------|----------|
-| HQ | Free at start | 2000hp, win/lose condition |
-| Energy Extractor | 50 matter | +5 energy/s, must be on energy node |
-| Matter Plant | 100 energy | +2 matter/s |
-| Supply Depot | 50e + 50m | Stores matter locally (filled by ferry drones), auto-resupplies nearby combat units (ammo + repair), trains Ferry Drones |
-| Drone Factory | 150e + 100m | Trains units |
+| HQ | Free at start | 2000hp, win/lose condition, trains workers, antenna absorbs energy beams |
+| Energy Extractor | 50 matter | +5 energy/s into adjacent energy silos, must be on energy node, has transmission spire |
+| Matter Plant | 100 energy | +2 matter/s into adjacent matter silos (free to operate, no energy cost) |
+| Supply Depot | 50e + 50m | Relay tower for energy beams (upgradeable rate), trains Ferry Drones, adjacent silos resupply nearby combat units (ammo + repair) |
+| Drone Factory | 150e + 100m | Trains units, antenna receives energy beams for production |
 
 ### Starting Loadout (Per Player)
 
 - 1 HQ (free, pre-placed at team spawn flat zone)
 - 1 Worker Drone (spawns near HQ)
-- 100 energy — enough for 1 Matter Plant
-- 100 matter — enough for 2 Energy Extractors
+- 1 Energy Silo near HQ (200 energy stored)
+- 1 Matter Silo near HQ (200 matter stored)
 
 ### Terrain & Strategy
 
@@ -385,17 +389,22 @@ for (const e of entities) {
 | `src/rendering/SceneManager.ts` | Scene, directional + ambient lights |
 | `src/rendering/GhostBuildingRenderer.ts` | Semi-transparent placement preview mesh |
 | `src/simulation/systems/MovementSystem.ts` | Moves entities, bounces off 256x256 bounds |
-| `src/simulation/systems/EconomySystem.ts` | Ticks extractors (+5e/s); plants produce matter to global pool (+2m/s) |
-| `src/simulation/systems/SupplySystem.ts` | Ferry system: units with SUPPLY_ROUTE shuttle matter from global pool to depot MATTER_STORAGE |
-| `src/simulation/systems/ResupplySystem.ts` | Auto-resupply: combat units with ammo=0 seek nearest depot for instant ammo refill + gradual repair (20 HP/s) |
+| `src/simulation/systems/EconomySystem.ts` | Ticks extractors (+5e/s) and plants (+2m/s) into adjacent silos via SiloSystem |
+| `src/simulation/systems/SiloSystem.ts` | Auto-spawns silos adjacent to buildings, handles overflow between silos |
+| `src/simulation/systems/SupplySystem.ts` | Ferry system: ferries shuttle matter from production silos to depot silos |
+| `src/simulation/systems/MatterDeliverySystem.ts` | Moves temporary matter ferries (spawned on build/train), destroys on arrival |
+| `src/simulation/systems/ResupplySystem.ts` | Auto-resupply: combat units near depots get ammo + repair from depot-adjacent silos |
 | `src/simulation/systems/GameOverSystem.ts` | Checks HQ health; fires onGameOver callback when an HQ is destroyed |
 | `src/simulation/systems/BuildSystem.ts` | Worker build orders: move to site, increment progress, complete building |
 | `src/simulation/systems/ProductionSystem.ts` | Ticks production queues, spawns units on completion |
 | `src/simulation/systems/AISystem.ts` | AI opponent (team 1), 30-tick decision cycle, build orders, army control, smart depot placement, ferry drone training |
-| `src/simulation/economy/ResourceState.ts` | Per-team energy/matter state (canAfford, spend, rates) |
+| `src/simulation/economy/ResourceState.ts` | Per-team resource state: recalculates from silo entities, spend deducts from physical silos, tracks lastSourceSilo for beam/ferry visuals |
+| `src/simulation/economy/SiloUtils.ts` | Silo query utilities: findSilosForBuilding, getBuildingSiloTotal, deductFromBuildingSilos |
+| `src/simulation/economy/EnergyBeam.ts` | Spawns visual-only energy packets from source silo to destination on energy spend |
+| `src/simulation/economy/MatterFerry.ts` | Spawns temporary ferry drones from source silo to destination on matter spend |
 | `src/simulation/data/BuildingData.ts` | BUILDING_DEFS: costs, build times, HP for all building types |
 | `src/simulation/data/UnitData.ts` | UNIT_DEFS: costs, train times for WorkerDrone, CombatDrone, AssaultPlatform, AerialDrone, FerryDrone |
-| `src/simulation/economy/DepotUtils.ts` | findNearestDepot utility + resupply constants (AMMO_MATTER_COST, REPAIR_MATTER_COST, REPAIR_RATE) |
+| `src/simulation/economy/DepotUtils.ts` | findNearestDepot (checks depot-adjacent silos for matter) + resupply constants |
 | `src/rendering/effects/BuildingEffectsRenderer.ts` | Smoke particles for Matter Plants, glow lights for Extractors |
 | `src/input/InputManager.ts` | Mouse/keyboard event handling |
 | `src/input/CameraController.ts` | Right-drag pan, scroll zoom, WASD keys |
@@ -425,7 +434,7 @@ for (const e of entities) {
 
 Fixed timestep simulation at 1/60s with accumulator pattern. Render callback receives an `alpha` (0–1) for interpolating between previous and current positions — this is why all Position components track `prevX/prevY/prevZ`.
 
-## Current State (Phases 0–8 + Supply Overhaul Complete)
+## Current State (Phases 0–8 + Supply Chain Overhaul Complete)
 
 - Project scaffolding with Vite + Three.js
 - Isometric camera with pan/zoom input
@@ -435,20 +444,24 @@ Fixed timestep simulation at 1/60s with accumulator pattern. Render callback rec
 - Combat: turret system, ammo, health, particle effects (muzzle flash, impact sparks)
 - Fog of war: per-team visibility, explored/visible/unexplored states
 - Buildings + economy: HQ, Energy Extractor, Matter Plant, Supply Depot, Drone Factory
-- Distinct building shapes: compound THREE.Group meshes (HQ tower+antenna, Extractor hex+orb, Plant box+chimney, Depot platform+crates, Factory body+tower+dish)
+- Building shapes: voxel models with antennas (HQ tower+antenna, Extractor hex+spire, Plant box+chimney, Depot platform+relay tower, Factory body+antenna)
 - Building effects: Matter Plant smoke particles, Energy Extractor pulsing glow lights
 - Worker building: placement mode with ghost preview, energy node snapping, build-over-time, no build radius restriction
 - HQ production: train workers via production queue
-- Resource system: global matter pool per team, energy with per-second rates, cost gating
-- Matter Plants produce directly to global pool (+2m/s, costs 2e/s)
-- Ferry drone system: Ferry Drones trained at Supply Depots auto-shuttle matter from HQ to depot MATTER_STORAGE (10 matter/trip, 2s load/unload)
-- Auto-resupply: combat units with ammo=0 auto-seek nearest depot for instant ammo refill + gradual repair (20 HP/s), costs matter from depot
+- **Physical resource storage**: All resources stored in RESOURCE_SILO entities adjacent to buildings. Global pool = sum of all silo contents. Silos auto-spawn when production fills existing ones.
+- **Silo visuals**: Voxels stack bottom-to-top as silos fill. Different models for energy (glowing cylinder) and matter (crate). Silos are destructible (100 HP).
+- **Energy beaming**: Visual energy packets travel tower-to-tower when energy is spent (building/training). Universal rate, no range limit.
+- **Temporary matter ferries**: Small ferry drones spawn at source silo, carry matter to build/train site, disappear on arrival.
+- Matter Plants produce +2m/s into adjacent silos (free to operate, no energy cost)
+- Energy Extractors produce +5e/s into adjacent energy silos
+- Ferry drone system: Ferry Drones trained at Supply Depots shuttle matter from production silos to depot-adjacent silos
+- Auto-resupply: combat units near depots get ammo + repair from depot-adjacent silos
 - Game over detection: HQ destruction triggers win/loss
-- AI opponent: build orders, smart forward depot placement, army control, scouting, ferry drone training at depots, supply-aware economy
+- AI opponent: build orders, smart forward depot placement, army control, scouting, ferry drone training, **silo-aware** (targets enemy silos, defends own silos, weights silos in influence grid)
 
 ### System Execution Order
 
-Pathfinding -> CollisionAvoidance -> Movement -> FogOfWar -> Turret -> Resupply -> GameOver -> Health -> Economy -> Supply -> Build -> Production -> AI
+Pathfinding -> CollisionAvoidance -> Movement -> FogOfWar -> Turret -> Resupply -> GameOver -> Health -> EnergyPacket -> MatterPacket -> MatterDelivery -> Silo -> Economy -> Supply -> Build -> Production -> AI
 
 ### Building Y-Position Convention
 
