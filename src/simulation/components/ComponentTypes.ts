@@ -28,3 +28,4 @@ export const ENERGY_PACKET = 'EnergyPacket';
 export const MATTER_PACKET = 'MatterPacket';
 export const GARAGE_EXIT = 'GarageExit';
 export const RESOURCE_SILO = 'ResourceSilo';
+export const MATTER_DELIVERY = 'MatterDelivery';

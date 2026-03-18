@@ -44,6 +44,7 @@ import { generateEnergyNodes, generateOreDeposits } from '@sim/terrain/MapFeatur
 import type { OreDeposit } from '@sim/terrain/MapFeatures';
 import { OreDepositRenderer } from '@render/OreDepositRenderer';
 import { MatterPacketSystem } from '@sim/systems/MatterPacketSystem';
+import { MatterDeliverySystem } from '@sim/systems/MatterDeliverySystem';
 import { Minimap } from '@ui/Minimap';
 import { UnitInfoPanel } from '@ui/UnitInfoPanel';
 import { ActionBar } from '@ui/ActionBar';
@@ -260,6 +261,7 @@ world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem());
 world.addSystem(new EnergyPacketSystem(resourceState));
 world.addSystem(new MatterPacketSystem(resourceState));
+world.addSystem(new MatterDeliverySystem());
 const siloSystem = new SiloSystem(terrainData);
 world.addSystem(siloSystem);
 const economySystem = new EconomySystem(resourceState, 2);

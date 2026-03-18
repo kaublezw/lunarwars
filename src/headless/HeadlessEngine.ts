@@ -19,6 +19,7 @@ import { GameOverSystem } from '@sim/systems/GameOverSystem';
 import { HealthSystem } from '@sim/systems/HealthSystem';
 import { EnergyPacketSystem } from '@sim/systems/EnergyPacketSystem';
 import { MatterPacketSystem } from '@sim/systems/MatterPacketSystem';
+import { MatterDeliverySystem } from '@sim/systems/MatterDeliverySystem';
 import { EconomySystem } from '@sim/systems/EconomySystem';
 import { SiloSystem } from '@sim/systems/SiloSystem';
 import { SupplySystem } from '@sim/systems/SupplySystem';
@@ -158,6 +159,7 @@ export class HeadlessEngine {
     this.world.addSystem(new HealthSystem());
     this.world.addSystem(new EnergyPacketSystem(this.resourceState));
     this.world.addSystem(new MatterPacketSystem(this.resourceState));
+    this.world.addSystem(new MatterDeliverySystem());
     this.siloSystem = new SiloSystem(this.terrainData);
     this.world.addSystem(this.siloSystem);
     const economySystem = new EconomySystem(this.resourceState, 2);

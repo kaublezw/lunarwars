@@ -3,6 +3,7 @@ import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import { spawnEnergyBeam } from '@sim/economy/EnergyBeam';
+import { spawnMatterFerry } from '@sim/economy/MatterFerry';
 
 import {
   POSITION, RENDERABLE, SELECTABLE, HEALTH, TEAM,
@@ -195,6 +196,7 @@ export function buildStructure(
   if (def.matterCost > 0) {
     ctx.resources.spendMatter(team, def.matterCost);
   }
+  const matterSiloSource = ctx.resources.lastSourceSilo;
 
   // Create construction site entity
   const site = createConstructionSiteEntity(
@@ -204,6 +206,10 @@ export function buildStructure(
   // Visual: energy beam from source silo to build site
   if (energySiloSource >= 0 && def.energyCost > 0) {
     spawnEnergyBeam(ctx.world, energySiloSource, site, team);
+  }
+  // Visual: matter ferry from source silo to build site
+  if (matterSiloSource >= 0 && def.matterCost > 0) {
+    spawnMatterFerry(ctx.world, matterSiloSource, site, team);
   }
 
   // Clear existing worker commands and issue new build
@@ -308,10 +314,15 @@ export function trainUnit(
   if (def.matterCost > 0) {
     ctx.resources.spendMatter(team, def.matterCost);
   }
+  const trainMatterSilo = ctx.resources.lastSourceSilo;
 
   // Visual: energy beam from source silo to production building
   if (trainEnergySilo >= 0 && def.energyCost > 0) {
     spawnEnergyBeam(ctx.world, trainEnergySilo, factory, team);
+  }
+  // Visual: matter ferry from source silo to production building
+  if (trainMatterSilo >= 0 && def.matterCost > 0) {
+    spawnMatterFerry(ctx.world, trainMatterSilo, factory, team);
   }
 
   pq.queue.push({
