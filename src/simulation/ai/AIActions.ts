@@ -108,7 +108,23 @@ export function pickAttackTarget(
     }
   }
 
-  // 1. TOP PRIORITY: Kill enemy Energy Extractors (closest first)
+  // 1. TOP PRIORITY: Raid enemy silos (they hold the actual resources)
+  // Prefer silos with more stored resources; closest as tiebreaker
+  let bestSiloScore = -1;
+  for (const silo of state.knownEnemySilos) {
+    const dx = silo.x - ctx.baseX;
+    const dz = silo.z - ctx.baseZ;
+    const distSq = dx * dx + dz * dz;
+    // Score: stored amount (higher = better target), penalized by distance
+    const score = silo.stored - distSq * 0.001;
+    if (score > bestSiloScore) {
+      bestSiloScore = score;
+      bestTarget = { x: silo.x, z: silo.z };
+    }
+  }
+  if (bestTarget) return bestTarget;
+
+  // 2. Kill enemy Energy Extractors and production buildings (closest first)
   for (const bldg of state.knownEnemyBuildings) {
     if (bldg.type === BuildingType.EnergyExtractor) {
       const dx = bldg.x - ctx.baseX;
@@ -122,7 +138,7 @@ export function pickAttackTarget(
   }
   if (bestTarget) return bestTarget;
 
-  // 2. Hunt Forward Supply Depots
+  // 3. Hunt Forward Supply Depots
   for (const bldg of state.knownEnemyBuildings) {
     if (bldg.type === BuildingType.SupplyDepot) {
       const dx = bldg.x - ctx.baseX;
@@ -136,7 +152,7 @@ export function pickAttackTarget(
   }
   if (bestTarget) return bestTarget;
 
-  // 3. Disrupt Worker Ferries
+  // 4. Disrupt Worker Ferries
   for (const unit of state.knownEnemyUnits) {
      const dx = unit.x - ctx.baseX;
      const dz = unit.z - ctx.baseZ;
@@ -148,7 +164,7 @@ export function pickAttackTarget(
   }
   if (bestTarget) return bestTarget;
 
-  // 4. Matter Plants + Factories (extractors handled above)
+  // 5. Matter Plants + Factories
   bestDistSq = Infinity;
   for (const bldg of state.knownEnemyBuildings) {
     if (bldg.type === BuildingType.MatterPlant || bldg.type === BuildingType.DroneFactory) {

@@ -59,6 +59,14 @@ export function updateInfluenceGrid(
     grid[(cz * G + cx) * 3 + 1] += buildingValueWeight(bldg.type);
   }
 
+  // Visible enemy silos -> high value (they hold actual resources)
+  for (const silo of state.knownEnemySilos) {
+    const [cx, cz] = toCell(silo.x, silo.z);
+    // Value scales with stored amount: full silo = 3.0 weight, empty = 0.5
+    const fillValue = silo.stored > 0 ? 0.5 + 2.5 * Math.min(silo.stored / 200, 1) : 0.5;
+    grid[(cz * G + cx) * 3 + 1] += fillValue;
+  }
+
   // Remembered enemy units -> decayed threat
   for (const entry of state.rememberedEnemyUnits) {
     const [cx, cz] = toCell(entry.x, entry.z);
