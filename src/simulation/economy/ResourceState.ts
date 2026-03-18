@@ -63,13 +63,17 @@ export class ResourceState {
     return t.energy >= energy;
   }
 
+  /** Spend energy. Returns the source silo entity ID, or -1 on failure. */
   spend(team: number, energy: number): boolean {
     if (!this.canAfford(team, energy)) return false;
     if (!this.world) return false;
-    this.deductFromSilos(this.world, team, 'energy', energy);
+    this.lastSourceSilo = this.deductFromSilos(this.world, team, 'energy', energy);
     this.teams[team].energy -= energy;
     return true;
   }
+
+  /** Entity ID of the silo most recently deducted from (for beam visuals). */
+  lastSourceSilo = -1;
 
   canAffordMatter(team: number, amount: number): boolean {
     const t = this.teams[team];
@@ -77,10 +81,11 @@ export class ResourceState {
     return t.matter >= amount;
   }
 
+  /** Spend matter. Sets lastSourceSilo to the silo deducted from. */
   spendMatter(team: number, amount: number): boolean {
     if (!this.canAffordMatter(team, amount)) return false;
     if (!this.world) return false;
-    this.deductFromSilos(this.world, team, 'matter', amount);
+    this.lastSourceSilo = this.deductFromSilos(this.world, team, 'matter', amount);
     this.teams[team].matter -= amount;
     return true;
   }
@@ -121,8 +126,10 @@ export class ResourceState {
     this.teams = data.map(t => ({ ...t }));
   }
 
-  private deductFromSilos(world: World, team: number, type: 'energy' | 'matter', amount: number): void {
+  /** Deduct from silos. Returns the entity ID of the first silo deducted from (-1 if none). */
+  private deductFromSilos(world: World, team: number, type: 'energy' | 'matter', amount: number): number {
     let remaining = amount;
+    let firstSilo = -1;
     const silos = world.query(RESOURCE_SILO, TEAM);
     for (const e of silos) {
       if (remaining <= 0) break;
@@ -133,9 +140,13 @@ export class ResourceState {
       const silo = world.getComponent<ResourceSiloComponent>(e, RESOURCE_SILO)!;
       if (silo.resourceType !== type) continue;
       const take = Math.min(silo.stored, remaining);
-      silo.stored -= take;
-      remaining -= take;
+      if (take > 0) {
+        silo.stored -= take;
+        remaining -= take;
+        if (firstSilo === -1) firstSilo = e;
+      }
     }
+    return firstSilo;
   }
 
   private depositToSilo(world: World, team: number, type: 'energy' | 'matter', amount: number): void {

@@ -289,7 +289,7 @@ export const MATTER_PLANT_MODEL = createModel(20, 14, 20, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 19, 3, 0, 19, 7, 19, PAL_TEAM_ACCENT);
 });
 
-export const SUPPLY_DEPOT_MODEL = createModel(24, 6, 24, (g, sx, _sy, sz) => {
+export const SUPPLY_DEPOT_MODEL = createModel(24, 24, 24, (g, sx, _sy, sz) => {
   // Landing platform
   fillBox(g, sx, sz, 0, 0, 0, 23, 1, 23, PAL_DARK_GREY);
   // Crate stacks
@@ -299,6 +299,15 @@ export const SUPPLY_DEPOT_MODEL = createModel(24, 6, 24, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 17, 2, 2, 21, 4, 6, PAL_BROWN);
   // Center marker
   fillBox(g, sx, sz, 10, 1, 10, 13, 1, 13, PAL_TEAM_PRIMARY);
+  // Energy relay tower (center)
+  fillCylinder(g, sx, sz, 12, 12, 1, 2, 19, PAL_LIGHT_GREY);
+  // Relay antenna cap
+  fillCylinder(g, sx, sz, 12, 12, 1.5, 20, 22, PAL_BLUE_GLOW);
+  // Support struts at base
+  fillBox(g, sx, sz, 11, 2, 10, 11, 6, 10, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 13, 2, 10, 13, 6, 10, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 10, 2, 11, 10, 6, 11, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 10, 2, 13, 10, 6, 13, PAL_TEAM_ACCENT);
 });
 
 export const DRONE_FACTORY_MODEL = createModel(24, 30, 24, (g, sx, _sy, sz) => {

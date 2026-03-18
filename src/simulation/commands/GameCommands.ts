@@ -2,6 +2,7 @@ import type { World } from '@core/ECS';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
+import { spawnEnergyBeam } from '@sim/economy/EnergyBeam';
 
 import {
   POSITION, RENDERABLE, SELECTABLE, HEALTH, TEAM,
@@ -190,6 +191,7 @@ export function buildStructure(
 
   // Deduct resources
   ctx.resources.spend(team, def.energyCost);
+  const energySiloSource = ctx.resources.lastSourceSilo;
   if (def.matterCost > 0) {
     ctx.resources.spendMatter(team, def.matterCost);
   }
@@ -198,6 +200,11 @@ export function buildStructure(
   const site = createConstructionSiteEntity(
     ctx, team, type, def.meshType, placement.x, placement.z, workerEntity,
   );
+
+  // Visual: energy beam from source silo to build site
+  if (energySiloSource >= 0 && def.energyCost > 0) {
+    spawnEnergyBeam(ctx.world, energySiloSource, site, team);
+  }
 
   // Clear existing worker commands and issue new build
   clearWorkerCommands(ctx.world, workerEntity);
@@ -235,6 +242,7 @@ export function buildWallSegments(
 
   // Deduct resources
   if (totalEnergyCost > 0) ctx.resources.spend(team, totalEnergyCost);
+  const wallEnergySilo = ctx.resources.lastSourceSilo;
   if (totalMatterCost > 0) ctx.resources.spendMatter(team, totalMatterCost);
 
   // Clear existing worker commands
@@ -247,6 +255,11 @@ export function buildWallSegments(
       ctx, team, BuildingType.Wall, seg.meshType, seg.x, seg.z, workerEntity,
     );
     siteEntities.push(site);
+  }
+
+  // Visual: energy beam from source silo to first wall segment
+  if (wallEnergySilo >= 0 && totalEnergyCost > 0 && siteEntities.length > 0) {
+    spawnEnergyBeam(ctx.world, wallEnergySilo, siteEntities[0], team);
   }
 
   // Issue move + build command for first segment
@@ -291,8 +304,14 @@ export function trainUnit(
 
   // Deduct resources
   ctx.resources.spend(team, def.energyCost);
+  const trainEnergySilo = ctx.resources.lastSourceSilo;
   if (def.matterCost > 0) {
     ctx.resources.spendMatter(team, def.matterCost);
+  }
+
+  // Visual: energy beam from source silo to production building
+  if (trainEnergySilo >= 0 && def.energyCost > 0) {
+    spawnEnergyBeam(ctx.world, trainEnergySilo, factory, team);
   }
 
   pq.queue.push({

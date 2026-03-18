@@ -13,7 +13,6 @@ export const PACKET_ELEVATION = 5.5;
 
 const EXTRACTOR_RATE = 5;    // +5 energy/s
 const PLANT_MATTER_RATE = 2;  // +2 matter/s
-const PLANT_ENERGY_COST = 2;  // energy/s consumed by each matter plant
 
 export class EconomySystem implements System {
   readonly name = 'EconomySystem';
@@ -59,7 +58,7 @@ export class EconomySystem implements System {
       }
     }
 
-    // Matter plants: produce matter into adjacent silos (costs energy)
+    // Matter plants: produce matter into adjacent silos (no energy cost)
     for (const e of entities) {
       if (world.hasComponent(e, CONSTRUCTION)) continue;
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
@@ -67,11 +66,6 @@ export class EconomySystem implements System {
       const health = world.getComponent<HealthComponent>(e, HEALTH);
       if (health && health.dead) continue;
       const team = world.getComponent<TeamComponent>(e, TEAM)!;
-
-      // Matter plants cost energy to operate
-      const energyCost = PLANT_ENERGY_COST * dt;
-      if (!this.resources.canAfford(team.team, energyCost)) continue;
-      this.resources.spend(team.team, energyCost);
 
       matterRates[team.team] += PLANT_MATTER_RATE;
 
