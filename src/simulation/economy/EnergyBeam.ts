@@ -58,5 +58,6 @@ export function spawnEnergyBeam(
     speed: BEAM_SPEED,
     energyAmount: 0, // Visual only — energy already deducted
     team,
+    hovering: false,
   });
 }

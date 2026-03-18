@@ -10,6 +10,9 @@ import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
+import { BEAM_UPGRADE } from '@sim/components/ComponentTypes';
+import type { BeamUpgradeComponent } from '@sim/components/BeamUpgrade';
+import { BEAM_UPGRADE_COSTS, BEAM_UPGRADE_MAX_LEVEL } from '@sim/components/BeamUpgrade';
 import type { ResourceState } from '@sim/economy/ResourceState';
 
 const BUILD_BUTTONS: { type: BuildingType; label: string }[] = [
@@ -37,6 +40,7 @@ export class ActionBar {
   private onBuild: ((type: BuildingType) => void) | null = null;
   private onTrain: ((unitType: string) => void) | null = null;
   private onDemolish: ((entity: number) => void) | null = null;
+  private onUpgradeBeam: ((entity: number) => void) | null = null;
 
   // Cached state to avoid rebuilding DOM every frame
   private currentMode: BarMode = 'hidden';
@@ -85,6 +89,10 @@ export class ActionBar {
 
   onDemolishRequest(cb: (entity: number) => void): void {
     this.onDemolish = cb;
+  }
+
+  onUpgradeBeamRequest(cb: (entity: number) => void): void {
+    this.onUpgradeBeam = cb;
   }
 
   update(world: World, resources: ResourceState, playerTeam: number): void {
@@ -249,6 +257,39 @@ export class ActionBar {
           this.buttonElements.set('train_ferry', button);
           this.buttonAffordable.set('train_ferry', affordable);
         }
+        // Upgrade Beam Rate button
+        {
+          const beamUpgrade = world.getComponent<BeamUpgradeComponent>(depotEntity, BEAM_UPGRADE);
+          const level = beamUpgrade ? beamUpgrade.level : 0;
+          if (level < BEAM_UPGRADE_MAX_LEVEL) {
+            const cost = BEAM_UPGRADE_COSTS[level];
+            const affordable = resources.canAfford(playerTeam, cost.energy) && totalMatter >= cost.matter;
+            const capturedEntity = depotEntity;
+            const button = this.createButton(
+              'upgrade_beam',
+              `Beam Rate Lv${level + 1}`,
+              `${cost.energy}e ${cost.matter}m`,
+              affordable,
+              () => this.onUpgradeBeam?.(capturedEntity),
+            );
+            button.style.background = affordable ? 'rgba(100, 180, 60, 0.3)' : 'rgba(100, 100, 100, 0.3)';
+            button.style.borderColor = affordable ? 'rgba(100, 180, 60, 0.6)' : 'rgba(100, 100, 100, 0.4)';
+            this.buttonsDiv.appendChild(button);
+            this.buttonElements.set('upgrade_beam', button);
+            this.buttonAffordable.set('upgrade_beam', affordable);
+          } else {
+            const button = this.createButton(
+              'upgrade_beam',
+              'Beam Rate MAX',
+              'Maxed',
+              false,
+              () => {},
+            );
+            this.buttonsDiv.appendChild(button);
+            this.buttonElements.set('upgrade_beam', button);
+            this.buttonAffordable.set('upgrade_beam', false);
+          }
+        }
         // Demolish button for depot
         {
           const depotDef = BUILDING_DEFS[BuildingType.SupplyDepot];
@@ -341,6 +382,23 @@ export class ActionBar {
           this.buttonAffordable.set('train_ferry', affordable);
           const el = this.buttonElements.get('train_ferry');
           if (el) this.updateButtonStyle(el, 'Train Ferry Drone', `${ferryDef.energyCost}e ${ferryDef.matterCost}m`, affordable);
+        }
+      }
+
+      // Update beam upgrade affordability
+      const beamUpgrade = world.getComponent<BeamUpgradeComponent>(depotEntity, BEAM_UPGRADE);
+      const beamLevel = beamUpgrade ? beamUpgrade.level : 0;
+      if (beamLevel < BEAM_UPGRADE_MAX_LEVEL) {
+        const cost = BEAM_UPGRADE_COSTS[beamLevel];
+        const affordable = resources.canAfford(playerTeam, cost.energy) && totalMatter >= cost.matter;
+        if (affordable !== this.buttonAffordable.get('upgrade_beam')) {
+          this.buttonAffordable.set('upgrade_beam', affordable);
+          const el = this.buttonElements.get('upgrade_beam');
+          if (el) {
+            this.updateButtonStyle(el, `Beam Rate Lv${beamLevel + 1}`, `${cost.energy}e ${cost.matter}m`, affordable);
+            el.style.background = affordable ? 'rgba(100, 180, 60, 0.3)' : 'rgba(100, 100, 100, 0.3)';
+            el.style.borderColor = affordable ? 'rgba(100, 180, 60, 0.6)' : 'rgba(100, 100, 100, 0.4)';
+          }
         }
       }
 

@@ -1,15 +1,13 @@
 import type { System, World } from '@core/ECS';
-import { ENERGY_PACKET, POSITION, HEALTH, BUILDING, TEAM } from '@sim/components/ComponentTypes';
+import { ENERGY_PACKET, POSITION, HEALTH, BUILDING, CONSTRUCTION } from '@sim/components/ComponentTypes';
 import type { EnergyPacketComponent } from '@sim/components/EnergyPacket';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
-import type { BuildingComponent } from '@sim/components/Building';
-import { BuildingType } from '@sim/components/Building';
-import type { TeamComponent } from '@sim/components/Team';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import { PACKET_ELEVATION } from '@sim/systems/EconomySystem';
 
 const ARRIVAL_DIST_SQ = 1.0; // 1 wu squared
+const HOVER_OFFSET_Y = 0.5;  // hover height above beam elevation
 
 export class EnergyPacketSystem implements System {
   readonly name = 'EnergyPacketSystem';
@@ -27,16 +25,44 @@ export class EnergyPacketSystem implements System {
       // Skip dead packets (let HealthSystem handle destruction)
       if (health && health.dead) continue;
 
-      // Check if target HQ still exists and is alive
+      // Check if target still exists and is alive
       const targetHealth = world.getComponent<HealthComponent>(packet.targetEntity, HEALTH);
-      const targetBuilding = world.getComponent<BuildingComponent>(packet.targetEntity, BUILDING);
-      if (!targetHealth || targetHealth.dead || !targetBuilding || targetBuilding.buildingType !== BuildingType.HQ) {
-        // HQ destroyed - destroy packet (energy lost)
+      if (!targetHealth || targetHealth.dead) {
+        // Target destroyed — destroy packet
         world.destroyEntity(e);
         continue;
       }
 
-      // Update target position from HQ (in case it somehow moves)
+      // Check if target is a construction site
+      const isConstruction = world.hasComponent(packet.targetEntity, CONSTRUCTION);
+
+      // Hovering above a construction site
+      if (packet.hovering) {
+        if (!isConstruction) {
+          // Construction completed — absorb into antenna (move to antenna height, then destroy)
+          const targetPos = world.getComponent<PositionComponent>(packet.targetEntity, POSITION);
+          if (targetPos) {
+            packet.targetX = targetPos.x;
+            packet.targetY = targetPos.y + PACKET_ELEVATION;
+            packet.targetZ = targetPos.z;
+          }
+          packet.hovering = false;
+        } else {
+          // Stay hovering above the construction site
+          const targetPos = world.getComponent<PositionComponent>(packet.targetEntity, POSITION);
+          if (targetPos) {
+            pos.prevX = pos.x;
+            pos.prevY = pos.y;
+            pos.prevZ = pos.z;
+            pos.x = targetPos.x;
+            pos.y = targetPos.y + PACKET_ELEVATION + HOVER_OFFSET_Y;
+            pos.z = targetPos.z;
+          }
+          continue;
+        }
+      }
+
+      // Update target position from building
       const targetPos = world.getComponent<PositionComponent>(packet.targetEntity, POSITION);
       if (targetPos) {
         packet.targetX = targetPos.x;
@@ -51,7 +77,12 @@ export class EnergyPacketSystem implements System {
       const distSq = dx * dx + dy * dy + dz * dz;
 
       if (distSq <= ARRIVAL_DIST_SQ) {
-        // Arrived - deliver energy
+        if (isConstruction) {
+          // Arrived at construction site — start hovering
+          packet.hovering = true;
+          continue;
+        }
+        // Arrived at completed building — deliver energy and destroy
         this.resources.addEnergy(packet.team, packet.energyAmount);
         world.destroyEntity(e);
         continue;

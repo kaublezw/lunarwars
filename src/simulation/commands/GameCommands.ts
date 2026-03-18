@@ -9,7 +9,7 @@ import {
   POSITION, RENDERABLE, SELECTABLE, HEALTH, TEAM,
   BUILDING, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND,
   PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE,
-  REPAIR_COMMAND, WALL_BUILD_QUEUE,
+  REPAIR_COMMAND, WALL_BUILD_QUEUE, BEAM_UPGRADE,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
@@ -28,6 +28,8 @@ import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
+import type { BeamUpgradeComponent } from '@sim/components/BeamUpgrade';
+import { BEAM_UPGRADE_COSTS, BEAM_UPGRADE_MAX_LEVEL } from '@sim/components/BeamUpgrade';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import { validateAndSnapPlacement } from '@sim/ai/PlacementValidator';
 
@@ -334,5 +336,39 @@ export function trainUnit(
   pq.rallyX = rallyX;
   pq.rallyZ = rallyZ;
 
+  return true;
+}
+
+/**
+ * Upgrade the beam rate on a Supply Depot.
+ * Returns true if successful.
+ */
+export function upgradeBeamRate(
+  ctx: GameCommandContext,
+  team: number,
+  depotEntity: number,
+): boolean {
+  const upgrade = ctx.world.getComponent<BeamUpgradeComponent>(depotEntity, BEAM_UPGRADE);
+  if (!upgrade) return false;
+  if (upgrade.level >= BEAM_UPGRADE_MAX_LEVEL) return false;
+
+  const cost = BEAM_UPGRADE_COSTS[upgrade.level];
+  if (!cost) return false;
+
+  if (!ctx.resources.canAfford(team, cost.energy)) return false;
+  if (!ctx.resources.canAffordMatter(team, cost.matter)) return false;
+
+  ctx.resources.spend(team, cost.energy);
+  const energySilo = ctx.resources.lastSourceSilo;
+  if (cost.matter > 0) {
+    ctx.resources.spendMatter(team, cost.matter);
+  }
+
+  // Visual: energy beam to depot
+  if (energySilo >= 0 && cost.energy > 0) {
+    spawnEnergyBeam(ctx.world, energySilo, depotEntity, team);
+  }
+
+  upgrade.level++;
   return true;
 }

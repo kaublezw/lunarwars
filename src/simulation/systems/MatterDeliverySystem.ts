@@ -39,6 +39,7 @@ export class MatterDeliverySystem implements System {
       const ratio = Math.min(step / dist, 1);
 
       pos.prevX = pos.x;
+      pos.prevY = pos.y;
       pos.prevZ = pos.z;
       pos.x += dx * ratio;
       pos.z += dz * ratio;
