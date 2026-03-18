@@ -8,6 +8,9 @@ import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { SiloSystem } from './SiloSystem';
 
+// Legacy: kept for EnergyPacketSystem import compatibility
+export const PACKET_ELEVATION = 5.5;
+
 const EXTRACTOR_RATE = 5;    // +5 energy/s
 const PLANT_MATTER_RATE = 2;  // +2 matter/s
 const PLANT_ENERGY_COST = 2;  // energy/s consumed by each matter plant
