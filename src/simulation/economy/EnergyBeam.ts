@@ -1,10 +1,12 @@
 import type { World } from '@core/ECS';
-import { POSITION, RENDERABLE, ENERGY_PACKET, TEAM, HEALTH } from '@sim/components/ComponentTypes';
+import { POSITION, RENDERABLE, ENERGY_PACKET, TEAM, HEALTH, VOXEL_STATE } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { EnergyPacketComponent } from '@sim/components/EnergyPacket';
 import type { TeamComponent } from '@sim/components/Team';
 import type { HealthComponent } from '@sim/components/Health';
+import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 
 /** Height above building base for beam travel */
 const BEAM_ELEVATION = 5.5;
@@ -48,6 +50,20 @@ export function spawnEnergyBeam(
   });
 
   world.addComponent<TeamComponent>(e, TEAM, { team });
+
+  // Add voxel state so the packet renders as a glowing voxel model
+  const packetModel = VOXEL_MODELS['energy_packet'];
+  if (packetModel) {
+    world.addComponent<VoxelStateComponent>(e, VOXEL_STATE, {
+      modelId: 'energy_packet',
+      totalVoxels: packetModel.totalSolid,
+      destroyedCount: 0,
+      destroyed: new Uint8Array(Math.ceil(packetModel.totalSolid / 8)),
+      dirty: true,
+      pendingDebris: [],
+      pendingScorch: [],
+    });
+  }
 
   world.addComponent<EnergyPacketComponent>(e, ENERGY_PACKET, {
     sourceEntity,
