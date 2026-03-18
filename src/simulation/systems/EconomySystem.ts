@@ -1,5 +1,6 @@
 import type { System, World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, HEALTH, RESOURCE_SILO, POSITION, BEAM_UPGRADE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, HEALTH, RESOURCE_SILO, POSITION, BEAM_UPGRADE, DEPOT_RADIUS, PRODUCTION_QUEUE } from '@sim/components/ComponentTypes';
+import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -105,39 +106,45 @@ export class EconomySystem implements System {
     }
   }
 
-  /** Periodically spawn a beam from this extractor to nearest depot (or HQ).
-   *  Beam interval is reduced by the best depot upgrade in the network. */
+  /** Periodically spawn a beam from this extractor to nearest depot.
+   *  Only beams to HQ/Factory when they are actively training units. */
   private updateExtractorBeam(world: World, extractorEntity: number, team: number, dt: number): void {
-    // Initialize timer at a high value so the first beam fires immediately
-    let timer = this.beamTimers.get(extractorEntity) ?? 999;
+    const interval = this.getBeamInterval(world, team);
+    // First-time timer starts at interval so the first beam fires on the next tick
+    let timer = this.beamTimers.get(extractorEntity) ?? interval;
     timer += dt;
 
-    // Find the nearest depot or HQ to beam to
-    const target = this.findNearestBeamTarget(world, extractorEntity, team);
-    if (target === null) {
+    if (timer < interval) {
       this.beamTimers.set(extractorEntity, timer);
       return;
     }
 
-    // Get beam interval (reduced by depot upgrades)
-    const interval = this.getBeamInterval(world, team);
-
-    if (timer >= interval) {
-      timer -= interval;
-      spawnEnergyBeam(world, extractorEntity, target, team);
+    // Find a valid beam target
+    const target = this.findNearestBeamTarget(world, extractorEntity, team);
+    if (target === null) {
+      // No target — keep timer capped so we fire once when a target appears
+      this.beamTimers.set(extractorEntity, interval);
+      return;
     }
+
+    // Fire exactly one beam and reset timer
+    timer = 0;
+    spawnEnergyBeam(world, extractorEntity, target, team);
 
     this.beamTimers.set(extractorEntity, timer);
   }
 
-  /** Find nearest depot or HQ for energy beaming. Prefers depots over HQ. */
+  /** Find nearest beam target for continuous extractor beaming.
+   *  Supply Depots: always valid (continuous energy relay).
+   *  HQ / Drone Factory: only valid when actively training (production queue non-empty). */
   private findNearestBeamTarget(world: World, extractorEntity: number, team: number): number | null {
     const extPos = world.getComponent<PositionComponent>(extractorEntity, POSITION);
     if (!extPos) return null;
 
     let bestDepot: number | null = null;
     let bestDepotDistSq = Infinity;
-    let hqEntity: number | null = null;
+    let bestProducer: number | null = null;
+    let bestProducerDistSq = Infinity;
 
     const buildings = world.query(BUILDING, TEAM, POSITION, HEALTH);
     for (const e of buildings) {
@@ -149,22 +156,30 @@ export class EconomySystem implements System {
       if (bHealth.dead) continue;
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
       const bPos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = bPos.x - extPos.x;
+      const dz = bPos.z - extPos.z;
+      const distSq = dx * dx + dz * dz;
 
       if (building.buildingType === BuildingType.SupplyDepot) {
-        const dx = bPos.x - extPos.x;
-        const dz = bPos.z - extPos.z;
-        const distSq = dx * dx + dz * dz;
+        // Depots always receive continuous beams
         if (distSq < bestDepotDistSq) {
           bestDepotDistSq = distSq;
           bestDepot = e;
         }
-      } else if (building.buildingType === BuildingType.HQ && hqEntity === null) {
-        hqEntity = e;
+      } else if (building.buildingType === BuildingType.HQ || building.buildingType === BuildingType.DroneFactory) {
+        // HQ / Factory only when actively training units
+        const pq = world.getComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE);
+        if (pq && pq.queue.length > 0) {
+          if (distSq < bestProducerDistSq) {
+            bestProducerDistSq = distSq;
+            bestProducer = e;
+          }
+        }
       }
     }
 
-    // Prefer depot; fall back to HQ
-    return bestDepot ?? hqEntity;
+    // Prefer depots (relay network); fall back to active producers
+    return bestDepot ?? bestProducer;
   }
 
   /** Get beam interval for a team based on best depot upgrade level. */
