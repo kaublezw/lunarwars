@@ -2,8 +2,8 @@ import type { World } from '@core/ECS';
 import {
   POSITION, UNIT_TYPE, HEALTH, TEAM, BUILDING,
   BUILD_COMMAND, CONSTRUCTION, SUPPLY_ROUTE,
-  MATTER_STORAGE, RESUPPLY_SEEK, PRODUCTION_QUEUE,
-  REPAIR_COMMAND,
+  DEPOT_RADIUS, RESUPPLY_SEEK, PRODUCTION_QUEUE,
+  REPAIR_COMMAND, RESOURCE_SILO,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
@@ -13,12 +13,13 @@ import type { BuildingComponent } from '@sim/components/Building';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
+import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 
 import type {
-  AIContext, AIWorldState, AIPhase, EnemyMemoryEntry,
+  AIContext, AIWorldState, AIPhase, EnemyMemoryEntry, SiloInfo,
 } from '@sim/ai/AITypes';
 import {
   BASE_DEFENSE_RADIUS, EXTRACTOR_DEFENSE_RADIUS, MEMORY_DECAY_TICKS,
@@ -76,7 +77,7 @@ export function getDamagedBuildings(ctx: AIContext): { entity: number; hpFractio
 export function getCompletedDepots(ctx: AIContext, state: AIWorldState): number[] {
   const depots = state.myBuildings.get(BuildingType.SupplyDepot) ?? [];
   return depots.filter(
-    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
+    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, DEPOT_RADIUS)
   );
 }
 
@@ -239,22 +240,58 @@ export function assessWorldState(
     myConstructions.set(construction.buildingType, current + 1);
   }
 
-  // Detect enemies near AI extractors
+  // Scan resource silos (own + visible enemy)
+  const mySilos: SiloInfo[] = [];
+  const knownEnemySilos: SiloInfo[] = [];
+  const silos = ctx.world.query(RESOURCE_SILO, TEAM, POSITION, HEALTH);
+  for (const e of silos) {
+    const health = ctx.world.getComponent<HealthComponent>(e, HEALTH)!;
+    if (health.dead) continue;
+    const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+    const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
+    const silo = ctx.world.getComponent<ResourceSiloComponent>(e, RESOURCE_SILO)!;
+    const info: SiloInfo = {
+      entity: e, x: pos.x, z: pos.z,
+      resourceType: silo.resourceType, stored: silo.stored,
+    };
+    if (team.team === ctx.team) {
+      mySilos.push(info);
+    } else if (ctx.fog.isVisible(ctx.team, pos.x, pos.z)) {
+      knownEnemySilos.push(info);
+      enemyMemory.set(e, {
+        entityId: e, x: pos.x, z: pos.z,
+        type: 'building', unitCategory: null,
+        buildingType: null,
+        lastSeenTick: ctx.totalTicks, isAlive: true,
+      });
+    }
+  }
+
+  // Detect enemies near AI extractors and silos (both are high-value targets)
   const enemiesNearExtractors: { entity: number; x: number; z: number; extractorX: number; extractorZ: number }[] = [];
   const edrSq = EXTRACTOR_DEFENSE_RADIUS * EXTRACTOR_DEFENSE_RADIUS;
+
+  // Add silo positions to defended locations
+  const defendedPositions = [...myExtractorPositions];
+  for (const silo of mySilos) {
+    if (silo.stored > 20) {
+      defendedPositions.push({ x: silo.x, z: silo.z });
+    }
+  }
+
   for (const enemy of knownEnemyUnits) {
-    for (const ext of myExtractorPositions) {
+    for (const ext of defendedPositions) {
       const dx = enemy.x - ext.x;
       const dz = enemy.z - ext.z;
       if (dx * dx + dz * dz < edrSq) {
         enemiesNearExtractors.push({ entity: enemy.entity, x: enemy.x, z: enemy.z, extractorX: ext.x, extractorZ: ext.z });
-        break; // only count each enemy once
+        break;
       }
     }
   }
 
   const depotEntities = (myBuildings.get(BuildingType.SupplyDepot) ?? []).filter(
-    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
+    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, DEPOT_RADIUS)
   );
   const totalMatter = ctx.resources.get(ctx.team).matter;
   const totalArmySize = myCombat.length + Math.max(0, myAerial.length - 1);
@@ -262,6 +299,7 @@ export function assessWorldState(
   return {
     myWorkers, myCombat, myAerial, myBuildings, myConstructions,
     enemiesNearBase, enemiesNearExtractors, knownEnemyBuildings, knownEnemyUnits,
+    knownEnemySilos, mySilos,
     depotCount: depotEntities.length, depotEntities, totalMatter, totalArmySize,
     rememberedEnemyBuildings, rememberedEnemyUnits,
   };
@@ -326,6 +364,11 @@ export function findIsolatedTarget(state: AIWorldState): { x: number; z: number 
     }
   }
 
+  // Include enemy silos as isolated raid targets
+  for (const silo of state.knownEnemySilos) {
+    allBuildings.push({ x: silo.x, z: silo.z, type: BuildingType.EnergyExtractor }); // treat silos like extractors for scoring
+  }
+
   if (allBuildings.length === 0) return null;
 
   let cx = 0, cz = 0;
@@ -342,7 +385,7 @@ export function findIsolatedTarget(state: AIWorldState): { x: number; z: number 
   for (const b of allBuildings) {
     if (b.type === BuildingType.EnergyExtractor || b.type === BuildingType.MatterPlant) {
       let distSq = (b.x - cx) ** 2 + (b.z - cz) ** 2;
-      // Boost extractors so they get preferred over matter plants
+      // Boost extractors/silos so they get preferred
       if (b.type === BuildingType.EnergyExtractor) distSq += 2000;
       if (distSq > 900 && distSq > maxDistSq) {
         maxDistSq = distSq;

@@ -144,6 +144,14 @@ export interface AttackState {
   forceAttackTimer: number;
 }
 
+export interface SiloInfo {
+  entity: number;
+  x: number;
+  z: number;
+  resourceType: 'energy' | 'matter';
+  stored: number;
+}
+
 export interface AIWorldState {
   myWorkers: number[];
   myCombat: number[];
@@ -154,6 +162,10 @@ export interface AIWorldState {
   enemiesNearExtractors: { entity: number; x: number; z: number; extractorX: number; extractorZ: number }[];
   knownEnemyBuildings: { entity: number; x: number; z: number; type: BuildingType }[];
   knownEnemyUnits: { entity: number; x: number; z: number; category: UnitCategory }[];
+  /** Visible enemy silos (high-value raid targets) */
+  knownEnemySilos: SiloInfo[];
+  /** Own silos for defense awareness */
+  mySilos: SiloInfo[];
   depotCount: number;
   depotEntities: number[];
   totalMatter: number;

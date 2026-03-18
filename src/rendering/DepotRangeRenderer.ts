@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import type { Entity, World } from '@core/ECS';
-import { BUILDING, TEAM, POSITION, HEALTH, CONSTRUCTION, MATTER_STORAGE } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, POSITION, HEALTH, CONSTRUCTION, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { TeamComponent } from '@sim/components/Team';
 import type { HealthComponent } from '@sim/components/Health';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import { RESUPPLY_RANGE } from '@sim/economy/DepotUtils';
+import { getBuildingSiloTotal } from '@sim/economy/SiloUtils';
 
 export class DepotRangeRenderer {
   private circles = new Map<Entity, THREE.Mesh>();
@@ -31,7 +31,7 @@ export class DepotRangeRenderer {
   }
 
   sync(world: World): void {
-    const depots = world.query(BUILDING, TEAM, POSITION, HEALTH, MATTER_STORAGE);
+    const depots = world.query(BUILDING, TEAM, POSITION, HEALTH, DEPOT_RADIUS);
     const activeDepots = new Set<Entity>();
 
     for (const e of depots) {
@@ -43,7 +43,6 @@ export class DepotRangeRenderer {
       const team = world.getComponent<TeamComponent>(e, TEAM)!;
       if (this.playerTeam >= 0 && team.team !== this.playerTeam) continue;
 
-      const storage = world.getComponent<MatterStorageComponent>(e, MATTER_STORAGE)!;
       activeDepots.add(e);
 
       let mesh = this.circles.get(e);
@@ -56,7 +55,8 @@ export class DepotRangeRenderer {
 
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
       mesh.position.set(pos.x, pos.y + 0.15, pos.z);
-      mesh.visible = storage.stored > 0;
+      const matterTotal = getBuildingSiloTotal(world, e, 'matter');
+      mesh.visible = matterTotal > 0;
     }
 
     for (const [e, mesh] of this.circles) {

@@ -1,17 +1,17 @@
 import type { System, World } from '@core/ECS';
 import {
   REPAIR_COMMAND, POSITION, HEALTH, TEAM, BUILDING,
-  CONSTRUCTION, DEPOT_RADIUS, MATTER_STORAGE, MOVE_COMMAND,
+  CONSTRUCTION, DEPOT_RADIUS, MOVE_COMMAND,
   VOXEL_STATE,
 } from '@sim/components/ComponentTypes';
 import type { RepairCommandComponent } from '@sim/components/RepairCommand';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { TeamComponent } from '@sim/components/Team';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import { REPAIR_RATE, REPAIR_MATTER_COST } from '@sim/economy/DepotUtils';
+import { getBuildingSiloTotal, deductFromBuildingSilos } from '@sim/economy/SiloUtils';
 
 const REPAIR_RANGE = 4;
 const REPAIR_RANGE_SQ = REPAIR_RANGE * REPAIR_RANGE;
@@ -32,9 +32,9 @@ export class RepairSystem implements System {
     this.workerRepair(world, dt);
   }
 
-  /** Completed depots with local matter auto-repair themselves. */
+  /** Completed depots with nearby matter silos auto-repair themselves. */
   private depotSelfRepair(world: World, dt: number): void {
-    const depots = world.query(DEPOT_RADIUS, HEALTH, MATTER_STORAGE, BUILDING);
+    const depots = world.query(DEPOT_RADIUS, HEALTH, BUILDING);
 
     for (const d of depots) {
       if (world.hasComponent(d, CONSTRUCTION)) continue;
@@ -42,17 +42,17 @@ export class RepairSystem implements System {
       if (health.dead) continue;
       if (health.current >= health.max) continue;
 
-      const storage = world.getComponent<MatterStorageComponent>(d, MATTER_STORAGE)!;
-      if (storage.stored <= 0) continue;
+      const available = getBuildingSiloTotal(world, d, 'matter');
+      if (available <= 0) continue;
 
       const hpToRepair = Math.min(REPAIR_RATE * dt, health.max - health.current);
       const repairCost = hpToRepair * REPAIR_MATTER_COST;
-      const affordable = Math.min(repairCost, storage.stored);
+      const affordable = Math.min(repairCost, available);
       const actualRepair = affordable / REPAIR_MATTER_COST;
 
       if (actualRepair > 0) {
         health.current = Math.min(health.current + actualRepair, health.max);
-        storage.stored -= affordable;
+        deductFromBuildingSilos(world, d, 'matter', affordable);
       }
 
       this.restoreVoxels(world, d, health);

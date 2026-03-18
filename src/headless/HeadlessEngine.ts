@@ -19,13 +19,16 @@ import { GameOverSystem } from '@sim/systems/GameOverSystem';
 import { HealthSystem } from '@sim/systems/HealthSystem';
 import { EnergyPacketSystem } from '@sim/systems/EnergyPacketSystem';
 import { MatterPacketSystem } from '@sim/systems/MatterPacketSystem';
+import { MatterDeliverySystem } from '@sim/systems/MatterDeliverySystem';
 import { EconomySystem } from '@sim/systems/EconomySystem';
+import { SiloSystem } from '@sim/systems/SiloSystem';
 import { SupplySystem } from '@sim/systems/SupplySystem';
 import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { FogOfWarSystem } from '@sim/systems/FogOfWarSystem';
 import { AISystem } from '@sim/systems/AIBrain';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, CONSTRUCTION } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, CONSTRUCTION, RESOURCE_SILO } from '@sim/components/ComponentTypes';
+import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
@@ -81,6 +84,7 @@ export class HeadlessEngine {
   private buildingOccupancy!: BuildingOccupancy;
   private energyNodes!: EnergyNode[];
   private oreDeposits!: OreDeposit[];
+  private siloSystem!: SiloSystem;
   private gameOverTeam: number | null = null;
   private tickCount = 0;
 
@@ -124,6 +128,7 @@ export class HeadlessEngine {
 
     // ECS world
     this.world = new World();
+    this.resourceState.setWorld(this.world);
 
     // Seeded RNG
     const simRng = new SeededRandom(this.seed * 9973);
@@ -154,8 +159,15 @@ export class HeadlessEngine {
     this.world.addSystem(new HealthSystem());
     this.world.addSystem(new EnergyPacketSystem(this.resourceState));
     this.world.addSystem(new MatterPacketSystem(this.resourceState));
-    this.world.addSystem(new EconomySystem(this.resourceState, 2, this.terrainData));
-    this.world.addSystem(new SupplySystem(this.terrainData, this.resourceState));
+    this.world.addSystem(new MatterDeliverySystem());
+    this.siloSystem = new SiloSystem(this.terrainData);
+    this.world.addSystem(this.siloSystem);
+    const economySystem = new EconomySystem(this.resourceState, 2);
+    economySystem.setSiloSystem(this.siloSystem);
+    this.world.addSystem(economySystem);
+    const supplySystem = new SupplySystem(this.terrainData);
+    supplySystem.setSiloSystem(this.siloSystem);
+    this.world.addSystem(supplySystem);
     this.world.addSystem(new BuildSystem());
     this.world.addSystem(new ProductionSystem(this.resourceState, this.terrainData));
 
@@ -175,11 +187,8 @@ export class HeadlessEngine {
     // Spawn HQs + workers
     this.spawnInitialEntities();
 
-    // Extra starting resources (on top of constructor's 100e/100m)
-    this.resourceState.addEnergy(0, 100);
-    this.resourceState.addMatter(0, 100);
-    this.resourceState.addEnergy(1, 100);
-    this.resourceState.addMatter(1, 100);
+    // Spawn initial resource silos near each HQ
+    this.spawnInitialSilos();
   }
 
   // --- AI vs AI mode ---
@@ -435,6 +444,29 @@ export class HeadlessEngine {
       hqEntity,
       totalTicks: this.tickCount,
     };
+  }
+
+  private spawnInitialSilos(): void {
+    const hqEntities = this.world.query(BUILDING, TEAM, POSITION);
+    for (const e of hqEntities) {
+      const b = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (b.buildingType !== BuildingType.HQ) continue;
+      const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
+
+      // Spawn energy silo with 200 energy near HQ
+      const eSilo = this.siloSystem.findOrSpawnSilo(this.world, e, 'energy', t.team);
+      if (eSilo !== null) {
+        const sc = this.world.getComponent<ResourceSiloComponent>(eSilo, RESOURCE_SILO)!;
+        sc.stored = 200;
+      }
+
+      // Spawn matter silo with 200 matter near HQ
+      const mSilo = this.siloSystem.findOrSpawnSilo(this.world, e, 'matter', t.team);
+      if (mSilo !== null) {
+        const sc = this.world.getComponent<ResourceSiloComponent>(mSilo, RESOURCE_SILO)!;
+        sc.stored = 200;
+      }
+    }
   }
 
   private spawnInitialEntities(): void {

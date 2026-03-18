@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, MATTER_STORAGE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
+import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
@@ -11,7 +11,6 @@ import { BuildingType } from '@sim/components/Building';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { VisionComponent } from '@sim/components/Vision';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
@@ -148,12 +147,6 @@ export class BuildSystem implements System {
                 queue: [],
                 rallyX: sitePos3.x + 3,
                 rallyZ: sitePos3.z + 3,
-              });
-            }
-            if (!world.hasComponent(site, MATTER_STORAGE)) {
-              world.addComponent<MatterStorageComponent>(site, MATTER_STORAGE, {
-                stored: 0,
-                capacity: Infinity,
               });
             }
             if (!world.hasComponent(site, DEPOT_RADIUS)) {

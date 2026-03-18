@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Entity, World } from '@core/ECS';
-import { POSITION, RENDERABLE, TEAM, VOXEL_STATE, BUILDING, DEATH_TIMER, TURRET } from '@sim/components/ComponentTypes';
+import { POSITION, RENDERABLE, TEAM, VOXEL_STATE, BUILDING, DEATH_TIMER, TURRET, RESOURCE_SILO } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { TeamComponent } from '@sim/components/Team';
@@ -13,9 +13,40 @@ import {
 import type { VoxelModel } from '@sim/data/VoxelModels';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
+import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import type { TurretComponent } from '@sim/components/Turret';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { buildVoxelGeometry } from '@render/VoxelGeometryBuilder';
+
+/** Compute combined visibility mask for a silo entity.
+ *  Uses model.buildOrder (bottom-to-top) to show voxels up to the fill level.
+ *  Combines with damage-destroyed voxels. */
+function computeSiloVisibility(model: VoxelModel, damageMask: Uint8Array, fillRatio: number): Uint8Array {
+  const byteLen = Math.ceil(model.totalSolid / 8);
+  const combined = new Uint8Array(byteLen);
+
+  // Copy damage mask
+  for (let i = 0; i < byteLen; i++) {
+    combined[i] = damageMask[i];
+  }
+
+  // Determine how many voxels to show based on fill ratio
+  // Always show at least firstLayerCount (base platform)
+  const fillCount = Math.max(
+    model.firstLayerCount,
+    Math.floor(fillRatio * model.totalSolid),
+  );
+
+  // Hide voxels above fill level using buildOrder (bottom-to-top sort)
+  for (let i = fillCount; i < model.buildOrder.length; i++) {
+    const si = model.buildOrder[i];
+    const byteIdx = si >> 3;
+    const bitIdx = si & 7;
+    combined[byteIdx] |= (1 << bitIdx);
+  }
+
+  return combined;
+}
 
 const TEAM_COLORS = [0x4488ff, 0xff4444];
 const TEAM_ACCENT_COLORS = [0x88bbff, 0xff8888];
@@ -90,6 +121,8 @@ interface EntityMeshState {
   scorchRebuildTimer: number;
   /** True if any voxel has heat > 0 (still cooling) */
   hasCoolingVoxels: boolean;
+  /** Previous silo fill ratio (0-1) to detect changes. -1 = not a silo. */
+  prevFillRatio: number;
 }
 
 /** Cache key for template geometries: "modelId:team" */
@@ -333,6 +366,22 @@ export class VoxelMeshManager {
       }
     }
 
+    // Check silo fill level changes and mark dirty
+    for (const e of entities) {
+      const state = this.entityStates.get(e);
+      if (!state) continue;
+      const siloComp = world.getComponent<ResourceSiloComponent>(e, RESOURCE_SILO);
+      if (!siloComp) continue;
+      const fillRatio = siloComp.capacity > 0 ? Math.min(siloComp.stored / siloComp.capacity, 1) : 0;
+      // Quantize to avoid per-frame rebuilds (rebuild when fill changes by ~2 voxels worth)
+      const quantized = Math.floor(fillRatio * state.model.totalSolid);
+      const prevQuantized = state.prevFillRatio >= 0 ? Math.floor(state.prevFillRatio * state.model.totalSolid) : -1;
+      if (quantized !== prevQuantized) {
+        state.prevFillRatio = fillRatio;
+        state.geometryDirty = true;
+      }
+    }
+
     // Rebuild any dirty geometries
     for (const e of entities) {
       const state = this.entityStates.get(e);
@@ -341,7 +390,15 @@ export class VoxelMeshManager {
 
       const voxelState = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE)!;
       const scorchHeat = state.scorchHeat ?? undefined;
-      const result = buildVoxelGeometry(state.model, voxelState.destroyed, state.team, scorchHeat);
+
+      // For silos: combine damage mask + fill mask (hide voxels above fill level)
+      let destroyed = voxelState.destroyed;
+      const siloComp = world.getComponent<ResourceSiloComponent>(e, RESOURCE_SILO);
+      if (siloComp) {
+        destroyed = computeSiloVisibility(state.model, voxelState.destroyed, state.prevFillRatio);
+      }
+
+      const result = buildVoxelGeometry(state.model, destroyed, state.team, scorchHeat);
 
       // Dispose old geometry if we own it
       if (state.hasOwnGeometry) {
@@ -454,11 +511,22 @@ export class VoxelMeshManager {
     if (model.totalSolid === 0) return;
 
     const hasDamage = voxelState.destroyedCount > 0;
+    const siloComp = world.getComponent<ResourceSiloComponent>(e, RESOURCE_SILO);
     let bodyGeo: THREE.BufferGeometry;
     let turretGeo: THREE.BufferGeometry | null = null;
     let hasOwnGeometry: boolean;
+    let initFillRatio = -1;
 
-    if (hasDamage) {
+    if (siloComp) {
+      // Silos always need own geometry (fill level varies per entity)
+      const fillRatio = siloComp.capacity > 0 ? Math.min(siloComp.stored / siloComp.capacity, 1) : 0;
+      initFillRatio = fillRatio;
+      const visibility = computeSiloVisibility(model, voxelState.destroyed, fillRatio);
+      const result = buildVoxelGeometry(model, visibility, team);
+      bodyGeo = result.bodyGeometry;
+      turretGeo = result.turretGeometry;
+      hasOwnGeometry = true;
+    } else if (hasDamage) {
       // Build individual geometry for damaged entity
       const result = buildVoxelGeometry(model, voxelState.destroyed, team);
       bodyGeo = result.bodyGeometry;
@@ -506,6 +574,7 @@ export class VoxelMeshManager {
       scorchHeat: null,
       scorchRebuildTimer: 0,
       hasCoolingVoxels: false,
+      prevFillRatio: initFillRatio,
     });
 
     this.trackedEntities.add(e);

@@ -30,6 +30,7 @@ import { RepairSystem } from '@sim/systems/RepairSystem';
 import { GameOverSystem } from '@sim/systems/GameOverSystem';
 import { HealthSystem } from '@sim/systems/HealthSystem';
 import { EconomySystem } from '@sim/systems/EconomySystem';
+import { SiloSystem } from '@sim/systems/SiloSystem';
 import { EnergyPacketSystem } from '@sim/systems/EnergyPacketSystem';
 import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
@@ -43,6 +44,7 @@ import { generateEnergyNodes, generateOreDeposits } from '@sim/terrain/MapFeatur
 import type { OreDeposit } from '@sim/terrain/MapFeatures';
 import { OreDepositRenderer } from '@render/OreDepositRenderer';
 import { MatterPacketSystem } from '@sim/systems/MatterPacketSystem';
+import { MatterDeliverySystem } from '@sim/systems/MatterDeliverySystem';
 import { Minimap } from '@ui/Minimap';
 import { UnitInfoPanel } from '@ui/UnitInfoPanel';
 import { ActionBar } from '@ui/ActionBar';
@@ -61,7 +63,7 @@ import { VoxelMeshManager } from '@render/VoxelMeshManager';
 import { DepotRangeRenderer } from '@render/DepotRangeRenderer';
 import { SupplySystem } from '@sim/systems/SupplySystem';
 import { SeededRandom } from '@sim/utils/SeededRandom';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, VOXEL_STATE, TURRET, MATTER_STORAGE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, VOXEL_STATE, TURRET, DEPOT_RADIUS, RESOURCE_SILO } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import type { BuildingComponent } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -81,7 +83,7 @@ import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import * as GameCommands from '@sim/commands/GameCommands';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
+import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 
 // --- Renderer ---
@@ -204,6 +206,7 @@ const cameraController = new CameraController(inputManager, isoCamera);
 
 // --- ECS World ---
 const world = new World();
+resourceState.setWorld(world);
 
 // --- Fog of War ---
 const fogState = new FogOfWarState(276, 276, 2, 25);
@@ -258,8 +261,15 @@ world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem());
 world.addSystem(new EnergyPacketSystem(resourceState));
 world.addSystem(new MatterPacketSystem(resourceState));
-world.addSystem(new EconomySystem(resourceState, 2, terrainData));
-world.addSystem(new SupplySystem(terrainData, resourceState));
+world.addSystem(new MatterDeliverySystem());
+const siloSystem = new SiloSystem(terrainData);
+world.addSystem(siloSystem);
+const economySystem = new EconomySystem(resourceState, 2);
+economySystem.setSiloSystem(siloSystem);
+world.addSystem(economySystem);
+const supplySystem = new SupplySystem(terrainData);
+supplySystem.setSiloSystem(siloSystem);
+world.addSystem(supplySystem);
 world.addSystem(new BuildSystem());
 world.addSystem(new ProductionSystem(resourceState, terrainData));
 if (rlMode) {
@@ -362,21 +372,9 @@ function spawnBuilding(x: number, z: number, team: number, type: BuildingType): 
     });
   }
 
-  // Matter storage for Supply Depot
+  // Supply Depot gets resupply aura
   if (type === BuildingType.SupplyDepot) {
-    world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
-      stored: 100,
-      capacity: 200,
-    });
-  }
-
-  // HQ acts as fallback resupply point
-  if (type === BuildingType.HQ) {
-    world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
-      stored: 0,
-      capacity: 100,
-    });
-    world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
+    // Depot radius is set in BuildSystem on completion
   }
 
   // Voxel state
@@ -538,12 +536,28 @@ if (saveData) {
   }
 }
 
-// Extra starting resources (on top of constructor's 100e/100m)
-if (!saveData) {
-  resourceState.addEnergy(0, 100);
-  resourceState.addMatter(0, 100);
-  resourceState.addEnergy(1, 100);
-  resourceState.addMatter(1, 100);
+// Spawn initial resource silos near each HQ
+if (!saveData && scenarioMode !== 'sandbox' && scenarioMode !== 'tanks') {
+  const hqEntities = world.query(BUILDING, TEAM, POSITION);
+  for (const e of hqEntities) {
+    const b = world.getComponent<BuildingComponent>(e, BUILDING)!;
+    if (b.buildingType !== BuildingType.HQ) continue;
+    const t = world.getComponent<TeamComponent>(e, TEAM)!;
+
+    // Spawn energy silo with 200 energy near HQ
+    const eSilo = siloSystem.findOrSpawnSilo(world, e, 'energy', t.team);
+    if (eSilo !== null) {
+      const sc = world.getComponent<ResourceSiloComponent>(eSilo, RESOURCE_SILO)!;
+      sc.stored = 200;
+    }
+
+    // Spawn matter silo with 200 matter near HQ
+    const mSilo = siloSystem.findOrSpawnSilo(world, e, 'matter', t.team);
+    if (mSilo !== null) {
+      const sc = world.getComponent<ResourceSiloComponent>(mSilo, RESOURCE_SILO)!;
+      sc.stored = 200;
+    }
+  }
 }
 
 // --- Player Input (disabled in spectator mode) ---
@@ -692,7 +706,7 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     const def = BUILDING_DEFS[building.buildingType];
     if (def) {
       const refund = Math.floor(def.matterCost * 0.7);
-      resourceState.get(PLAYER_TEAM).matter += refund;
+      resourceState.addMatter(PLAYER_TEAM, refund);
     }
 
     world.destroyEntity(entity);
@@ -833,8 +847,8 @@ const gameLoop = new GameLoop(
       if (sandboxPanel.getMode() === 'play') {
         for (let t = 0; t < 2; t++) {
           const res = resourceState.get(t);
-          if (res.energy < 100000) res.energy += 100000;
-          if (res.matter < 100000) res.matter += 100000;
+          if (res.energy < 100000) resourceState.addEnergy(t, 100000);
+          if (res.matter < 100000) resourceState.addMatter(t, 100000);
         }
       }
     }
@@ -945,9 +959,8 @@ if (scenarioMode === 'sandbox') {
 
     // Grant effectively infinite resources for sandbox
     for (let t = 0; t < 2; t++) {
-      const res = resourceState.get(t);
-      res.energy += 999999;
-      res.matter += 999999;
+      resourceState.addEnergy(t, 999999);
+      resourceState.addMatter(t, 999999);
     }
 
     // Auto-spawn a worker if player team has none

@@ -1,21 +1,20 @@
 import type { System, World } from '@core/ECS';
 import {
-  BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, MATTER_STORAGE,
-  SUPPLY_ROUTE, MOVE_COMMAND,
+  BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH,
+  SUPPLY_ROUTE, MOVE_COMMAND, RESOURCE_SILO, DEPOT_RADIUS,
 } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
-import type { ResourceState } from '@sim/economy/ResourceState';
+import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import type { TerrainData } from '@sim/terrain/TerrainData';
+import type { SiloSystem } from './SiloSystem';
 
 const LOAD_UNLOAD_TIME = 2.0; // seconds
-const CARRY_CAPACITY = 10;
 const ARRIVAL_DIST = 5;
 const ARRIVAL_DIST_SQ = ARRIVAL_DIST * ARRIVAL_DIST;
 
@@ -29,11 +28,18 @@ const FOOTPRINT_RADIUS: Record<string, number> = {
 };
 const DEFAULT_FOOTPRINT = 1.5;
 const APPROACH_MARGIN = 1.5;
+const SILO_FOOTPRINT = 0.75;
 
 export class SupplySystem implements System {
   readonly name = 'SupplySystem';
 
-  constructor(private terrainData: TerrainData, private resources: ResourceState) {}
+  private siloSystem: SiloSystem | null = null;
+
+  constructor(private terrainData: TerrainData) {}
+
+  setSiloSystem(siloSystem: SiloSystem): void {
+    this.siloSystem = siloSystem;
+  }
 
   update(world: World, dt: number): void {
     this.updateFerries(world, dt);
@@ -52,10 +58,9 @@ export class SupplySystem implements System {
       const route = world.getComponent<SupplyRouteComponent>(ferry, SUPPLY_ROUTE)!;
       const ferryPos = world.getComponent<PositionComponent>(ferry, POSITION)!;
 
-      // Check source (HQ) and dest (depot) still alive
-      const sourceHealth = world.getComponent<HealthComponent>(route.sourceEntity, HEALTH);
+      // Check dest (depot) still alive
       const destHealth = world.getComponent<HealthComponent>(route.destEntity, HEALTH);
-      if (!sourceHealth || sourceHealth.dead || !destHealth || destHealth.dead) {
+      if (!destHealth || destHealth.dead) {
         world.removeComponent(ferry, SUPPLY_ROUTE);
         if (world.hasComponent(ferry, MOVE_COMMAND)) {
           world.removeComponent(ferry, MOVE_COMMAND);
@@ -65,21 +70,32 @@ export class SupplySystem implements System {
 
       switch (route.state) {
         case 'to_source': {
+          // Find nearest matter silo with stored > 0 for this team
+          const team = world.getComponent<TeamComponent>(ferry, TEAM);
+          if (!team) break;
+
+          const siloEntity = this.findNearestMatterSilo(world, team.team, ferryPos.x, ferryPos.z);
+          if (siloEntity === null) {
+            // No silos with matter -- wait
+            if (world.hasComponent(ferry, MOVE_COMMAND)) {
+              world.removeComponent(ferry, MOVE_COMMAND);
+            }
+            break;
+          }
+
+          route.sourceEntity = siloEntity;
+
           if (!world.hasComponent(ferry, MOVE_COMMAND)) {
-            const sourcePos = world.getComponent<PositionComponent>(route.sourceEntity, POSITION)!;
-            const dx = ferryPos.x - sourcePos.x;
-            const dz = ferryPos.z - sourcePos.z;
+            const siloPos = world.getComponent<PositionComponent>(siloEntity, POSITION)!;
+            const dx = ferryPos.x - siloPos.x;
+            const dz = ferryPos.z - siloPos.z;
             if (dx * dx + dz * dz <= ARRIVAL_DIST_SQ) {
               route.state = 'loading';
               route.timer = 0;
             } else {
-              const srcBldg = world.getComponent<BuildingComponent>(route.sourceEntity, BUILDING)!;
-              const ap = this.getApproachPoint(ferryPos.x, ferryPos.z, sourcePos.x, sourcePos.z, srcBldg.buildingType);
+              const ap = this.getSiloApproachPoint(ferryPos.x, ferryPos.z, siloPos.x, siloPos.z);
               world.addComponent<MoveCommandComponent>(ferry, MOVE_COMMAND, {
-                path: [],
-                currentWaypoint: 0,
-                destX: ap.x,
-                destZ: ap.z,
+                path: [], currentWaypoint: 0, destX: ap.x, destZ: ap.z,
               });
             }
           }
@@ -89,15 +105,12 @@ export class SupplySystem implements System {
         case 'loading': {
           route.timer += dt;
           if (route.timer >= LOAD_UNLOAD_TIME) {
-            // Load from global matter pool
-            const team = world.getComponent<TeamComponent>(ferry, TEAM);
-            if (team) {
-              const available = this.resources.get(team.team).matter;
-              const amount = Math.min(available, route.carryCapacity);
-              if (amount > 0) {
-                this.resources.spendMatter(team.team, amount);
-                route.carried = amount;
-              }
+            // Load from the silo
+            const siloComp = world.getComponent<ResourceSiloComponent>(route.sourceEntity, RESOURCE_SILO);
+            if (siloComp && siloComp.stored > 0) {
+              const amount = Math.min(siloComp.stored, route.carryCapacity);
+              siloComp.stored -= amount;
+              route.carried = amount;
             }
             route.state = 'to_dest';
 
@@ -109,10 +122,7 @@ export class SupplySystem implements System {
               world.removeComponent(ferry, MOVE_COMMAND);
             }
             world.addComponent<MoveCommandComponent>(ferry, MOVE_COMMAND, {
-              path: [],
-              currentWaypoint: 0,
-              destX: destAp.x,
-              destZ: destAp.z,
+              path: [], currentWaypoint: 0, destX: destAp.x, destZ: destAp.z,
             });
           }
           break;
@@ -130,10 +140,7 @@ export class SupplySystem implements System {
               const dBldg = world.getComponent<BuildingComponent>(route.destEntity, BUILDING)!;
               const dAp = this.getApproachPoint(ferryPos.x, ferryPos.z, destPos.x, destPos.z, dBldg.buildingType);
               world.addComponent<MoveCommandComponent>(ferry, MOVE_COMMAND, {
-                path: [],
-                currentWaypoint: 0,
-                destX: dAp.x,
-                destZ: dAp.z,
+                path: [], currentWaypoint: 0, destX: dAp.x, destZ: dAp.z,
               });
             }
           }
@@ -143,47 +150,75 @@ export class SupplySystem implements System {
         case 'unloading': {
           route.timer += dt;
           if (route.timer >= LOAD_UNLOAD_TIME) {
-            // Deliver matter to depot's local storage
-            if (route.carried > 0) {
-              const destStorage = world.getComponent<MatterStorageComponent>(route.destEntity, MATTER_STORAGE);
-              if (destStorage) {
-                destStorage.stored += route.carried;
+            // Deliver matter to a silo near the depot
+            if (route.carried > 0 && this.siloSystem) {
+              const team = world.getComponent<TeamComponent>(ferry, TEAM);
+              if (team) {
+                const depotSilo = this.siloSystem.findOrSpawnSilo(
+                  world, route.destEntity, 'matter', team.team,
+                );
+                if (depotSilo !== null) {
+                  const siloComp = world.getComponent<ResourceSiloComponent>(depotSilo, RESOURCE_SILO)!;
+                  siloComp.stored += route.carried;
+                }
               }
               route.carried = 0;
             }
             route.state = 'to_source';
 
-            // Issue move back to HQ
-            const sourcePos2 = world.getComponent<PositionComponent>(route.sourceEntity, POSITION)!;
-            const srcBldg2 = world.getComponent<BuildingComponent>(route.sourceEntity, BUILDING)!;
-            const srcAp2 = this.getApproachPoint(ferryPos.x, ferryPos.z, sourcePos2.x, sourcePos2.z, srcBldg2.buildingType);
             if (world.hasComponent(ferry, MOVE_COMMAND)) {
               world.removeComponent(ferry, MOVE_COMMAND);
             }
-            world.addComponent<MoveCommandComponent>(ferry, MOVE_COMMAND, {
-              path: [],
-              currentWaypoint: 0,
-              destX: srcAp2.x,
-              destZ: srcAp2.z,
-            });
           }
           break;
         }
 
         case 'idle':
-          // Stale route -- clean up
           world.removeComponent(ferry, SUPPLY_ROUTE);
           break;
       }
     }
   }
 
-  findNearestDepot(world: World, team: number, x: number, z: number): number | null {
-    const buildings = world.query(BUILDING, TEAM, POSITION, HEALTH, MATTER_STORAGE);
+  /** Find nearest matter silo with stored > 0 (at production buildings, not at depots). */
+  private findNearestMatterSilo(world: World, team: number, x: number, z: number): number | null {
+    const silos = world.query(RESOURCE_SILO, POSITION, TEAM, HEALTH);
     let bestEntity: number | null = null;
     let bestDistSq = Infinity;
 
-    for (const e of buildings) {
+    for (const e of silos) {
+      const silo = world.getComponent<ResourceSiloComponent>(e, RESOURCE_SILO)!;
+      if (silo.resourceType !== 'matter') continue;
+      if (silo.stored <= 0) continue;
+
+      // Skip silos at depots (those are the destination, not the source)
+      const parentBuilding = world.getComponent<BuildingComponent>(silo.parentBuilding, BUILDING);
+      if (parentBuilding && parentBuilding.buildingType === BuildingType.SupplyDepot) continue;
+
+      const siloTeam = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (siloTeam.team !== team) continue;
+      const siloHealth = world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (siloHealth.dead) continue;
+
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = pos.x - x;
+      const dz = pos.z - z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestEntity = e;
+      }
+    }
+
+    return bestEntity;
+  }
+
+  findNearestDepot(world: World, team: number, x: number, z: number): number | null {
+    const depots = world.query(DEPOT_RADIUS, BUILDING, TEAM, POSITION, HEALTH);
+    let bestEntity: number | null = null;
+    let bestDistSq = Infinity;
+
+    for (const e of depots) {
       if (world.hasComponent(e, CONSTRUCTION)) continue;
       const bTeam = world.getComponent<TeamComponent>(e, TEAM)!;
       if (bTeam.team !== team) continue;
@@ -221,6 +256,22 @@ export class SupplySystem implements System {
     return {
       x: buildingX + (dx / dist) * approachDist,
       z: buildingZ + (dz / dist) * approachDist,
+    };
+  }
+
+  private getSiloApproachPoint(
+    fromX: number, fromZ: number, siloX: number, siloZ: number,
+  ): { x: number; z: number } {
+    const approachDist = SILO_FOOTPRINT + APPROACH_MARGIN;
+    const dx = fromX - siloX;
+    const dz = fromZ - siloZ;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 0.01) {
+      return { x: siloX + approachDist, z: siloZ };
+    }
+    return {
+      x: siloX + (dx / dist) * approachDist,
+      z: siloZ + (dz / dist) * approachDist,
     };
   }
 }
