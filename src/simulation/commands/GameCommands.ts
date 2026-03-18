@@ -9,7 +9,7 @@ import {
   POSITION, RENDERABLE, SELECTABLE, HEALTH, TEAM,
   BUILDING, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND,
   PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE,
-  REPAIR_COMMAND, WALL_BUILD_QUEUE,
+  REPAIR_COMMAND, WALL_BUILD_QUEUE, BEAM_UPGRADE,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
@@ -28,10 +28,48 @@ import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
+import type { BeamUpgradeComponent } from '@sim/components/BeamUpgrade';
+import { BEAM_UPGRADE_COSTS, BEAM_UPGRADE_MAX_LEVEL } from '@sim/components/BeamUpgrade';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import { validateAndSnapPlacement } from '@sim/ai/PlacementValidator';
 
 import { TEAM_COLORS, MAX_QUEUE_DEPTH } from '@sim/ai/AITypes';
+
+// --- Helpers ---
+
+/** Find the nearest energy-network tower (Extractor, Depot, or HQ) for a team.
+ *  Used as the visual beam source — beams travel tower-to-tower. */
+function findNearestEnergyTower(
+  world: World, team: number, x: number, z: number,
+): number | null {
+  const buildings = world.query(BUILDING, TEAM, POSITION, HEALTH);
+  let best: number | null = null;
+  let bestDistSq = Infinity;
+
+  for (const e of buildings) {
+    if (world.hasComponent(e, CONSTRUCTION)) continue;
+    const bTeam = world.getComponent<TeamComponent>(e, TEAM)!;
+    if (bTeam.team !== team) continue;
+    const bHealth = world.getComponent<HealthComponent>(e, HEALTH)!;
+    if (bHealth.dead) continue;
+    const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
+
+    // Only buildings with antennas (energy network nodes)
+    if (building.buildingType !== BuildingType.EnergyExtractor
+      && building.buildingType !== BuildingType.SupplyDepot
+      && building.buildingType !== BuildingType.HQ) continue;
+
+    const bPos = world.getComponent<PositionComponent>(e, POSITION)!;
+    const dx = bPos.x - x;
+    const dz = bPos.z - z;
+    const distSq = dx * dx + dz * dz;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      best = e;
+    }
+  }
+  return best;
+}
 
 export interface GameCommandContext {
   world: World;
@@ -203,9 +241,12 @@ export function buildStructure(
     ctx, team, type, def.meshType, placement.x, placement.z, workerEntity,
   );
 
-  // Visual: energy beam from source silo to build site
-  if (energySiloSource >= 0 && def.energyCost > 0) {
-    spawnEnergyBeam(ctx.world, energySiloSource, site, team);
+  // Visual: energy beam from nearest tower to build site
+  if (def.energyCost > 0) {
+    const tower = findNearestEnergyTower(ctx.world, team, placement.x, placement.z);
+    if (tower !== null) {
+      spawnEnergyBeam(ctx.world, tower, site, team);
+    }
   }
   // Visual: matter ferry from source silo to build site
   if (matterSiloSource >= 0 && def.matterCost > 0) {
@@ -263,9 +304,13 @@ export function buildWallSegments(
     siteEntities.push(site);
   }
 
-  // Visual: energy beam from source silo to first wall segment
-  if (wallEnergySilo >= 0 && totalEnergyCost > 0 && siteEntities.length > 0) {
-    spawnEnergyBeam(ctx.world, wallEnergySilo, siteEntities[0], team);
+  // Visual: energy beam from nearest tower to first wall segment
+  if (totalEnergyCost > 0 && siteEntities.length > 0) {
+    const firstSeg = segments[0];
+    const tower = findNearestEnergyTower(ctx.world, team, firstSeg.x, firstSeg.z);
+    if (tower !== null) {
+      spawnEnergyBeam(ctx.world, tower, siteEntities[0], team);
+    }
   }
 
   // Issue move + build command for first segment
@@ -316,9 +361,15 @@ export function trainUnit(
   }
   const trainMatterSilo = ctx.resources.lastSourceSilo;
 
-  // Visual: energy beam from source silo to production building
-  if (trainEnergySilo >= 0 && def.energyCost > 0) {
-    spawnEnergyBeam(ctx.world, trainEnergySilo, factory, team);
+  // Visual: energy beam from nearest tower to production building
+  if (def.energyCost > 0) {
+    const factoryPos = ctx.world.getComponent<PositionComponent>(factory, POSITION);
+    if (factoryPos) {
+      const tower = findNearestEnergyTower(ctx.world, team, factoryPos.x, factoryPos.z);
+      if (tower !== null && tower !== factory) {
+        spawnEnergyBeam(ctx.world, tower, factory, team);
+      }
+    }
   }
   // Visual: matter ferry from source silo to production building
   if (trainMatterSilo >= 0 && def.matterCost > 0) {
@@ -334,5 +385,39 @@ export function trainUnit(
   pq.rallyX = rallyX;
   pq.rallyZ = rallyZ;
 
+  return true;
+}
+
+/**
+ * Upgrade the beam rate on a Supply Depot.
+ * Returns true if successful.
+ */
+export function upgradeBeamRate(
+  ctx: GameCommandContext,
+  team: number,
+  depotEntity: number,
+): boolean {
+  const upgrade = ctx.world.getComponent<BeamUpgradeComponent>(depotEntity, BEAM_UPGRADE);
+  if (!upgrade) return false;
+  if (upgrade.level >= BEAM_UPGRADE_MAX_LEVEL) return false;
+
+  const cost = BEAM_UPGRADE_COSTS[upgrade.level];
+  if (!cost) return false;
+
+  if (!ctx.resources.canAfford(team, cost.energy)) return false;
+  if (!ctx.resources.canAffordMatter(team, cost.matter)) return false;
+
+  ctx.resources.spend(team, cost.energy);
+  const energySilo = ctx.resources.lastSourceSilo;
+  if (cost.matter > 0) {
+    ctx.resources.spendMatter(team, cost.matter);
+  }
+
+  // Visual: energy beam to depot
+  if (energySilo >= 0 && cost.energy > 0) {
+    spawnEnergyBeam(ctx.world, energySilo, depotEntity, team);
+  }
+
+  upgrade.level++;
   return true;
 }

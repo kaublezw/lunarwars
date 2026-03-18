@@ -13,9 +13,11 @@ import type { VisionComponent } from '@sim/components/Vision';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
+import type { BeamUpgradeComponent } from '@sim/components/BeamUpgrade';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import { BEAM_UPGRADE } from '@sim/components/ComponentTypes';
 const DEPOT_VISUAL_RADIUS = 38;
 
 const BUILD_RANGE = 4; // max distance worker can be from site to build
@@ -139,7 +141,7 @@ export class BuildSystem implements System {
             });
           }
 
-          // SupplyDepot gets matter storage, visual radius, and production queue
+          // SupplyDepot gets matter storage, visual radius, production queue, and beam upgrade
           if (construction.buildingType === BuildingType.SupplyDepot) {
             if (!world.hasComponent(site, PRODUCTION_QUEUE)) {
               const sitePos3 = world.getComponent<PositionComponent>(site, POSITION)!;
@@ -152,6 +154,11 @@ export class BuildSystem implements System {
             if (!world.hasComponent(site, DEPOT_RADIUS)) {
               world.addComponent<DepotRadiusComponent>(site, DEPOT_RADIUS, {
                 radius: DEPOT_VISUAL_RADIUS,
+              });
+            }
+            if (!world.hasComponent(site, BEAM_UPGRADE)) {
+              world.addComponent<BeamUpgradeComponent>(site, BEAM_UPGRADE, {
+                level: 0,
               });
             }
           }

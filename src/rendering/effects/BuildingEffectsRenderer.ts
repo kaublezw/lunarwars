@@ -98,6 +98,9 @@ export class BuildingEffectsRenderer {
       } else if (building.buildingType === BuildingType.HQ) {
         activeEntities.add(e);
         this.updateHQGlow(e, pos, dt, visible);
+      } else if (building.buildingType === BuildingType.SupplyDepot || building.buildingType === BuildingType.DroneFactory) {
+        activeEntities.add(e);
+        this.updateHQGlow(e, pos, dt, visible);
       }
     }
 
@@ -181,14 +184,15 @@ export class BuildingEffectsRenderer {
     // Check for disappeared packets
     for (const [packetId, info] of this.trackedPackets) {
       if (!currentPackets.has(packetId)) {
-        // Packet gone — check if it was near its target HQ (arrived vs killed)
-        const hqPos = world.getComponent<PositionComponent>(info.target, POSITION);
-        if (hqPos) {
-          const dx = info.lastX - hqPos.x;
-          const dz = info.lastZ - hqPos.z;
+        // Packet gone — check if it was near its target building (arrived vs killed)
+        const targetPos = world.getComponent<PositionComponent>(info.target, POSITION);
+        if (targetPos) {
+          const dx = info.lastX - targetPos.x;
+          const dz = info.lastZ - targetPos.z;
           if (dx * dx + dz * dz < ARRIVAL_CHECK_SQ) {
-            const hqTracker = this.hqGlowTrackers.get(info.target);
-            if (hqTracker) hqTracker.fadeTimer = FADE_DURATION;
+            // Flash glow on any building with a glow tracker (HQ, depot, factory)
+            const glowTracker = this.hqGlowTrackers.get(info.target);
+            if (glowTracker) glowTracker.fadeTimer = FADE_DURATION;
           }
         }
         this.trackedPackets.delete(packetId);

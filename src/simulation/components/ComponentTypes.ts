@@ -29,3 +29,4 @@ export const MATTER_PACKET = 'MatterPacket';
 export const GARAGE_EXIT = 'GarageExit';
 export const RESOURCE_SILO = 'ResourceSilo';
 export const MATTER_DELIVERY = 'MatterDelivery';
+export const BEAM_UPGRADE = 'BeamUpgrade';

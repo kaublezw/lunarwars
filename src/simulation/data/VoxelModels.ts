@@ -289,7 +289,7 @@ export const MATTER_PLANT_MODEL = createModel(20, 14, 20, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 19, 3, 0, 19, 7, 19, PAL_TEAM_ACCENT);
 });
 
-export const SUPPLY_DEPOT_MODEL = createModel(24, 24, 24, (g, sx, _sy, sz) => {
+export const SUPPLY_DEPOT_MODEL = createModel(24, 38, 24, (g, sx, _sy, sz) => {
   // Landing platform
   fillBox(g, sx, sz, 0, 0, 0, 23, 1, 23, PAL_DARK_GREY);
   // Crate stacks
@@ -299,10 +299,12 @@ export const SUPPLY_DEPOT_MODEL = createModel(24, 24, 24, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 17, 2, 2, 21, 4, 6, PAL_BROWN);
   // Center marker
   fillBox(g, sx, sz, 10, 1, 10, 13, 1, 13, PAL_TEAM_PRIMARY);
-  // Energy relay tower (center)
-  fillCylinder(g, sx, sz, 12, 12, 1, 2, 19, PAL_LIGHT_GREY);
-  // Relay antenna cap
-  fillCylinder(g, sx, sz, 12, 12, 1.5, 20, 22, PAL_BLUE_GLOW);
+  // Energy relay tower (center) — extends to match extractor antenna height
+  fillCylinder(g, sx, sz, 12, 12, 1, 2, 35, PAL_LIGHT_GREY);
+  // Support ring at mid-tower
+  fillCylinder(g, sx, sz, 12, 12, 2, 18, 19, PAL_TEAM_ACCENT);
+  // Glowing relay cap (matches extractor emitter cap height)
+  fillCylinder(g, sx, sz, 12, 12, 1.5, 36, 37, PAL_BLUE_GLOW);
   // Support struts at base
   fillBox(g, sx, sz, 11, 2, 10, 11, 6, 10, PAL_TEAM_ACCENT);
   fillBox(g, sx, sz, 13, 2, 10, 13, 6, 10, PAL_TEAM_ACCENT);
@@ -310,7 +312,7 @@ export const SUPPLY_DEPOT_MODEL = createModel(24, 24, 24, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 10, 2, 13, 10, 6, 13, PAL_TEAM_ACCENT);
 });
 
-export const DRONE_FACTORY_MODEL = createModel(24, 30, 24, (g, sx, _sy, sz) => {
+export const DRONE_FACTORY_MODEL = createModel(24, 38, 24, (g, sx, _sy, sz) => {
   // Main body
   fillBox(g, sx, sz, 0, 0, 0, 23, 10, 23, PAL_DARK_GREY);
   // Upper hull
@@ -323,10 +325,12 @@ export const DRONE_FACTORY_MODEL = createModel(24, 30, 24, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 8, 1, 23, 15, 8, 23, PAL_MED_GREY);
   // Roof stripe
   fillBox(g, sx, sz, 4, 13, 4, 19, 13, 19, PAL_TEAM_ACCENT);
-  // Antenna spire (for energy beam reception)
-  fillCylinder(g, sx, sz, 3, 12, 1, 18, 27, PAL_LIGHT_GREY);
-  // Energy receiver cap on antenna
-  fillCylinder(g, sx, sz, 3, 12, 1.5, 28, 29, PAL_BLUE_GLOW);
+  // Antenna spire — extends to match extractor antenna height
+  fillCylinder(g, sx, sz, 3, 12, 1, 18, 35, PAL_LIGHT_GREY);
+  // Support ring at mid-spire
+  fillCylinder(g, sx, sz, 3, 12, 2, 26, 27, PAL_TEAM_ACCENT);
+  // Energy receiver cap (matches extractor emitter cap height)
+  fillCylinder(g, sx, sz, 3, 12, 1.5, 36, 37, PAL_BLUE_GLOW);
 });
 
 export const CONSTRUCTION_SITE_MODEL = createModel(14, 4, 14, (g, sx, _sy, sz) => {

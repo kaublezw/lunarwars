@@ -712,6 +712,14 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     world.destroyEntity(entity);
   });
 
+  ab.onUpgradeBeamRequest((entity) => {
+    const building = world.getComponent<BuildingComponent>(entity, BUILDING);
+    if (!building || building.buildingType !== BuildingType.SupplyDepot) return;
+    const team = world.getComponent<TeamComponent>(entity, TEAM);
+    if (!team || team.team !== PLAYER_TEAM) return;
+    GameCommands.upgradeBeamRate(cmdCtx, PLAYER_TEAM, entity);
+  });
+
   pc.onPlacementConfirmed((type, x, z) => {
     // Find a selected idle worker for this team
     const selectables = world.query(SELECTABLE, UNIT_TYPE, TEAM);
