@@ -17,8 +17,8 @@ export const PACKET_ELEVATION = 5.5;
 const EXTRACTOR_RATE = 5;    // +5 energy/s
 const PLANT_MATTER_RATE = 2;  // +2 matter/s
 
-/** Default beam interval in seconds (1 beam per 10s per extractor) */
-const DEFAULT_BEAM_INTERVAL = 10;
+/** Default beam interval in seconds (1 beam per 5s per extractor) */
+const DEFAULT_BEAM_INTERVAL = 5;
 
 export class EconomySystem implements System {
   readonly name = 'EconomySystem';
@@ -108,7 +108,8 @@ export class EconomySystem implements System {
   /** Periodically spawn a beam from this extractor to nearest depot (or HQ).
    *  Beam interval is reduced by the best depot upgrade in the network. */
   private updateExtractorBeam(world: World, extractorEntity: number, team: number, dt: number): void {
-    let timer = this.beamTimers.get(extractorEntity) ?? 0;
+    // Initialize timer at a high value so the first beam fires immediately
+    let timer = this.beamTimers.get(extractorEntity) ?? 999;
     timer += dt;
 
     // Find the nearest depot or HQ to beam to
