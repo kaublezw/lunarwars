@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Entity, World } from '@core/ECS';
-import { POSITION, RENDERABLE, TEAM, VOXEL_STATE, BUILDING, DEATH_TIMER, TURRET, RESOURCE_SILO } from '@sim/components/ComponentTypes';
+import { POSITION, RENDERABLE, TEAM, VOXEL_STATE, BUILDING, DEATH_TIMER, TURRET, RESOURCE_SILO, FERRY_DOCK } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { TeamComponent } from '@sim/components/Team';
@@ -15,6 +15,7 @@ import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
 import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import type { TurretComponent } from '@sim/components/Turret';
+import type { FerryDockComponent } from '@sim/components/FerryDock';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { buildVoxelGeometry } from '@render/VoxelGeometryBuilder';
 
@@ -201,7 +202,15 @@ export class VoxelMeshManager {
         const pos = world.getComponent<PositionComponent>(e, POSITION)!;
         const isBuilding = world.hasComponent(e, BUILDING);
         const turret = world.getComponent<TurretComponent>(e, TURRET);
-        this.updateDamage(e, voxelState, pos, isBuilding, turret?.turretRotation, existing.model.turretMinY, existing.model.turretMaxY);
+
+        // For docked ferries, pass the construction site position for arc particles
+        let arcTarget: PositionComponent | null = null;
+        const ferryDock = world.getComponent<FerryDockComponent>(e, FERRY_DOCK);
+        if (ferryDock && !ferryDock.returning) {
+          arcTarget = world.getComponent<PositionComponent>(ferryDock.siteEntity, POSITION) ?? null;
+        }
+
+        this.updateDamage(e, voxelState, pos, isBuilding, turret?.turretRotation, existing.model.turretMinY, existing.model.turretMaxY, arcTarget);
         voxelState.dirty = false;
       }
     }
@@ -602,7 +611,7 @@ export class VoxelMeshManager {
     this.trackedEntities.delete(e);
   }
 
-  private updateDamage(e: Entity, voxelState: VoxelStateComponent, pos: PositionComponent, isBuilding: boolean, turretRotation?: number, turretMinY?: number, turretMaxY?: number): void {
+  private updateDamage(e: Entity, voxelState: VoxelStateComponent, pos: PositionComponent, isBuilding: boolean, turretRotation?: number, turretMinY?: number, turretMaxY?: number, arcTarget?: PositionComponent | null): void {
     const state = this.entityStates.get(e);
     if (!state) return;
 
@@ -626,13 +635,24 @@ export class VoxelMeshManager {
 
         const worldPos = this.getDestroyedVoxelWorldPos(e, si, pos, isBuilding, turretRotation, turretMinY, turretMaxY);
         if (worldPos) {
-          this.debrisRenderer.spawn(
-            worldPos.x, worldPos.y, worldPos.z,
-            debrisDir.dirX, debrisDir.dirY, debrisDir.dirZ,
-            worldPos.color,
-            1.0, // hit debris starts fully lit
-            0xff6600, // orange glow matches scorch hue
-          );
+          if (arcTarget) {
+            // Docked ferry: spawn arc particles aimed at the construction site
+            this.debrisRenderer.spawnArc(
+              worldPos.x, worldPos.y, worldPos.z,
+              arcTarget.x, arcTarget.y + 1.0, arcTarget.z,
+              worldPos.color,
+              0.8,
+              0x44aaff, // blue glow for construction transfer
+            );
+          } else {
+            this.debrisRenderer.spawn(
+              worldPos.x, worldPos.y, worldPos.z,
+              debrisDir.dirX, debrisDir.dirY, debrisDir.dirZ,
+              worldPos.color,
+              1.0, // hit debris starts fully lit
+              0xff6600, // orange glow matches scorch hue
+            );
+          }
         }
       }
     }
