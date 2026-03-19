@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, POSITION, PRODUCTION_QUEUE, CONSTRUCTION, VOXEL_STATE, DEATH_TIMER } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, POSITION, PRODUCTION_QUEUE, CONSTRUCTION, VOXEL_STATE, DEATH_TIMER, GARAGE_EXIT } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -163,15 +163,19 @@ export class GarageDoorRenderer {
       const queueLen = queue ? queue.queue.length : 0;
       const firstItem = queue && queue.queue.length > 0 ? queue.queue[0] : null;
 
+      // Check if any GARAGE_EXIT entity is inside this HQ (ferry or unit exiting)
+      const hasGarageExiter = this.hasGarageExitNear(world, pos.x, pos.z);
+      const shouldOpen = (firstItem && firstItem.timeRemaining <= OPEN_TRIGGER_TIME) || hasGarageExiter;
+
       switch (tracker.state) {
         case 'closed':
-          if (firstItem && firstItem.timeRemaining <= OPEN_TRIGGER_TIME) {
+          if (shouldOpen) {
             tracker.state = 'opening';
           }
           break;
 
         case 'opening':
-          if (queueLen === 0) {
+          if (queueLen === 0 && !hasGarageExiter) {
             tracker.state = 'closing';
             break;
           }
@@ -185,22 +189,25 @@ export class GarageDoorRenderer {
           if (queueLen < tracker.lastQueueLength) {
             tracker.closeTimer = CLOSE_DELAY;
           }
+          if (hasGarageExiter) {
+            tracker.closeTimer = CLOSE_DELAY;
+          }
           if (tracker.closeTimer > 0) {
             tracker.closeTimer -= dt;
             if (tracker.closeTimer <= 0) {
-              if (firstItem && firstItem.timeRemaining <= OPEN_TRIGGER_TIME) {
+              if (shouldOpen) {
                 tracker.closeTimer = 0;
               } else {
                 tracker.state = 'closing';
               }
             }
-          } else if (queueLen === 0) {
+          } else if (queueLen === 0 && !hasGarageExiter) {
             tracker.state = 'closing';
           }
           break;
 
         case 'closing':
-          if (firstItem && firstItem.timeRemaining <= OPEN_TRIGGER_TIME) {
+          if (shouldOpen) {
             tracker.state = 'opening';
             break;
           }
@@ -275,6 +282,21 @@ export class GarageDoorRenderer {
         this.trackers.delete(entity);
       }
     }
+  }
+
+  /** Check if any entity with GARAGE_EXIT is near an HQ position (inside the garage). */
+  private hasGarageExitNear(world: World, hqX: number, hqZ: number): boolean {
+    const exiters = world.query(GARAGE_EXIT, POSITION);
+    for (const e of exiters) {
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = pos.x - hqX;
+      const dz = pos.z - hqZ;
+      // Within a small radius of the HQ center and before the exit line
+      if (dx * dx + dz * dz < 16 && pos.z < hqZ + 3) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private createDoor(entity: number, team: number): DoorTracker {
