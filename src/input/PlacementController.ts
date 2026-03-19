@@ -8,6 +8,7 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import { BuildingType, type BuildingComponent } from '@sim/components/Building';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
+import { snapToGrid } from '@sim/terrain/GridConstants';
 
 
 const ENERGY_NODE_SNAP_RANGE = 5;
@@ -170,9 +171,9 @@ export class PlacementController {
     const worldPos = this.camera.screenToWorld(sx, sy);
     if (!worldPos) return;
 
-    // Snap to integer grid (1 world unit = 1 terrain tile)
-    let wx = Math.round(worldPos.x);
-    let wz = Math.round(worldPos.z);
+    // Snap to grid cell centers (e.g. 2, 6, 10, ... for 4-unit cells)
+    let wx = snapToGrid(worldPos.x);
+    let wz = snapToGrid(worldPos.z);
 
     // Snap to energy node or ore deposit if building requires one (overrides grid)
     const def = this.buildingType ? BUILDING_DEFS[this.buildingType] : null;

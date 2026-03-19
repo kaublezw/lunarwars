@@ -5,6 +5,7 @@ import { BUILDING, POSITION, CONSTRUCTION } from '@sim/components/ComponentTypes
 import type { PositionComponent } from '@sim/components/Position';
 import { BuildingType } from '@sim/components/Building';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
+import { snapToGrid } from '@sim/terrain/GridConstants';
 
 const SNAP_RANGE = 15;
 const OCCUPIED_RANGE = 2;
@@ -30,9 +31,9 @@ export function validateAndSnapPlacement(
     occupiedSet.add(`${Math.round(pos.x)},${Math.round(pos.z)}`);
   }
 
-  // Snap to integer grid (1 world unit = 1 terrain tile)
-  let snappedX = Math.round(x);
-  let snappedZ = Math.round(z);
+  // Snap to grid cell centers (e.g. 2, 6, 10, ... for 4-unit cells)
+  let snappedX = snapToGrid(x);
+  let snappedZ = snapToGrid(z);
 
   // Snap to energy node if needed (overrides grid)
   if (def.needsEnergyNode) {

@@ -1,4 +1,5 @@
 import type { TerrainData } from './TerrainData';
+import { snapToGrid } from './GridConstants';
 
 export interface EnergyNode {
   x: number;
@@ -35,8 +36,8 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
     for (let attempt = 0; attempt < 20 && nodes.length < TARGET_COUNT; attempt++) {
       const angle = next() * Math.PI * 2;
       const dist = 5 + next() * 10; // 5-15 units from center
-      const x = zone.x + Math.cos(angle) * dist;
-      const z = zone.z + Math.sin(angle) * dist;
+      const x = snapToGrid(zone.x + Math.cos(angle) * dist);
+      const z = snapToGrid(zone.z + Math.sin(angle) * dist);
 
       if (x < 2 || x > 254 || z < 2 || z > 254) continue;
       if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
@@ -52,8 +53,8 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
   while (nodes.length < TARGET_COUNT && globalAttempts < 200) {
     globalAttempts++;
 
-    const x = 10 + next() * 236;
-    const z = 10 + next() * 236;
+    const x = snapToGrid(10 + next() * 236);
+    const z = snapToGrid(10 + next() * 236);
 
     if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
     if (!isFarEnough(nodes, x, z, MIN_DIST)) continue;
@@ -92,8 +93,8 @@ export function generateOreDeposits(terrain: TerrainData, seed: number, energyNo
     for (let attempt = 0; attempt < 20 && deposits.length < TARGET_COUNT; attempt++) {
       const angle = next() * Math.PI * 2;
       const dist = 5 + next() * 10;
-      const x = zone.x + Math.cos(angle) * dist;
-      const z = zone.z + Math.sin(angle) * dist;
+      const x = snapToGrid(zone.x + Math.cos(angle) * dist);
+      const z = snapToGrid(zone.z + Math.sin(angle) * dist);
 
       if (x < 2 || x > 254 || z < 2 || z > 254) continue;
       if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
@@ -109,8 +110,8 @@ export function generateOreDeposits(terrain: TerrainData, seed: number, energyNo
   let globalAttempts = 0;
   while (deposits.length < TARGET_COUNT && globalAttempts < 200) {
     globalAttempts++;
-    const x = 10 + next() * 236;
-    const z = 10 + next() * 236;
+    const x = snapToGrid(10 + next() * 236);
+    const z = snapToGrid(10 + next() * 236);
 
     if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
     if (!isFarEnough(deposits, x, z, MIN_DIST)) continue;
