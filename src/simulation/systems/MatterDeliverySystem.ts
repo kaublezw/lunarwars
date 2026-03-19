@@ -1,15 +1,15 @@
 import type { System, World } from '@core/ECS';
-import { MATTER_DELIVERY, POSITION, HEALTH } from '@sim/components/ComponentTypes';
+import { MATTER_DELIVERY, POSITION, HEALTH, MOVE_COMMAND } from '@sim/components/ComponentTypes';
 import type { MatterDeliveryComponent } from '@sim/components/MatterDelivery';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 
-const ARRIVAL_DIST_SQ = 4.0; // 2 wu arrival threshold
+const ARRIVAL_DIST_SQ = 25.0; // 5 wu arrival threshold (matches SupplySystem)
 
 export class MatterDeliverySystem implements System {
   readonly name = 'MatterDeliverySystem';
 
-  update(world: World, dt: number): void {
+  update(world: World, _dt: number): void {
     const entities = world.query(MATTER_DELIVERY, POSITION);
 
     for (const e of entities) {
@@ -23,26 +23,24 @@ export class MatterDeliverySystem implements System {
         continue;
       }
 
-      // Move toward destination
-      const dx = delivery.destX - pos.x;
-      const dz = delivery.destZ - pos.z;
-      const distSq = dx * dx + dz * dz;
+      // Movement is handled by PathfindingSystem + MovementSystem via MOVE_COMMAND.
+      // Check if we've arrived (MOVE_COMMAND removed by PathfindingSystem on arrival).
+      if (!world.hasComponent(e, MOVE_COMMAND)) {
+        const dx = delivery.destX - pos.x;
+        const dz = delivery.destZ - pos.z;
+        const distSq = dx * dx + dz * dz;
 
-      if (distSq <= ARRIVAL_DIST_SQ) {
-        // Arrived — disappear
-        world.destroyEntity(e);
-        continue;
+        if (distSq <= ARRIVAL_DIST_SQ) {
+          // Arrived — disappear
+          world.destroyEntity(e);
+        } else {
+          // Re-issue move command (path may have been cleared without arriving)
+          world.addComponent(e, MOVE_COMMAND, {
+            path: [], currentWaypoint: 0,
+            destX: delivery.destX, destZ: delivery.destZ,
+          });
+        }
       }
-
-      const dist = Math.sqrt(distSq);
-      const step = delivery.speed * dt;
-      const ratio = Math.min(step / dist, 1);
-
-      pos.prevX = pos.x;
-      pos.prevY = pos.y;
-      pos.prevZ = pos.z;
-      pos.x += dx * ratio;
-      pos.z += dz * ratio;
     }
   }
 }
