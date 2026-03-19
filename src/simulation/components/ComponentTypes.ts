@@ -31,3 +31,4 @@ export const RESOURCE_SILO = 'ResourceSilo';
 export const MATTER_DELIVERY = 'MatterDelivery';
 export const BEAM_UPGRADE = 'BeamUpgrade';
 export const FERRY_DOCK = 'FerryDock';
+export const GARAGE_ENTER = 'GarageEnter';

@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
+import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE, WALL_BUILD_QUEUE, FERRY_DOCK } from '@sim/components/ComponentTypes';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
@@ -40,7 +40,16 @@ export class BuildSystem implements System {
       if (cmd.state === 'moving') {
         // Wait for MOVE_COMMAND to be removed (unit arrived)
         if (!world.hasComponent(e, MOVE_COMMAND)) {
-          cmd.state = 'building';
+          // Check if we're too close to a docked ferry at this site
+          const reroute = this.findAlternateSpot(world, e, cmd);
+          if (reroute) {
+            world.addComponent<MoveCommandComponent>(e, MOVE_COMMAND, {
+              path: [], currentWaypoint: 0,
+              destX: reroute.x, destZ: reroute.z,
+            });
+          } else {
+            cmd.state = 'building';
+          }
         }
         continue;
       }
@@ -202,5 +211,57 @@ export class BuildSystem implements System {
         }
       }
     }
+  }
+
+  /** Check if the worker's current position is too close to a docked ferry
+   *  at the same construction site. If so, return an alternate offset spot. */
+  private findAlternateSpot(
+    world: World,
+    workerEntity: number,
+    cmd: BuildCommandComponent,
+  ): { x: number; z: number } | null {
+    const workerPos = world.getComponent<PositionComponent>(workerEntity, POSITION)!;
+    const sitePos = world.getComponent<PositionComponent>(cmd.siteEntity, POSITION);
+    if (!sitePos) return null;
+
+    // Find docked ferries at this site
+    const ferries = world.query(FERRY_DOCK, POSITION);
+    let ferryNearby = false;
+    for (const f of ferries) {
+      const fPos = world.getComponent<PositionComponent>(f, POSITION)!;
+      const fdx = fPos.x - workerPos.x;
+      const fdz = fPos.z - workerPos.z;
+      if (fdx * fdx + fdz * fdz < 4) { // within 2 wu
+        ferryNearby = true;
+        break;
+      }
+    }
+
+    if (!ferryNearby) return null;
+
+    // Try cardinal offsets to find a spot away from the ferry
+    const OFFSET = 3;
+    const offsets: [number, number][] = [
+      [0, -OFFSET], [-OFFSET, 0], [OFFSET, 0], [0, OFFSET],
+    ];
+
+    for (const [ox, oz] of offsets) {
+      const cx = sitePos.x + ox;
+      const cz = sitePos.z + oz;
+      // Check that this spot isn't near a ferry
+      let clear = true;
+      for (const f of ferries) {
+        const fPos = world.getComponent<PositionComponent>(f, POSITION)!;
+        const fdx = fPos.x - cx;
+        const fdz = fPos.z - cz;
+        if (fdx * fdx + fdz * fdz < 4) {
+          clear = false;
+          break;
+        }
+      }
+      if (clear) return { x: cx, z: cz };
+    }
+
+    return null; // All spots blocked — proceed anyway
   }
 }
