@@ -189,6 +189,61 @@ export class DebrisRenderer {
     this.activeCount = Math.max(this.activeCount, slot + 1);
   }
 
+  /** Spawn a debris particle that arcs from source to target position.
+   *  Uses projectile physics (gravity) with calculated initial velocity. */
+  spawnArc(
+    srcX: number, srcY: number, srcZ: number,
+    tgtX: number, tgtY: number, tgtZ: number,
+    color: number,
+    initialEmissive = 0.8,
+    glowColor = 0x44aaff,
+  ): void {
+    let slot = -1;
+    for (let i = 0; i < MAX_DEBRIS; i++) {
+      if (!this.particles[i].alive) {
+        slot = i;
+        break;
+      }
+    }
+    if (slot === -1) return;
+
+    const p = this.particles[slot];
+    p.alive = true;
+    p.x = srcX;
+    p.y = srcY;
+    p.z = srcZ;
+
+    // Calculate velocity for a parabolic arc from src to tgt
+    const flightTime = 0.6 + Math.random() * 0.3; // 0.6-0.9 seconds
+    const dx = tgtX - srcX;
+    const dy = tgtY - srcY;
+    const dz = tgtZ - srcZ;
+
+    // vx = dx/t, vz = dz/t, vy = (dy + 0.5*g*t^2) / t
+    p.vx = dx / flightTime + (Math.random() - 0.5) * 1.0;
+    p.vy = (dy + 0.5 * LUNAR_GRAVITY * flightTime * flightTime) / flightTime;
+    p.vz = dz / flightTime + (Math.random() - 0.5) * 1.0;
+
+    p.ax = (Math.random() - 0.5) * 12;
+    p.ay = (Math.random() - 0.5) * 12;
+    p.az = (Math.random() - 0.5) * 12;
+    p.rotX = Math.random() * Math.PI * 2;
+    p.rotY = Math.random() * Math.PI * 2;
+    p.rotZ = Math.random() * Math.PI * 2;
+
+    // Short lifetime — particle should disappear near the target
+    p.maxLifetime = flightTime + 0.3;
+    p.lifetime = p.maxLifetime;
+    p.bounces = 0;
+    p.isRubble = false;
+    p.color.setHex(color);
+    p.emissive = initialEmissive;
+    p.glowColor.setHex(glowColor);
+    p.dieOnGlowFade = true; // die once glow fades (short-lived transfer particle)
+
+    this.activeCount = Math.max(this.activeCount, slot + 1);
+  }
+
   /** Spawn a static rubble piece that sits on the ground and fades over time */
   spawnRubble(x: number, y: number, z: number, color: number): void {
     let slot = -1;
