@@ -250,7 +250,7 @@ export function buildStructure(
   }
   // Visual: matter ferry from source silo to build site
   if (matterSiloSource >= 0 && def.matterCost > 0) {
-    spawnMatterFerry(ctx.world, matterSiloSource, site, team);
+    spawnMatterFerry(ctx.world, matterSiloSource, site, team, ctx.terrain);
   }
 
   // Clear existing worker commands and issue new build
@@ -373,7 +373,7 @@ export function trainUnit(
   }
   // Visual: matter ferry from source silo to production building
   if (trainMatterSilo >= 0 && def.matterCost > 0) {
-    spawnMatterFerry(ctx.world, trainMatterSilo, factory, team);
+    spawnMatterFerry(ctx.world, trainMatterSilo, factory, team, ctx.terrain);
   }
 
   pq.queue.push({
