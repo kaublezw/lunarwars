@@ -153,7 +153,7 @@ export class FerryDockSystem implements System {
           world.removeComponent(ferry, FERRY_DOCK);
 
           world.addComponent<GarageEnterComponent>(ferry, GARAGE_ENTER, {
-            enterZ: hqPos.z + 0.5, // Interior position to reach
+            enterZ: hqPos.z, // Same Z where GarageExit spawns units (exact reverse)
             hqX: hqPos.x,
           });
           return;
