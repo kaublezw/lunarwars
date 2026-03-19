@@ -108,15 +108,17 @@ export class SiloSystem implements System {
       // Overflow: try to move excess into an existing nearby silo or spawn a new one
       const overflow = silo.stored - silo.capacity;
       const team = world.getComponent<TeamComponent>(e, TEAM)!;
-      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
 
       // Find existing silo with space owned by the same parent (or this building)
       const parentId = silo.parentBuilding === -1 ? e : silo.parentBuilding;
       let target = this.findSiloWithSpace(world, parentId, silo.resourceType, e);
 
       if (target === null) {
-        // Spawn new silo
-        target = this.spawnSilo(world, pos, silo.resourceType, team.team, parentId);
+        // Spawn new silo relative to parent building so silos radiate circularly
+        const parentPos = world.getComponent<PositionComponent>(parentId, POSITION);
+        if (parentPos) {
+          target = this.spawnSilo(world, parentPos, silo.resourceType, team.team, parentId);
+        }
       }
 
       if (target !== null) {
