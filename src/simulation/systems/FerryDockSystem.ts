@@ -115,10 +115,12 @@ export class FerryDockSystem implements System {
     if (dock.homeHQ >= 0) {
       const hqPos = world.getComponent<PositionComponent>(dock.homeHQ, POSITION);
       if (hqPos) {
-        // Navigate back to HQ
+        // Navigate to the garage entrance (hqZ + 2.5), aligned on X.
+        // Pathfinding will bring the ferry smoothly to this point, then
+        // handleReturn transitions to GarageEnterSystem with no teleport.
         world.addComponent<MoveCommandComponent>(ferry, MOVE_COMMAND, {
           path: [], currentWaypoint: 0,
-          destX: hqPos.x, destZ: hqPos.z,
+          destX: hqPos.x, destZ: hqPos.z + 2.5,
         });
         return;
       }
@@ -135,34 +137,17 @@ export class FerryDockSystem implements System {
     // Wait for movement to finish
     if (world.hasComponent(ferry, MOVE_COMMAND)) return;
 
-    const ferryPos = world.getComponent<PositionComponent>(ferry, POSITION)!;
-
+    // Ferry has arrived at the garage entrance via pathfinding.
+    // Transition directly to GARAGE_ENTER — no teleport needed since
+    // startReturn already targeted hqPos.z + 2.5.
     if (dock.homeHQ >= 0) {
       const hqPos = world.getComponent<PositionComponent>(dock.homeHQ, POSITION);
       if (hqPos) {
-        const dx = hqPos.x - ferryPos.x;
-        const dz = hqPos.z - ferryPos.z;
-        const distSq = dx * dx + dz * dz;
+        world.removeComponent(ferry, FERRY_DOCK);
 
-        if (distSq <= 25) {
-          // Close enough to HQ — position at garage entrance and drive in
-          ferryPos.x = hqPos.x;
-          ferryPos.z = hqPos.z + 2.5; // In front of the garage door
-
-          // Remove FERRY_DOCK so this entity is fully managed by GarageEnterSystem
-          world.removeComponent(ferry, FERRY_DOCK);
-
-          world.addComponent<GarageEnterComponent>(ferry, GARAGE_ENTER, {
-            enterZ: hqPos.z, // Same Z where GarageExit spawns units (exact reverse)
-            hqX: hqPos.x,
-          });
-          return;
-        }
-
-        // Re-issue move command
-        world.addComponent<MoveCommandComponent>(ferry, MOVE_COMMAND, {
-          path: [], currentWaypoint: 0,
-          destX: hqPos.x, destZ: hqPos.z + 3, // Aim just in front of garage
+        world.addComponent<GarageEnterComponent>(ferry, GARAGE_ENTER, {
+          enterZ: hqPos.z,
+          hqX: hqPos.x,
         });
         return;
       }
