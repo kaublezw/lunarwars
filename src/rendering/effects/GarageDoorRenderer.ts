@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, POSITION, PRODUCTION_QUEUE, CONSTRUCTION, VOXEL_STATE, DEATH_TIMER, GARAGE_EXIT, GARAGE_ENTER } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, POSITION, PRODUCTION_QUEUE, CONSTRUCTION, VOXEL_STATE, DEATH_TIMER, GARAGE_EXIT, GARAGE_ENTER, FERRY_DOCK } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -8,6 +8,7 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { VoxelStateComponent, BufferedImpact } from '@sim/components/VoxelState';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
+import type { FerryDockComponent } from '@sim/components/FerryDock';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import { VOXEL_SIZE, GARAGE_DOOR_MODEL, indexToCoords } from '@sim/data/VoxelModels';
 import { buildVoxelGeometry } from '@render/VoxelGeometryBuilder';
@@ -284,7 +285,7 @@ export class GarageDoorRenderer {
     }
   }
 
-  /** Check if any entity with GARAGE_EXIT or GARAGE_ENTER is near an HQ position. */
+  /** Check if any entity is exiting, entering, or approaching the garage. */
   private hasGarageExitNear(world: World, hqX: number, hqZ: number): boolean {
     // Check exiting entities (inside the garage, moving +Z)
     const exiters = world.query(GARAGE_EXIT, POSITION);
@@ -296,13 +297,26 @@ export class GarageDoorRenderer {
         return true;
       }
     }
-    // Check entering entities (approaching from +Z, driving into garage)
+    // Check entering entities (driving -Z into garage)
     const enterers = world.query(GARAGE_ENTER, POSITION);
     for (const e of enterers) {
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
       const dx = pos.x - hqX;
       const dz = pos.z - hqZ;
       if (dx * dx + dz * dz < 16 && pos.z < hqZ + 4) {
+        return true;
+      }
+    }
+    // Check returning ferries approaching the garage (opens door before arrival)
+    const ferries = world.query(FERRY_DOCK, POSITION);
+    for (const f of ferries) {
+      const dock = world.getComponent<FerryDockComponent>(f, FERRY_DOCK)!;
+      if (!dock.returning) continue;
+      const pos = world.getComponent<PositionComponent>(f, POSITION)!;
+      const dx = pos.x - hqX;
+      const dz = pos.z - (hqZ + 2.5); // Distance to garage entrance
+      const distSq = dx * dx + dz * dz;
+      if (distSq < 16) { // Within 4 units of garage entrance
         return true;
       }
     }

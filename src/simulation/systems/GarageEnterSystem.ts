@@ -7,8 +7,8 @@ import type { SteeringComponent } from '@sim/components/Steering';
 
 /**
  * Exact reverse of GarageExitSystem.
- * GarageExit: spawns at hqPos.z, drives +Z at vel.speed, exits at exitZ.
- * GarageEnter: starts at hqPos.z + exitOffset, drives -Z at vel.speed, destroyed at enterZ.
+ * GarageExit: spawns at hqPos.z, drives +Z at vel.speed, exits at exitZ (hqPos.z + 2.5).
+ * GarageEnter: starts at hqPos.z + 2.5, drives -Z at vel.speed, destroyed at enterZ (hqPos.z).
  *
  * Because MovementSystem blocks movement INTO building footprints (isClearAt),
  * we directly update position here instead of relying on velocity alone.
