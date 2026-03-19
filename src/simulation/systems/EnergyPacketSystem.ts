@@ -1,9 +1,11 @@
 import type { System, World } from '@core/ECS';
-import { ENERGY_PACKET, POSITION, HEALTH, BUILDING, CONSTRUCTION } from '@sim/components/ComponentTypes';
+import { ENERGY_PACKET, POSITION, HEALTH, BUILDING, CONSTRUCTION, RESOURCE_SILO } from '@sim/components/ComponentTypes';
 import type { EnergyPacketComponent } from '@sim/components/EnergyPacket';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
+import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import type { ResourceState } from '@sim/economy/ResourceState';
+import type { SiloSystem } from './SiloSystem';
 import { PACKET_ELEVATION } from '@sim/systems/EconomySystem';
 
 const ARRIVAL_DIST_SQ = 1.0; // 1 wu squared
@@ -12,7 +14,13 @@ const HOVER_OFFSET_Y = 0.5;  // hover height above beam elevation
 export class EnergyPacketSystem implements System {
   readonly name = 'EnergyPacketSystem';
 
+  private siloSystem: SiloSystem | null = null;
+
   constructor(private resources: ResourceState) {}
+
+  setSiloSystem(siloSystem: SiloSystem): void {
+    this.siloSystem = siloSystem;
+  }
 
   update(world: World, dt: number): void {
     const packets = world.query(ENERGY_PACKET, POSITION);
@@ -28,7 +36,7 @@ export class EnergyPacketSystem implements System {
       // Check if target still exists and is alive
       const targetHealth = world.getComponent<HealthComponent>(packet.targetEntity, HEALTH);
       if (!targetHealth || targetHealth.dead) {
-        // Target destroyed — destroy packet
+        // Target destroyed — energy is lost, destroy packet
         world.destroyEntity(e);
         continue;
       }
@@ -82,8 +90,10 @@ export class EnergyPacketSystem implements System {
           packet.hovering = true;
           continue;
         }
-        // Arrived at completed building — deliver energy and destroy
-        this.resources.addEnergy(packet.team, packet.energyAmount);
+        // Arrived at completed building — deliver energy
+        if (packet.energyAmount > 0) {
+          this.depositEnergyAtBuilding(world, packet);
+        }
         world.destroyEntity(e);
         continue;
       }
@@ -100,5 +110,21 @@ export class EnergyPacketSystem implements System {
       pos.y += dy * factor;
       pos.z += dz * factor;
     }
+  }
+
+  /** Deposit beam energy into the target building's energy silo. */
+  private depositEnergyAtBuilding(world: World, packet: EnergyPacketComponent): void {
+    if (this.siloSystem) {
+      const silo = this.siloSystem.findOrSpawnSilo(
+        world, packet.targetEntity, 'energy', packet.team,
+      );
+      if (silo !== null) {
+        const siloComp = world.getComponent<ResourceSiloComponent>(silo, RESOURCE_SILO)!;
+        siloComp.stored += packet.energyAmount;
+        return;
+      }
+    }
+    // Fallback: add to global pool if no silo could be created
+    this.resources.addEnergy(packet.team, packet.energyAmount);
   }
 }

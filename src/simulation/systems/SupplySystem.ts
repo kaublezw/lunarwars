@@ -34,6 +34,8 @@ export class SupplySystem implements System {
   readonly name = 'SupplySystem';
 
   private siloSystem: SiloSystem | null = null;
+  /** Per-team round-robin index for matter source selection */
+  private sourceIndex = new Map<number, number>();
 
   constructor(private terrainData: TerrainData) {}
 
@@ -70,11 +72,11 @@ export class SupplySystem implements System {
 
       switch (route.state) {
         case 'to_source': {
-          // Find nearest matter silo with stored > 0 for this team
+          // Find next matter source (round-robin across all production silos)
           const team = world.getComponent<TeamComponent>(ferry, TEAM);
           if (!team) break;
 
-          const siloEntity = this.findNearestMatterSilo(world, team.team, ferryPos.x, ferryPos.z);
+          const siloEntity = this.findNextMatterSource(world, team.team);
           if (siloEntity === null) {
             // No silos with matter -- wait
             if (world.hasComponent(ferry, MOVE_COMMAND)) {
@@ -180,11 +182,12 @@ export class SupplySystem implements System {
     }
   }
 
-  /** Find nearest matter silo with stored > 0 (at production buildings, not at depots). */
-  private findNearestMatterSilo(world: World, team: number, x: number, z: number): number | null {
+  /** Find next matter source silo via round-robin (at production buildings, not depots).
+   *  Cycles through all available sources so ferries spread across plants. */
+  private findNextMatterSource(world: World, team: number): number | null {
+    // Collect all matter silos at production buildings with stored > 0
+    const candidates: number[] = [];
     const silos = world.query(RESOURCE_SILO, POSITION, TEAM, HEALTH);
-    let bestEntity: number | null = null;
-    let bestDistSq = Infinity;
 
     for (const e of silos) {
       const silo = world.getComponent<ResourceSiloComponent>(e, RESOURCE_SILO)!;
@@ -200,17 +203,15 @@ export class SupplySystem implements System {
       const siloHealth = world.getComponent<HealthComponent>(e, HEALTH)!;
       if (siloHealth.dead) continue;
 
-      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-      const dx = pos.x - x;
-      const dz = pos.z - z;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestEntity = e;
-      }
+      candidates.push(e);
     }
 
-    return bestEntity;
+    if (candidates.length === 0) return null;
+
+    // Round-robin: pick next source in rotation
+    const idx = (this.sourceIndex.get(team) ?? 0) % candidates.length;
+    this.sourceIndex.set(team, idx + 1);
+    return candidates[idx];
   }
 
   findNearestDepot(world: World, team: number, x: number, z: number): number | null {

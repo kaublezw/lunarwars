@@ -10,10 +10,8 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { BeamUpgradeComponent } from '@sim/components/BeamUpgrade';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { SiloSystem } from './SiloSystem';
-import { BUILDING_STORAGE_CAPACITY } from './SiloSystem';
 import { spawnEnergyBeam } from '@sim/economy/EnergyBeam';
-import { spawnProductionShuttle } from '@sim/economy/MatterFerry';
-import type { TerrainData } from '@sim/terrain/TerrainData';
+import { deductFromBuildingSilos, getBuildingSiloTotal } from '@sim/economy/SiloUtils';
 
 // Legacy: kept for EnergyPacketSystem import compatibility
 export const PACKET_ELEVATION = 5.5;
@@ -21,25 +19,17 @@ export const PACKET_ELEVATION = 5.5;
 const EXTRACTOR_RATE = 5;    // +5 energy/s
 const PLANT_MATTER_RATE = 2;  // +2 matter/s
 
-/** Default beam interval in seconds (1 visual beam per 5s per extractor) */
+/** Default beam interval in seconds (1 beam per 5s per extractor) */
 const DEFAULT_BEAM_INTERVAL = 5;
-
-/** How often matter plants dispatch a shuttle to a depot (seconds) */
-const SHUTTLE_INTERVAL = 3;
 
 export class EconomySystem implements System {
   readonly name = 'EconomySystem';
 
   private siloSystem: SiloSystem | null = null;
-  private terrain: TerrainData | null = null;
   /** Per-extractor beam timer: entity -> seconds since last beam */
   private beamTimers = new Map<number, number>();
-  /** Per-plant shuttle timer: entity -> seconds since last shuttle dispatch */
-  private shuttleTimers = new Map<number, number>();
-  /** Round-robin depot index per team for energy */
+  /** Round-robin depot index per team for energy beaming */
   private energyDepotIndex = new Map<number, number>();
-  /** Round-robin depot index per team for matter */
-  private matterDepotIndex = new Map<number, number>();
 
   constructor(
     private resources: ResourceState,
@@ -48,10 +38,6 @@ export class EconomySystem implements System {
 
   setSiloSystem(siloSystem: SiloSystem): void {
     this.siloSystem = siloSystem;
-  }
-
-  setTerrain(terrain: TerrainData): void {
-    this.terrain = terrain;
   }
 
   update(world: World, dt: number): void {
@@ -64,9 +50,8 @@ export class EconomySystem implements System {
     const matterRates = new Float32Array(this.teamCount);
 
     const activeExtractors = new Set<number>();
-    const activePlants = new Set<number>();
 
-    // Collect alive depots per team (used for round-robin distribution)
+    // Collect alive depots per team (used for round-robin beam targeting)
     const depotsPerTeam = new Map<number, number[]>();
     for (let t = 0; t < this.teamCount; t++) {
       depotsPerTeam.set(t, []);
@@ -81,7 +66,7 @@ export class EconomySystem implements System {
       depotsPerTeam.get(team.team)!.push(e);
     }
 
-    // Extractors: produce energy, beam to depots (round-robin), fallback to local silo
+    // Extractors: produce energy into local silos, beam to depots at beam rate
     for (const e of entities) {
       if (world.hasComponent(e, CONSTRUCTION)) continue;
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
@@ -93,32 +78,16 @@ export class EconomySystem implements System {
       energyRates[team.team] += EXTRACTOR_RATE;
       activeExtractors.add(e);
 
+      // Accumulate energy in local silos
       if (this.siloSystem) {
-        const depots = depotsPerTeam.get(team.team)!;
-        const produced = EXTRACTOR_RATE * dt;
-
-        if (depots.length > 0) {
-          // Deposit energy directly into next depot's energy silo (instant beam transfer)
-          const depotIdx = (this.energyDepotIndex.get(team.team) ?? 0) % depots.length;
-          const depot = depots[depotIdx];
-          this.energyDepotIndex.set(team.team, depotIdx + 1);
-
-          const silo = this.siloSystem.findOrSpawnSilo(world, depot, 'energy', team.team);
-          if (silo !== null) {
-            const siloComp = world.getComponent<ResourceSiloComponent>(silo, RESOURCE_SILO)!;
-            siloComp.stored += produced;
-          }
-        } else {
-          // No depots yet — store locally at extractor (early game fallback)
-          const silo = this.siloSystem.findOrSpawnSilo(world, e, 'energy', team.team);
-          if (silo !== null) {
-            const siloComp = world.getComponent<ResourceSiloComponent>(silo, RESOURCE_SILO)!;
-            siloComp.stored += produced;
-          }
+        const silo = this.siloSystem.findOrSpawnSilo(world, e, 'energy', team.team);
+        if (silo !== null) {
+          const siloComp = world.getComponent<ResourceSiloComponent>(silo, RESOURCE_SILO)!;
+          siloComp.stored += EXTRACTOR_RATE * dt;
         }
       }
 
-      // Visual beam to depot (or HQ/Factory when training)
+      // Periodically beam energy to depots (carries real energy from local silos)
       this.updateExtractorBeam(world, e, team.team, dt, depotsPerTeam.get(team.team)!);
     }
 
@@ -129,7 +98,7 @@ export class EconomySystem implements System {
       }
     }
 
-    // Matter plants: produce into local buffer, dispatch shuttles to depots (round-robin)
+    // Matter plants: produce matter into local silos (ferries move it to depots)
     for (const e of entities) {
       if (world.hasComponent(e, CONSTRUCTION)) continue;
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
@@ -139,36 +108,13 @@ export class EconomySystem implements System {
       const team = world.getComponent<TeamComponent>(e, TEAM)!;
 
       matterRates[team.team] += PLANT_MATTER_RATE;
-      activePlants.add(e);
 
       if (this.siloSystem) {
-        const depots = depotsPerTeam.get(team.team)!;
-
-        if (depots.length > 0) {
-          // Accumulate matter in local buffer silo
-          const silo = this.siloSystem.findOrSpawnSilo(world, e, 'matter', team.team);
-          if (silo !== null) {
-            const siloComp = world.getComponent<ResourceSiloComponent>(silo, RESOURCE_SILO)!;
-            siloComp.stored += PLANT_MATTER_RATE * dt;
-
-            // Periodically dispatch a shuttle carrying accumulated matter to next depot
-            this.updatePlantShuttle(world, e, team.team, dt, silo, siloComp, depots);
-          }
-        } else {
-          // No depots yet — just store locally (early game fallback)
-          const silo = this.siloSystem.findOrSpawnSilo(world, e, 'matter', team.team);
-          if (silo !== null) {
-            const siloComp = world.getComponent<ResourceSiloComponent>(silo, RESOURCE_SILO)!;
-            siloComp.stored += PLANT_MATTER_RATE * dt;
-          }
+        const silo = this.siloSystem.findOrSpawnSilo(world, e, 'matter', team.team);
+        if (silo !== null) {
+          const siloComp = world.getComponent<ResourceSiloComponent>(silo, RESOURCE_SILO)!;
+          siloComp.stored += PLANT_MATTER_RATE * dt;
         }
-      }
-    }
-
-    // Clean up shuttle timers for destroyed plants
-    for (const [entity] of this.shuttleTimers) {
-      if (!activePlants.has(entity)) {
-        this.shuttleTimers.delete(entity);
       }
     }
 
@@ -178,7 +124,8 @@ export class EconomySystem implements System {
     }
   }
 
-  /** Periodically spawn a visual beam from extractor to its round-robin depot target. */
+  /** Periodically fire a beam from extractor to depot, carrying real energy.
+   *  Energy is deducted from the extractor's local silos and delivered on arrival. */
   private updateExtractorBeam(
     world: World, extractorEntity: number, team: number, dt: number,
     depots: number[],
@@ -197,6 +144,7 @@ export class EconomySystem implements System {
     if (depots.length > 0) {
       const depotIdx = (this.energyDepotIndex.get(team) ?? 0) % depots.length;
       target = depots[depotIdx];
+      this.energyDepotIndex.set(team, depotIdx + 1);
     } else {
       target = this.findActiveProducer(world, extractorEntity, team);
     }
@@ -206,45 +154,17 @@ export class EconomySystem implements System {
       return;
     }
 
+    // Deduct energy from extractor's local silos — beam carries what was available
+    const localEnergy = getBuildingSiloTotal(world, extractorEntity, 'energy');
+    if (localEnergy <= 0) {
+      this.beamTimers.set(extractorEntity, interval);
+      return;
+    }
+    const deducted = deductFromBuildingSilos(world, extractorEntity, 'energy', localEnergy);
+
     timer = 0;
-    spawnEnergyBeam(world, extractorEntity, target, team);
+    spawnEnergyBeam(world, extractorEntity, target, team, deducted);
     this.beamTimers.set(extractorEntity, timer);
-  }
-
-  /** Dispatch matter shuttle from plant to depot when local buffer has resources. */
-  private updatePlantShuttle(
-    world: World, plantEntity: number, team: number, dt: number,
-    siloEntity: number, siloComp: ResourceSiloComponent,
-    depots: number[],
-  ): void {
-    let timer = this.shuttleTimers.get(plantEntity) ?? 0;
-    timer += dt;
-
-    if (timer < SHUTTLE_INTERVAL) {
-      this.shuttleTimers.set(plantEntity, timer);
-      return;
-    }
-
-    // Take all accumulated matter from local buffer
-    const amount = siloComp.stored;
-    if (amount <= 0) {
-      this.shuttleTimers.set(plantEntity, timer);
-      return;
-    }
-
-    // Pick next depot (round-robin)
-    const depotIdx = (this.matterDepotIndex.get(team) ?? 0) % depots.length;
-    const depot = depots[depotIdx];
-    this.matterDepotIndex.set(team, depotIdx + 1);
-
-    // Deduct from local silo and spawn shuttle carrying real matter
-    siloComp.stored = 0;
-    timer = 0;
-    this.shuttleTimers.set(plantEntity, timer);
-
-    if (this.terrain) {
-      spawnProductionShuttle(world, siloEntity, depot, team, this.terrain, amount);
-    }
   }
 
   /** Find nearest HQ or Factory that is actively training (fallback beam target). */

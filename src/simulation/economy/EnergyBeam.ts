@@ -13,14 +13,16 @@ const BEAM_ELEVATION = 5.5;
 /** Speed of beam voxels (world units per second) */
 const BEAM_SPEED = 12;
 
-/** Spawn a visual-only energy beam packet from source entity to dest entity.
+/** Spawn an energy beam packet from source entity to dest entity.
  *  The packet travels as a glowing voxel with point light (handled by BuildingEffectsRenderer).
- *  energyAmount=0 means no resource is added on arrival — purely visual. */
+ *  energyAmount > 0 means real energy is delivered to the target building on arrival.
+ *  energyAmount = 0 means purely visual (e.g. spend beams). */
 export function spawnEnergyBeam(
   world: World,
   sourceEntity: number,
   destEntity: number,
   team: number,
+  energyAmount: number = 0,
 ): void {
   const sourcePos = world.getComponent<PositionComponent>(sourceEntity, POSITION);
   const destPos = world.getComponent<PositionComponent>(destEntity, POSITION);
@@ -72,7 +74,7 @@ export function spawnEnergyBeam(
     targetY: destPos.y + BEAM_ELEVATION,
     targetZ: destPos.z,
     speed: BEAM_SPEED,
-    energyAmount: 0, // Visual only — energy already deducted
+    energyAmount,
     team,
     hovering: false,
   });
