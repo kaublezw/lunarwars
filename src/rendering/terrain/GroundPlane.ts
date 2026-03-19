@@ -14,9 +14,9 @@ export class GroundPlane {
     this.mesh.rotation.x = -Math.PI / 2;
     this.mesh.position.set(128, 0, 128); // Center at world midpoint
 
-    // Grid with 256 divisions = 1 world unit per cell (matches terrain tiles)
-    this.grid = new THREE.GridHelper(256, 256, 0x666666, 0x555555);
-    this.grid.position.set(128, 0.01, 128); // Slight Y offset to avoid z-fighting
+    // 64 divisions = 4 world units per cell
+    this.grid = new THREE.GridHelper(256, 64, 0x999999, 0x777777);
+    this.grid.position.set(128, 0.05, 128); // Y offset above terrain floor voxels
   }
 
   addTo(scene: THREE.Scene): void {
