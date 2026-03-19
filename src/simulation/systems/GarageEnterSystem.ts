@@ -37,14 +37,18 @@ export class GarageEnterSystem implements System {
         pos.prevZ = pos.z;
 
         // Drive straight -Z into the garage by directly updating position,
-        // bypassing MovementSystem's building collision checks
+        // bypassing MovementSystem's building collision checks.
         pos.z -= vel.speed * dt;
 
-        // Set velocity for rotation display (face -Z)
-        vel.x = 0;
-        vel.z = -vel.speed;
+        // Update rotation to face -Z
+        pos.rotation = Math.PI;
 
-        // Clear steering forces so CollisionAvoidance/Movement don't interfere
+        // Zero velocity so MovementSystem doesn't also move us (would cause double-speed).
+        // We handle all movement directly above.
+        vel.x = 0;
+        vel.z = 0;
+
+        // Clear steering forces so CollisionAvoidance doesn't interfere
         const steering = world.getComponent<SteeringComponent>(e, STEERING);
         if (steering) {
           steering.forceX = 0;
