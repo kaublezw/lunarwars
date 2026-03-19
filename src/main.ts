@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { SceneManager } from '@render/SceneManager';
 import { IsometricCamera } from '@render/IsometricCamera';
 import { TerrainVoxelRenderer } from '@render/terrain/TerrainVoxelRenderer';
+import { GroundPlane } from '@render/terrain/GroundPlane';
 import { SelectionRenderer } from '@render/SelectionRenderer';
 import { XRayRenderer } from '@render/XRayRenderer';
 import { WaypointRenderer } from '@render/WaypointRenderer';
@@ -149,6 +150,8 @@ const seed = replayMode
 
 // --- Terrain ---
 const terrainData = new TerrainData({ seed });
+const groundPlane = new GroundPlane();
+groundPlane.addTo(sceneManager.scene);
 const terrainVoxelRenderer = new TerrainVoxelRenderer(terrainData);
 terrainVoxelRenderer.addTo(sceneManager.scene);
 
