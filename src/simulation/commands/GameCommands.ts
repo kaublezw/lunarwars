@@ -10,6 +10,7 @@ import {
   BUILDING, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND,
   PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE,
   REPAIR_COMMAND, WALL_BUILD_QUEUE, BEAM_UPGRADE,
+  RESOURCE_SILO,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
@@ -25,6 +26,7 @@ import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 
 import { BuildingType } from '@sim/components/Building';
+import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import { UnitCategory } from '@sim/components/UnitType';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
@@ -36,6 +38,13 @@ import { validateAndSnapPlacement } from '@sim/ai/PlacementValidator';
 import { TEAM_COLORS, MAX_QUEUE_DEPTH } from '@sim/ai/AITypes';
 
 // --- Helpers ---
+
+/** Check if a silo entity belongs to (is adjacent to) a given building. */
+function isSiloLocalToBuilding(world: World, siloEntity: number, buildingEntity: number): boolean {
+  if (siloEntity < 0) return false;
+  const silo = world.getComponent<ResourceSiloComponent>(siloEntity, RESOURCE_SILO);
+  return silo !== null && silo !== undefined && silo.parentBuilding === buildingEntity;
+}
 
 /** Find the nearest energy-network tower (Extractor, Depot, or HQ) for a team.
  *  Used as the visual beam source — beams travel tower-to-tower. */
@@ -362,7 +371,9 @@ export function trainUnit(
   const trainMatterSilo = ctx.resources.lastSourceSilo;
 
   // Visual: energy beam from nearest tower to production building
-  if (def.energyCost > 0) {
+  // Skip if energy was drawn from a silo already adjacent to this building
+  const energyIsLocal = isSiloLocalToBuilding(ctx.world, trainEnergySilo, factory);
+  if (def.energyCost > 0 && !energyIsLocal) {
     const factoryPos = ctx.world.getComponent<PositionComponent>(factory, POSITION);
     if (factoryPos) {
       const tower = findNearestEnergyTower(ctx.world, team, factoryPos.x, factoryPos.z);
@@ -372,7 +383,9 @@ export function trainUnit(
     }
   }
   // Visual: matter ferry from source silo to production building
-  if (trainMatterSilo >= 0 && def.matterCost > 0) {
+  // Skip if matter was drawn from a silo already adjacent to this building
+  const matterIsLocal = isSiloLocalToBuilding(ctx.world, trainMatterSilo, factory);
+  if (trainMatterSilo >= 0 && def.matterCost > 0 && !matterIsLocal) {
     spawnMatterFerry(ctx.world, trainMatterSilo, factory, team, ctx.terrain);
   }
 
