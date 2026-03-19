@@ -5,10 +5,18 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { VelocityComponent } from '@sim/components/Velocity';
 import type { SteeringComponent } from '@sim/components/Steering';
 
+/**
+ * Exact reverse of GarageExitSystem.
+ * GarageExit: spawns at hqPos.z, drives +Z at vel.speed, exits at exitZ.
+ * GarageEnter: starts at hqPos.z + exitOffset, drives -Z at vel.speed, destroyed at enterZ.
+ *
+ * Because MovementSystem blocks movement INTO building footprints (isClearAt),
+ * we directly update position here instead of relying on velocity alone.
+ */
 export class GarageEnterSystem implements System {
   readonly name = 'GarageEnterSystem';
 
-  update(world: World, _dt: number): void {
+  update(world: World, dt: number): void {
     const entities = world.query(GARAGE_ENTER, POSITION, VELOCITY);
 
     for (const e of entities) {
@@ -20,13 +28,23 @@ export class GarageEnterSystem implements System {
       pos.x = enter.hqX;
 
       if (pos.z <= enter.enterZ) {
-        // Reached interior — destroy the ferry
+        // Reached interior — destroy the ferry (mirrors GarageExit removal)
         world.destroyEntity(e);
       } else {
-        // Drive straight -Z into the garage
+        // Save previous position for interpolation
+        pos.prevX = pos.x;
+        pos.prevY = pos.y;
+        pos.prevZ = pos.z;
+
+        // Drive straight -Z into the garage by directly updating position,
+        // bypassing MovementSystem's building collision checks
+        pos.z -= vel.speed * dt;
+
+        // Set velocity for rotation display (face -Z)
         vel.x = 0;
         vel.z = -vel.speed;
-        // Clear any steering forces
+
+        // Clear steering forces so CollisionAvoidance/Movement don't interfere
         const steering = world.getComponent<SteeringComponent>(e, STEERING);
         if (steering) {
           steering.forceX = 0;
