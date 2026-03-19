@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { MATTER_DELIVERY, POSITION, HEALTH, MOVE_COMMAND, CONSTRUCTION, VOXEL_STATE, RESOURCE_SILO, BUILDING, FERRY_DOCK } from '@sim/components/ComponentTypes';
+import { MATTER_DELIVERY, POSITION, HEALTH, MOVE_COMMAND, CONSTRUCTION, VOXEL_STATE, RESOURCE_SILO, BUILDING, FERRY_DOCK, TEAM } from '@sim/components/ComponentTypes';
 import type { MatterDeliveryComponent } from '@sim/components/MatterDelivery';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
@@ -8,13 +8,21 @@ import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { ResourceSiloComponent } from '@sim/components/ResourceSilo';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
+import type { TeamComponent } from '@sim/components/Team';
 import type { FerryDockComponent } from '@sim/components/FerryDock';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
+import type { SiloSystem } from './SiloSystem';
 
 const ARRIVAL_DIST_SQ = 25.0; // 5 wu arrival threshold (matches SupplySystem)
 
 export class MatterDeliverySystem implements System {
   readonly name = 'MatterDeliverySystem';
+
+  private siloSystem: SiloSystem | null = null;
+
+  setSiloSystem(siloSystem: SiloSystem): void {
+    this.siloSystem = siloSystem;
+  }
 
   update(world: World, _dt: number): void {
     const entities = world.query(MATTER_DELIVERY, POSITION);
@@ -46,7 +54,19 @@ export class MatterDeliverySystem implements System {
           if (construction) {
             this.dockAtSite(world, e, delivery, construction);
           } else {
-            // Not a construction site — disappear as before
+            // Deposit matter at depot if carrying real resources
+            if (delivery.matterAmount > 0 && this.siloSystem) {
+              const team = world.getComponent<TeamComponent>(e, TEAM);
+              if (team) {
+                const depotSilo = this.siloSystem.findOrSpawnSilo(
+                  world, delivery.destEntity, 'matter', team.team,
+                );
+                if (depotSilo !== null) {
+                  const siloComp = world.getComponent<ResourceSiloComponent>(depotSilo, RESOURCE_SILO)!;
+                  siloComp.stored += delivery.matterAmount;
+                }
+              }
+            }
             world.destroyEntity(e);
           }
         } else {

@@ -107,6 +107,7 @@ export function spawnMatterFerry(
     destX: destPos.x,
     destZ: destPos.z,
     speed: ferryDef.speed,
+    matterAmount: 0, // Visual only — matter already deducted on spend
   });
 
   if (useGarageExit) {
@@ -123,4 +124,81 @@ export function spawnMatterFerry(
       destX: destPos.x, destZ: destPos.z,
     });
   }
+}
+
+/** Spawn a production shuttle that carries real matter from a plant silo to a depot.
+ *  Unlike spawnMatterFerry (visual-only), this shuttle deposits matterAmount on arrival. */
+export function spawnProductionShuttle(
+  world: World,
+  sourceEntity: number,
+  destEntity: number,
+  team: number,
+  terrain: TerrainData,
+  matterAmount: number,
+): void {
+  const sourcePos = world.getComponent<PositionComponent>(sourceEntity, POSITION);
+  const destPos = world.getComponent<PositionComponent>(destEntity, POSITION);
+  if (!sourcePos || !destPos) return;
+
+  const destHealth = world.getComponent<HealthComponent>(destEntity, HEALTH);
+  if (destHealth && destHealth.dead) return;
+
+  const ferryDef = UNIT_DEFS[UnitCategory.FerryDrone];
+
+  const spawnX = sourcePos.x;
+  const spawnZ = sourcePos.z;
+  const spawnY = terrain.getHeight(spawnX, spawnZ) + 0.02;
+
+  const e = world.createEntity();
+
+  world.addComponent<PositionComponent>(e, POSITION, {
+    x: spawnX, y: spawnY, z: spawnZ,
+    prevX: spawnX, prevY: spawnY, prevZ: spawnZ,
+    rotation: 0,
+  });
+
+  world.addComponent<VelocityComponent>(e, VELOCITY, {
+    x: 0, z: 0, speed: ferryDef.speed,
+  });
+
+  world.addComponent<SteeringComponent>(e, STEERING, { forceX: 0, forceZ: 0 });
+
+  world.addComponent<UnitTypeComponent>(e, UNIT_TYPE, {
+    category: UnitCategory.FerryDrone,
+    radius: ferryDef.radius,
+  });
+
+  world.addComponent<RenderableComponent>(e, RENDERABLE, {
+    meshType: 'ferry_drone',
+    color: TEAM_COLORS[team] ?? 0xffffff,
+    scale: 1.0,
+  });
+
+  world.addComponent<TeamComponent>(e, TEAM, { team });
+
+  const ferryModel = VOXEL_MODELS['ferry_drone'];
+  if (ferryModel) {
+    world.addComponent<VoxelStateComponent>(e, VOXEL_STATE, {
+      modelId: 'ferry_drone',
+      totalVoxels: ferryModel.totalSolid,
+      destroyedCount: 0,
+      destroyed: new Uint8Array(Math.ceil(ferryModel.totalSolid / 8)),
+      dirty: true,
+      pendingDebris: [],
+      pendingScorch: [],
+    });
+  }
+
+  world.addComponent<MatterDeliveryComponent>(e, MATTER_DELIVERY, {
+    destEntity,
+    destX: destPos.x,
+    destZ: destPos.z,
+    speed: ferryDef.speed,
+    matterAmount, // Real matter carried — deposited at depot on arrival
+  });
+
+  world.addComponent<MoveCommandComponent>(e, MOVE_COMMAND, {
+    path: [], currentWaypoint: 0,
+    destX: destPos.x, destZ: destPos.z,
+  });
 }

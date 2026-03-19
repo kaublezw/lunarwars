@@ -162,12 +162,15 @@ export class HeadlessEngine {
     this.world.addSystem(new HealthSystem());
     this.world.addSystem(new EnergyPacketSystem(this.resourceState));
     this.world.addSystem(new MatterPacketSystem(this.resourceState));
-    this.world.addSystem(new MatterDeliverySystem());
+    const matterDeliverySystem = new MatterDeliverySystem();
+    this.world.addSystem(matterDeliverySystem);
     this.world.addSystem(new FerryDockSystem());
     this.siloSystem = new SiloSystem(this.terrainData);
     this.world.addSystem(this.siloSystem);
+    matterDeliverySystem.setSiloSystem(this.siloSystem);
     const economySystem = new EconomySystem(this.resourceState, 2);
     economySystem.setSiloSystem(this.siloSystem);
+    economySystem.setTerrain(this.terrainData);
     this.world.addSystem(economySystem);
     const supplySystem = new SupplySystem(this.terrainData);
     supplySystem.setSiloSystem(this.siloSystem);
