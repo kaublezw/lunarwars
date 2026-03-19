@@ -16,7 +16,11 @@ export class GroundPlane {
 
     // 64 divisions = 4 world units per cell
     this.grid = new THREE.GridHelper(256, 64, 0x999999, 0x777777);
-    this.grid.position.set(128, 0.05, 128); // Y offset above terrain floor voxels
+    this.grid.position.set(128, 0.1, 128); // Above terrain floor voxels
+    // Render on top of terrain so grid lines are always visible
+    const gridMaterial = this.grid.material as THREE.Material;
+    gridMaterial.depthTest = false;
+    this.grid.renderOrder = 1;
   }
 
   addTo(scene: THREE.Scene): void {
