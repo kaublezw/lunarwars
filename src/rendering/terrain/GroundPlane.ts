@@ -1,30 +1,18 @@
 import * as THREE from 'three';
+import { GRID_CELL_SIZE } from '@sim/terrain/GridConstants';
+
+const GRID_DIVISIONS = 256 / GRID_CELL_SIZE;
 
 export class GroundPlane {
-  readonly mesh: THREE.Mesh;
   readonly grid: THREE.GridHelper;
 
   constructor() {
-    const geometry = new THREE.PlaneGeometry(256, 256);
-    const material = new THREE.MeshStandardMaterial({
-      color: 0x808080,
-      roughness: 0.9,
-    });
-    this.mesh = new THREE.Mesh(geometry, material);
-    this.mesh.rotation.x = -Math.PI / 2;
-    this.mesh.position.set(128, 0, 128); // Center at world midpoint
-
-    // 64 divisions = 4 world units per cell
-    this.grid = new THREE.GridHelper(256, 64, 0x999999, 0x777777);
-    this.grid.position.set(128, 0.1, 128); // Above terrain floor voxels
-    // Render on top of terrain so grid lines are always visible
-    const gridMaterial = this.grid.material as THREE.Material;
-    gridMaterial.depthTest = false;
-    this.grid.renderOrder = 1;
+    this.grid = new THREE.GridHelper(256, GRID_DIVISIONS, 0x999999, 0x777777);
+    this.grid.position.set(128, 0.05, 128); // Slightly above terrain floor
+    // depthTest enabled so buildings render on top of grid lines
   }
 
   addTo(scene: THREE.Scene): void {
-    scene.add(this.mesh);
     scene.add(this.grid);
   }
 }
