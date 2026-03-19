@@ -179,6 +179,16 @@ function clearWorkerCommands(world: World, workerEntity: number): void {
   }
 }
 
+const WORKER_BUILD_OFFSET = 3; // Worker stands this far from the build site
+
+/** Cardinal offsets for worker build positions, tried in order. */
+const BUILD_OFFSETS: [number, number][] = [
+  [0, -WORKER_BUILD_OFFSET],  // south
+  [-WORKER_BUILD_OFFSET, 0],  // west
+  [WORKER_BUILD_OFFSET, 0],   // east
+  [0, WORKER_BUILD_OFFSET],   // north
+];
+
 function issueWorkerBuild(
   world: World,
   workerEntity: number,
@@ -187,14 +197,19 @@ function issueWorkerBuild(
   z: number,
   siteEntity: number,
 ): void {
+  // Pick an adjacent offset position so the worker doesn't collide
+  // with a docked ferry or other entities at the build site.
+  const destX = x + BUILD_OFFSETS[0][0];
+  const destZ = z + BUILD_OFFSETS[0][1];
+
   if (world.hasComponent(workerEntity, MOVE_COMMAND)) {
     world.removeComponent(workerEntity, MOVE_COMMAND);
   }
   world.addComponent<MoveCommandComponent>(workerEntity, MOVE_COMMAND, {
     path: [],
     currentWaypoint: 0,
-    destX: x,
-    destZ: z,
+    destX,
+    destZ,
   });
 
   world.addComponent<BuildCommandComponent>(workerEntity, BUILD_COMMAND, {

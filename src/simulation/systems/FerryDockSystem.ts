@@ -1,15 +1,15 @@
 import type { System, World } from '@core/ECS';
 import {
   FERRY_DOCK, POSITION, CONSTRUCTION, VOXEL_STATE, MOVE_COMMAND,
-  VELOCITY, MATTER_DELIVERY, GARAGE_EXIT, HEALTH, STEERING,
+  VELOCITY, MATTER_DELIVERY, GARAGE_ENTER, HEALTH, STEERING,
 } from '@sim/components/ComponentTypes';
 import type { FerryDockComponent } from '@sim/components/FerryDock';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { PositionComponent } from '@sim/components/Position';
-import type { VoxelStateComponent, VoxelDebrisInfo } from '@sim/components/VoxelState';
+import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { VelocityComponent } from '@sim/components/Velocity';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
-import type { GarageExitComponent } from '@sim/components/GarageExit';
+import type { GarageEnterComponent } from '@sim/components/GarageEnter';
 import type { SteeringComponent } from '@sim/components/Steering';
 import type { HealthComponent } from '@sim/components/Health';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
@@ -129,6 +129,9 @@ export class FerryDockSystem implements System {
   }
 
   private handleReturn(world: World, ferry: number, dock: FerryDockComponent): void {
+    // Already entering garage — let GarageEnterSystem handle it
+    if (world.hasComponent(ferry, GARAGE_ENTER)) return;
+
     // Wait for movement to finish
     if (world.hasComponent(ferry, MOVE_COMMAND)) return;
 
@@ -142,21 +145,24 @@ export class FerryDockSystem implements System {
         const distSq = dx * dx + dz * dz;
 
         if (distSq <= 25) {
-          // Close enough to HQ — enter garage and be destroyed
-          // Move to HQ interior position
+          // Close enough to HQ — position at garage entrance and drive in
           ferryPos.x = hqPos.x;
-          ferryPos.z = hqPos.z - 0.5; // Inside garage (approaching from +Z)
+          ferryPos.z = hqPos.z + 2.5; // In front of the garage door
 
-          // Add GARAGE_EXIT in reverse: ferry enters from outside
-          // Actually, we just destroy it at the HQ position
-          world.destroyEntity(ferry);
+          // Remove FERRY_DOCK so this entity is fully managed by GarageEnterSystem
+          world.removeComponent(ferry, FERRY_DOCK);
+
+          world.addComponent<GarageEnterComponent>(ferry, GARAGE_ENTER, {
+            enterZ: hqPos.z + 0.5, // Interior position to reach
+            hqX: hqPos.x,
+          });
           return;
         }
 
         // Re-issue move command
         world.addComponent<MoveCommandComponent>(ferry, MOVE_COMMAND, {
           path: [], currentWaypoint: 0,
-          destX: hqPos.x, destZ: hqPos.z,
+          destX: hqPos.x, destZ: hqPos.z + 3, // Aim just in front of garage
         });
         return;
       }

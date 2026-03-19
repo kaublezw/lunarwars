@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, POSITION, PRODUCTION_QUEUE, CONSTRUCTION, VOXEL_STATE, DEATH_TIMER, GARAGE_EXIT } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, POSITION, PRODUCTION_QUEUE, CONSTRUCTION, VOXEL_STATE, DEATH_TIMER, GARAGE_EXIT, GARAGE_ENTER } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -284,15 +284,25 @@ export class GarageDoorRenderer {
     }
   }
 
-  /** Check if any entity with GARAGE_EXIT is near an HQ position (inside the garage). */
+  /** Check if any entity with GARAGE_EXIT or GARAGE_ENTER is near an HQ position. */
   private hasGarageExitNear(world: World, hqX: number, hqZ: number): boolean {
+    // Check exiting entities (inside the garage, moving +Z)
     const exiters = world.query(GARAGE_EXIT, POSITION);
     for (const e of exiters) {
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
       const dx = pos.x - hqX;
       const dz = pos.z - hqZ;
-      // Within a small radius of the HQ center and before the exit line
       if (dx * dx + dz * dz < 16 && pos.z < hqZ + 3) {
+        return true;
+      }
+    }
+    // Check entering entities (approaching from +Z, driving into garage)
+    const enterers = world.query(GARAGE_ENTER, POSITION);
+    for (const e of enterers) {
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = pos.x - hqX;
+      const dz = pos.z - hqZ;
+      if (dx * dx + dz * dz < 16 && pos.z < hqZ + 4) {
         return true;
       }
     }

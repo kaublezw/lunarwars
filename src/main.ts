@@ -19,6 +19,7 @@ import { EventBus } from '@core/EventBus';
 import { RenderSync } from '@render/RenderSync';
 import { EnergyNodeRenderer } from '@render/EnergyNodeRenderer';
 import { GarageExitSystem } from '@sim/systems/GarageExitSystem';
+import { GarageEnterSystem } from '@sim/systems/GarageEnterSystem';
 import { PathfindingSystem } from '@sim/systems/PathfindingSystem';
 import { CollisionAvoidanceSystem } from '@sim/systems/CollisionAvoidanceSystem';
 import { MovementSystem } from '@sim/systems/MovementSystem';
@@ -252,6 +253,7 @@ gameOverSystem.setCallback((losingTeam: number) => {
 }
 
 world.addSystem(new GarageExitSystem());
+world.addSystem(new GarageEnterSystem());
 world.addSystem(pathfindingSystem);
 world.addSystem(new CollisionAvoidanceSystem(simRng));
 world.addSystem(movementSystem);
