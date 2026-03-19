@@ -170,10 +170,11 @@ export class PlacementController {
     const worldPos = this.camera.screenToWorld(sx, sy);
     if (!worldPos) return;
 
-    let wx = worldPos.x;
-    let wz = worldPos.z;
+    // Snap to integer grid (1 world unit = 1 terrain tile)
+    let wx = Math.round(worldPos.x);
+    let wz = Math.round(worldPos.z);
 
-    // Snap to energy node or ore deposit if building requires one
+    // Snap to energy node or ore deposit if building requires one (overrides grid)
     const def = this.buildingType ? BUILDING_DEFS[this.buildingType] : null;
     if (def?.needsEnergyNode) {
       const closest = this.findClosestEnergyNode(wx, wz);
