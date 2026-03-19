@@ -30,10 +30,11 @@ export function validateAndSnapPlacement(
     occupiedSet.add(`${Math.round(pos.x)},${Math.round(pos.z)}`);
   }
 
-  let snappedX = x;
-  let snappedZ = z;
+  // Snap to integer grid (1 world unit = 1 terrain tile)
+  let snappedX = Math.round(x);
+  let snappedZ = Math.round(z);
 
-  // Snap to energy node if needed
+  // Snap to energy node if needed (overrides grid)
   if (def.needsEnergyNode) {
     const closest = findClosestUnoccupied(
       energyNodes, x, z, occupiedSet,
