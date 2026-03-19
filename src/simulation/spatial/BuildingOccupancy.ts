@@ -57,8 +57,8 @@ export class BuildingOccupancy {
         const isHQ = meshType === 'hq';
         for (let dz = -radius; dz <= radius; dz++) {
           for (let dx = -radius; dx <= radius; dx++) {
-            // Leave a 3-tile-wide corridor on +Z face for HQ garage door
-            if (isHQ && dx >= -1 && dx <= 1 && dz > 0) continue;
+            // Leave a 3-tile-wide corridor through HQ center and +Z face for garage door entry
+            if (isHQ && dx >= -1 && dx <= 1 && dz >= 0) continue;
             const tx = cx + dx;
             const tz = cz + dz;
             if (tx >= 0 && tx < this.width && tz >= 0 && tz < this.height) {
