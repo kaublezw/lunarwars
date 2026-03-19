@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, POSITION, PRODUCTION_QUEUE, CONSTRUCTION, VOXEL_STATE, DEATH_TIMER, GARAGE_EXIT, GARAGE_ENTER, FERRY_DOCK } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, POSITION, PRODUCTION_QUEUE, CONSTRUCTION, VOXEL_STATE, DEATH_TIMER, GARAGE_EXIT, FERRY_DOCK } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -297,26 +297,16 @@ export class GarageDoorRenderer {
         return true;
       }
     }
-    // Check entering entities (driving -Z into garage)
-    const enterers = world.query(GARAGE_ENTER, POSITION);
-    for (const e of enterers) {
-      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-      const dx = pos.x - hqX;
-      const dz = pos.z - hqZ;
-      if (dx * dx + dz * dz < 16 && pos.z < hqZ + 4) {
-        return true;
-      }
-    }
-    // Check returning ferries approaching the garage (opens door before arrival)
+    // Check returning ferries approaching or inside the garage corridor
     const ferries = world.query(FERRY_DOCK, POSITION);
     for (const f of ferries) {
       const dock = world.getComponent<FerryDockComponent>(f, FERRY_DOCK)!;
       if (!dock.returning) continue;
       const pos = world.getComponent<PositionComponent>(f, POSITION)!;
       const dx = pos.x - hqX;
-      const dz = pos.z - (hqZ + 2.5); // Distance to garage entrance
-      const distSq = dx * dx + dz * dz;
-      if (distSq < 16) { // Within 4 units of garage entrance
+      const dz = pos.z - hqZ;
+      // Open door when ferry is within 4 units of HQ center on +Z side
+      if (Math.abs(dx) < 3 && dz >= -1 && dz < 5) {
         return true;
       }
     }

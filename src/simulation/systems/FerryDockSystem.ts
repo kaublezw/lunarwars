@@ -1,7 +1,7 @@
 import type { System, World } from '@core/ECS';
 import {
   FERRY_DOCK, POSITION, CONSTRUCTION, VOXEL_STATE, MOVE_COMMAND,
-  VELOCITY, MATTER_DELIVERY, GARAGE_ENTER, HEALTH, STEERING,
+  VELOCITY, MATTER_DELIVERY, HEALTH,
 } from '@sim/components/ComponentTypes';
 import type { FerryDockComponent } from '@sim/components/FerryDock';
 import type { ConstructionComponent } from '@sim/components/Construction';
@@ -9,8 +9,6 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { VelocityComponent } from '@sim/components/Velocity';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
-import type { GarageEnterComponent } from '@sim/components/GarageEnter';
-import type { SteeringComponent } from '@sim/components/Steering';
 import type { HealthComponent } from '@sim/components/Health';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 
@@ -115,12 +113,12 @@ export class FerryDockSystem implements System {
     if (dock.homeHQ >= 0) {
       const hqPos = world.getComponent<PositionComponent>(dock.homeHQ, POSITION);
       if (hqPos) {
-        // Navigate to the garage entrance (hqZ + 2.5), aligned on X.
-        // Pathfinding will bring the ferry smoothly to this point, then
-        // handleReturn transitions to GarageEnterSystem with no teleport.
+        // Navigate into the HQ interior through the garage door corridor.
+        // The HQ footprint has a U-shaped opening on the +Z face, so
+        // pathfinding routes the ferry through the garage door naturally.
         world.addComponent<MoveCommandComponent>(ferry, MOVE_COMMAND, {
           path: [], currentWaypoint: 0,
-          destX: hqPos.x, destZ: hqPos.z + 2.5,
+          destX: hqPos.x, destZ: hqPos.z,
         });
         return;
       }
@@ -130,30 +128,11 @@ export class FerryDockSystem implements System {
     world.destroyEntity(ferry);
   }
 
-  private handleReturn(world: World, ferry: number, dock: FerryDockComponent): void {
-    // Already entering garage — let GarageEnterSystem handle it
-    if (world.hasComponent(ferry, GARAGE_ENTER)) return;
-
-    // Wait for movement to finish
+  private handleReturn(world: World, ferry: number, _dock: FerryDockComponent): void {
+    // Wait for movement to finish (ferry pathfinds into HQ interior)
     if (world.hasComponent(ferry, MOVE_COMMAND)) return;
 
-    // Ferry has arrived at the garage entrance via pathfinding.
-    // Transition directly to GARAGE_ENTER — no teleport needed since
-    // startReturn already targeted hqPos.z + 2.5.
-    if (dock.homeHQ >= 0) {
-      const hqPos = world.getComponent<PositionComponent>(dock.homeHQ, POSITION);
-      if (hqPos) {
-        world.removeComponent(ferry, FERRY_DOCK);
-
-        world.addComponent<GarageEnterComponent>(ferry, GARAGE_ENTER, {
-          enterZ: hqPos.z,
-          hqX: hqPos.x,
-        });
-        return;
-      }
-    }
-
-    // Fallback: destroy
+    // Ferry has arrived inside the HQ via normal pathfinding — destroy it
     world.destroyEntity(ferry);
   }
 }
