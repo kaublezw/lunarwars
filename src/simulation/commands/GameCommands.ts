@@ -130,7 +130,7 @@ function clearWorkerCommands(world: World, workerEntity: number): void {
   }
 }
 
-function issueWorkerBuild(
+export function issueWorkerBuild(
   world: World,
   workerEntity: number,
   type: BuildingType,

@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { POSITION, VELOCITY, UNIT_TYPE, STEERING } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, UNIT_TYPE, STEERING, GARAGE_EXIT } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { VelocityComponent } from '@sim/components/Velocity';
 import type { SteeringComponent } from '@sim/components/Steering';
@@ -62,11 +62,19 @@ export class MovementSystem implements System {
       pos.prevZ = pos.z;
 
       const isAerial = unitType?.category === UnitCategory.AerialDrone;
+      const isGarageExit = world.hasComponent(e, GARAGE_EXIT);
 
       if (isAerial) {
         pos.x += vel.x * dt;
         pos.z += vel.z * dt;
         pos.y = AERIAL_HEIGHT;
+      } else if (isGarageExit) {
+        // Garage-exiting units move straight through the HQ — skip occupancy/terrain checks
+        pos.x += vel.x * dt;
+        pos.z += vel.z * dt;
+        if (this.terrain) {
+          pos.y = this.terrain.getHeight(pos.x, pos.z) + 0.02;
+        }
       } else if (this.terrain) {
         const r = unitType?.radius ?? 0.25;
         const newX = pos.x + vel.x * dt;

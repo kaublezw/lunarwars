@@ -3,7 +3,7 @@ import {
   POSITION, UNIT_TYPE, HEALTH, TEAM, BUILDING,
   BUILD_COMMAND, CONSTRUCTION, SUPPLY_ROUTE,
   MATTER_STORAGE, RESUPPLY_SEEK, PRODUCTION_QUEUE,
-  REPAIR_COMMAND,
+  REPAIR_COMMAND, GARAGE_EXIT,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
@@ -47,6 +47,7 @@ export function getIdleWorkers(ctx: AIContext, state: AIWorldState): number[] {
   return state.myWorkers.filter(
     e => !ctx.world.hasComponent(e, BUILD_COMMAND)
       && !ctx.world.hasComponent(e, REPAIR_COMMAND)
+      && !ctx.world.hasComponent(e, GARAGE_EXIT)
   );
 }
 
@@ -176,10 +177,13 @@ export function assessWorldState(
     const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
 
     if (team.team === ctx.team) {
-      if (!myBuildings.has(building.buildingType)) {
-        myBuildings.set(building.buildingType, []);
+      // Only count completed buildings (not construction sites) in myBuildings
+      if (!ctx.world.hasComponent(e, CONSTRUCTION)) {
+        if (!myBuildings.has(building.buildingType)) {
+          myBuildings.set(building.buildingType, []);
+        }
+        myBuildings.get(building.buildingType)!.push(e);
       }
-      myBuildings.get(building.buildingType)!.push(e);
       if (building.buildingType === BuildingType.EnergyExtractor) {
         myExtractorPositions.push({ x: pos.x, z: pos.z });
       }

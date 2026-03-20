@@ -55,11 +55,20 @@ export class BuildSystem implements System {
         continue;
       }
 
-      // Check distance - pause if worker is too far
+      // Check distance - re-issue move if worker is too far
       const dx = workerPos.x - sitePos.x;
       const dz = workerPos.z - sitePos.z;
       const distSq = dx * dx + dz * dz;
-      if (distSq > BUILD_RANGE * BUILD_RANGE) continue;
+      if (distSq > BUILD_RANGE * BUILD_RANGE) {
+        if (!world.hasComponent(e, MOVE_COMMAND)) {
+          world.addComponent<MoveCommandComponent>(e, MOVE_COMMAND, {
+            path: [], currentWaypoint: 0,
+            destX: sitePos.x, destZ: sitePos.z,
+          });
+          cmd.state = 'moving';
+        }
+        continue;
+      }
 
       // Increment progress
       construction.progress += dt / construction.buildTime;

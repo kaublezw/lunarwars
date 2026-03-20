@@ -1,7 +1,9 @@
-import { POSITION, MOVE_COMMAND, UNIT_TYPE, RESUPPLY_SEEK, BUILDING, TEAM, HEALTH } from '@sim/components/ComponentTypes';
+import { POSITION, MOVE_COMMAND, UNIT_TYPE, RESUPPLY_SEEK, BUILDING, TEAM, HEALTH, CONSTRUCTION, BUILD_COMMAND } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
 import type { BuildingComponent } from '@sim/components/Building';
+import type { BuildCommandComponent } from '@sim/components/BuildCommand';
+import type { ConstructionComponent } from '@sim/components/Construction';
 import type { TeamComponent } from '@sim/components/Team';
 import type { HealthComponent } from '@sim/components/Health';
 
@@ -21,7 +23,7 @@ import {
 } from '@sim/ai/AILocationFinder';
 import { issueMove, assignRepair } from '@sim/ai/AIActions';
 import {
-  buildStructure, buildWallSegments, trainUnit,
+  buildStructure, buildWallSegments, trainUnit, issueWorkerBuild,
   type GameCommandContext,
 } from '@sim/commands/GameCommands';
 
@@ -54,10 +56,24 @@ export class EconomyManager {
     const idleWorkers = getIdleWorkers(ctx, state);
     if (idleWorkers.length === 0) return;
 
+    // Reassign idle workers to orphaned construction sites (no active builder)
+    const orphan = this.findOrphanedConstruction(ctx);
+    if (orphan) {
+      const worker = this.findClosestWorker(ctx, idleWorkers, orphan.x, orphan.z);
+      const construction = ctx.world.getComponent<ConstructionComponent>(orphan.entity, CONSTRUCTION)!;
+      construction.builderEntity = worker;
+      issueWorkerBuild(ctx.world, worker, orphan.type, orphan.x, orphan.z, orphan.entity);
+      return;
+    }
+
     // Repair critically damaged buildings before building new ones
     const damaged = getDamagedBuildings(ctx);
     if (damaged.length > 0 && damaged[0].hpFraction < 0.5) {
-      assignRepair(ctx, idleWorkers[0], damaged[0].entity);
+      const bldgPos = ctx.world.getComponent<PositionComponent>(damaged[0].entity, POSITION);
+      const repairWorker = bldgPos
+        ? this.findClosestWorker(ctx, idleWorkers, bldgPos.x, bldgPos.z)
+        : idleWorkers[0];
+      assignRepair(ctx, repairWorker, damaged[0].entity);
       return;
     }
 
@@ -94,14 +110,17 @@ export class EconomyManager {
 
     const cmdCtx = this.buildCmdCtx(ctx);
 
-    for (const rule of rules) {
+    for (let ri = 0; ri < rules.length; ri++) {
+      const rule = rules[ri];
       if (!rule.condition) continue;
 
       const location = findBuildLocation(ctx, rule.type, state, enemyMemory);
       if (!location) continue;
 
-      const success = buildStructure(cmdCtx, ctx.team, rule.type, location.x, location.z, idleWorkers[0]);
+      const closestWorker = this.findClosestWorker(ctx, idleWorkers, location.x, location.z);
+      const success = buildStructure(cmdCtx, ctx.team, rule.type, location.x, location.z, closestWorker);
       if (!success) {
+
         if (rule.save) return;
         continue;
       }
@@ -183,7 +202,8 @@ export class EconomyManager {
       const segments = plan.slice(0, maxNew);
       if (segments.length < 2) continue;
 
-      if (buildWallSegments(cmdCtx, ctx.team, segments, idleWorkers[0])) return;
+      const wallWorker = this.findClosestWorker(ctx, idleWorkers, segments[0].x, segments[0].z);
+      if (buildWallSegments(cmdCtx, ctx.team, segments, wallWorker)) return;
     }
   }
 
@@ -208,6 +228,55 @@ export class EconomyManager {
 
       trainUnit(cmdCtx, ctx.team, depot, UnitCategory.FerryDrone, hqPos.x, hqPos.z);
     }
+  }
+
+  private findClosestWorker(ctx: AIContext, workers: number[], x: number, z: number): number {
+    let best = workers[0];
+    let bestDistSq = Infinity;
+    for (const w of workers) {
+      const pos = ctx.world.getComponent<PositionComponent>(w, POSITION);
+      if (!pos) continue;
+      const dx = pos.x - x;
+      const dz = pos.z - z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        best = w;
+      }
+    }
+    return best;
+  }
+
+  private findOrphanedConstruction(ctx: AIContext): { entity: number; x: number; z: number; type: BuildingType } | null {
+    const sites = ctx.world.query(CONSTRUCTION, TEAM, POSITION, HEALTH);
+    for (const e of sites) {
+      const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (team.team !== ctx.team) continue;
+      const health = ctx.world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (health.dead) continue;
+
+      const construction = ctx.world.getComponent<ConstructionComponent>(e, CONSTRUCTION)!;
+      const builder = construction.builderEntity;
+
+      // Check if the assigned builder still exists and has a BUILD_COMMAND targeting this site
+      let hasActiveBuilder = false;
+      if (ctx.world.hasComponent(builder, BUILD_COMMAND)) {
+        const cmd = ctx.world.getComponent<BuildCommandComponent>(builder, BUILD_COMMAND)!;
+        if (cmd.siteEntity === e) {
+          hasActiveBuilder = true;
+        }
+      }
+
+      if (!hasActiveBuilder) {
+        const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
+        const building = ctx.world.getComponent<BuildingComponent>(e, BUILDING);
+        const bType = building
+          ? building.buildingType as BuildingType
+          : construction.buildingType as unknown as BuildingType;
+        return { entity: e, x: pos.x, z: pos.z, type: bType };
+      }
+    }
+    return null;
   }
 
   serialize(): Record<string, unknown> {

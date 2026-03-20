@@ -115,6 +115,27 @@ export function findLocationNear(
       }
       if (blocked) continue;
 
+      // Euclidean building spacing check (matches PlacementValidator BUILDING_MIN_SPACING=5)
+      const spacingSq = 5 * 5;
+      let tooClose = false;
+      const allBuildings = ctx.world.query(BUILDING, POSITION);
+      for (const e of allBuildings) {
+        const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
+        const bdx = pos.x - x;
+        const bdz = pos.z - z;
+        if (bdx * bdx + bdz * bdz < spacingSq) { tooClose = true; break; }
+      }
+      if (!tooClose) {
+        const allConstructions = ctx.world.query(CONSTRUCTION, POSITION);
+        for (const e of allConstructions) {
+          const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
+          const bdx = pos.x - x;
+          const bdz = pos.z - z;
+          if (bdx * bdx + bdz * bdz < spacingSq) { tooClose = true; break; }
+        }
+      }
+      if (tooClose) continue;
+
       return { x, z };
     }
   }
@@ -158,9 +179,15 @@ export function findEnergyNodeLocation(ctx: AIContext): { x: number; z: number }
   let bestNode: { x: number; z: number } | null = null;
   let bestDistSq = Infinity;
 
+  let exploredCount = 0;
+  let unexploredCount = 0;
   for (const node of ctx.energyNodes) {
     if (claimedNodes.has(`${node.x},${node.z}`)) continue;
-    if (!ctx.fog.isExplored(ctx.team, node.x, node.z)) continue;
+    if (!ctx.fog.isExplored(ctx.team, node.x, node.z)) {
+      unexploredCount++;
+      continue;
+    }
+    exploredCount++;
 
     const dx = node.x - ctx.baseX;
     const dz = node.z - ctx.baseZ;
@@ -168,6 +195,23 @@ export function findEnergyNodeLocation(ctx: AIContext): { x: number; z: number }
     if (distSq < bestDistSq) {
       bestDistSq = distSq;
       bestNode = { x: node.x, z: node.z };
+    }
+  }
+
+  // Fallback: consider unexplored nodes near base (within 40 wu)
+  let fallbackCount = 0;
+  if (!bestNode) {
+    for (const node of ctx.energyNodes) {
+      if (claimedNodes.has(`${node.x},${node.z}`)) continue;
+      const dx = node.x - ctx.baseX;
+      const dz = node.z - ctx.baseZ;
+      const distSq = dx * dx + dz * dz;
+      if (distSq > 40 * 40) continue;
+      fallbackCount++;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestNode = { x: node.x, z: node.z };
+      }
     }
   }
 
@@ -224,6 +268,21 @@ export function findOreDepositLocation(ctx: AIContext): { x: number; z: number }
     if (distSq < bestDistSq) {
       bestDistSq = distSq;
       bestDeposit = { x: dep.x, z: dep.z };
+    }
+  }
+
+  // Fallback: consider unexplored deposits near base (within 40 wu)
+  if (!bestDeposit) {
+    for (const dep of ctx.oreDeposits) {
+      if (claimedDeposits.has(`${dep.x},${dep.z}`)) continue;
+      const dx = dep.x - ctx.baseX;
+      const dz = dep.z - ctx.baseZ;
+      const distSq = dx * dx + dz * dz;
+      if (distSq > 40 * 40) continue;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestDeposit = { x: dep.x, z: dep.z };
+      }
     }
   }
 
