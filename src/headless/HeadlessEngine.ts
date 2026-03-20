@@ -54,7 +54,7 @@ import type { HeadlessConfig, GameResult } from './types';
 import type { AIAction, StepResult } from './RLTypes';
 import { RLActionType } from './RLTypes';
 import { extractObservation, clearMapGridCache } from './RLObservation';
-import { captureRewardState, calculateReward } from './RLReward';
+import { captureRewardState, RewardTracker } from './RLReward';
 
 const UNIT_CATEGORIES_BY_INDEX: UnitCategory[] = [
   UnitCategory.WorkerDrone,
@@ -73,6 +73,13 @@ const BUILDING_TYPES_BY_INDEX: (BuildingType | null)[] = [
   BuildingType.Wall,
 ];
 
+// Which building types can produce which unit categories
+const PRODUCTION_RULES: ReadonlyMap<BuildingType, readonly UnitCategory[]> = new Map([
+  [BuildingType.HQ, [UnitCategory.WorkerDrone]],
+  [BuildingType.DroneFactory, [UnitCategory.CombatDrone, UnitCategory.AssaultPlatform, UnitCategory.AerialDrone]],
+  [BuildingType.SupplyDepot, [UnitCategory.FerryDrone]],
+]);
+
 export class HeadlessEngine {
   private world!: World;
   private resourceState!: ResourceState;
@@ -83,6 +90,7 @@ export class HeadlessEngine {
   private oreDeposits!: OreDeposit[];
   private gameOverTeam: number | null = null;
   private tickCount = 0;
+  private rewardTracker!: RewardTracker;
 
   seed: number;
   private readonly maxTicks: number;
@@ -180,6 +188,9 @@ export class HeadlessEngine {
     this.resourceState.addMatter(0, 100);
     this.resourceState.addEnergy(1, 100);
     this.resourceState.addMatter(1, 100);
+
+    // Reward tracker (reset per episode)
+    this.rewardTracker = new RewardTracker(this.fogState);
   }
 
   // --- AI vs AI mode ---
@@ -217,7 +228,7 @@ export class HeadlessEngine {
   }
 
   step(actions: AIAction[]): StepResult {
-    const prevState = captureRewardState(this.world, this.resourceState, this.rlTeam);
+    const prevState = captureRewardState(this.world, this.resourceState, this.fogState, this.rlTeam, this.tickCount);
 
     // Apply all RL agent actions before ticking
     for (const action of actions) {
@@ -230,13 +241,13 @@ export class HeadlessEngine {
       if (this.gameOverTeam !== null) break;
     }
 
-    const currState = captureRewardState(this.world, this.resourceState, this.rlTeam);
+    const currState = captureRewardState(this.world, this.resourceState, this.fogState, this.rlTeam, this.tickCount);
 
     const done = this.gameOverTeam !== null;
     const truncated = !done && this.tickCount >= this.maxTicks;
     // gameOverTeam is the LOSING team, so winner is the OTHER team
     const winner = this.gameOverTeam !== null ? (this.gameOverTeam === this.rlTeam ? 1 - this.rlTeam : this.rlTeam) : null;
-    const reward = calculateReward(prevState, currState, done, winner, this.rlTeam);
+    const reward = this.rewardTracker.calculateReward(prevState, currState, done, winner, this.rlTeam);
 
     const observation = extractObservation(
       this.world, this.resourceState, this.fogState,
@@ -302,12 +313,12 @@ export class HeadlessEngine {
       }
 
       case RLActionType.TrainUnit: {
-        const entity = this.findNearestProductionBuilding(action.sourceX, action.sourceZ);
-        if (entity === null) break;
-
         const catIndex = Math.floor(action.param);
         if (catIndex < 0 || catIndex >= UNIT_CATEGORIES_BY_INDEX.length) break;
         const unitCategory = UNIT_CATEGORIES_BY_INDEX[catIndex];
+
+        const entity = this.findNearestProductionBuilding(action.sourceX, action.sourceZ, unitCategory);
+        if (entity === null) break;
 
         const pos = this.world.getComponent<PositionComponent>(entity, POSITION);
         const rallyX = pos ? pos.x : ctx.baseX;
@@ -325,7 +336,28 @@ export class HeadlessEngine {
         const buildingType = BUILDING_TYPES_BY_INDEX[typeIndex];
         if (!buildingType) break;
 
-        buildStructure(this.buildCmdCtx(), this.rlTeam, buildingType, action.targetX, action.targetZ, entity);
+        let buildX: number;
+        let buildZ: number;
+
+        if (buildingType === BuildingType.EnergyExtractor) {
+          // Index-based: targetX is a direct index into energyNodes array
+          const nodeIndex = Math.floor(action.targetX);
+          if (nodeIndex < 0 || nodeIndex >= this.energyNodes.length) break;
+          buildX = this.energyNodes[nodeIndex].x;
+          buildZ = this.energyNodes[nodeIndex].z;
+        } else if (buildingType === BuildingType.MatterPlant) {
+          // Index-based: targetX is a direct index into oreDeposits array
+          const depositIndex = Math.floor(action.targetX);
+          if (depositIndex < 0 || depositIndex >= this.oreDeposits.length) break;
+          buildX = this.oreDeposits[depositIndex].x;
+          buildZ = this.oreDeposits[depositIndex].z;
+        } else {
+          // Other buildings (SupplyDepot, DroneFactory, Wall): world coordinates
+          buildX = action.targetX;
+          buildZ = action.targetZ;
+        }
+
+        buildStructure(this.buildCmdCtx(), this.rlTeam, buildingType, buildX, buildZ, entity);
         break;
       }
     }
@@ -352,7 +384,7 @@ export class HeadlessEngine {
     return best;
   }
 
-  private findNearestProductionBuilding(x: number, z: number): number | null {
+  private findNearestProductionBuilding(x: number, z: number, unitCategory: UnitCategory): number | null {
     let best: number | null = null;
     let bestDist = Infinity;
     const entities = this.world.query(POSITION, TEAM, BUILDING, HEALTH);
@@ -364,9 +396,9 @@ export class HeadlessEngine {
       // Skip buildings under construction
       if (this.world.getComponent(e, CONSTRUCTION)) continue;
       const bldg = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (bldg.buildingType !== BuildingType.HQ &&
-          bldg.buildingType !== BuildingType.DroneFactory &&
-          bldg.buildingType !== BuildingType.SupplyDepot) continue;
+      // Only consider buildings that can produce the requested unit
+      const allowed = PRODUCTION_RULES.get(bldg.buildingType);
+      if (!allowed || !allowed.includes(unitCategory)) continue;
       const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
       const dx = pos.x - x;
       const dz = pos.z - z;

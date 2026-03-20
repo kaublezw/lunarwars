@@ -232,7 +232,13 @@ class LunarWarsEnv(gym.Env):
         return obs
 
     def _build_actions(self, action: np.ndarray) -> list[dict]:
-        """Convert MultiDiscrete action array (24 values) to list of ZMQ AIAction dicts."""
+        """Convert MultiDiscrete action array (24 values) to list of ZMQ AIAction dicts.
+
+        For BuildStructure (actionType=4) with resource buildings (param 1=Extractor,
+        param 2=MatterPlant), targetX is passed as a direct index into the
+        energyNodes/oreDeposits arrays instead of world coordinates. The server
+        uses the index to look up the exact node position.
+        """
         actions = []
         cell_size = 256.0 / MAP_GRID_SIZE
         for i in range(MAX_ACTIONS_PER_STEP):
@@ -246,8 +252,14 @@ class LunarWarsEnv(gym.Env):
 
             source_x = (src_grid_x + 0.5) * cell_size
             source_z = (src_grid_z + 0.5) * cell_size
-            target_x = (tgt_grid_x + 0.5) * cell_size
-            target_z = (tgt_grid_z + 0.5) * cell_size
+
+            # Resource buildings use index-based targeting (tgtGridX = node index)
+            if action_type == 4 and param in (1, 2):
+                target_x = float(tgt_grid_x)
+                target_z = 0.0  # unused by server for resource buildings
+            else:
+                target_x = (tgt_grid_x + 0.5) * cell_size
+                target_z = (tgt_grid_z + 0.5) * cell_size
 
             actions.append({
                 "actionType": action_type,
