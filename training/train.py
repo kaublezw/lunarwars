@@ -40,10 +40,10 @@ def make_env(port: int, ticks_per_step: int, max_ticks: int, game_dir: str, auto
 
 def main():
     parser = argparse.ArgumentParser(description="Train Lunar Wars RL agent with PPO")
-    parser.add_argument("--timesteps", type=int, default=500_000, help="Total training timesteps")
+    parser.add_argument("--timesteps", type=int, default=1_000_000, help="Total training timesteps")
     parser.add_argument("--port", type=int, default=5555, help="ZMQ server port")
-    parser.add_argument("--ticks-per-step", type=int, default=30, help="Game ticks per RL step (30 = 0.5s)")
-    parser.add_argument("--max-ticks", type=int, default=18000, help="Max ticks per episode (18000 = 5min)")
+    parser.add_argument("--ticks-per-step", type=int, default=120, help="Game ticks per RL step (120 = 2s)")
+    parser.add_argument("--max-ticks", type=int, default=54000, help="Max ticks per episode (54000 = 15min)")
     parser.add_argument("--game-dir", type=str, default=None, help="Path to LunarWars project root")
     parser.add_argument("--no-auto-start", action="store_true", help="Don't auto-start game server")
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")

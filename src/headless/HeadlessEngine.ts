@@ -25,7 +25,7 @@ import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { FogOfWarSystem } from '@sim/systems/FogOfWarSystem';
 import { AISystem } from '@sim/systems/AIBrain';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, CONSTRUCTION } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, CONSTRUCTION, BUILD_COMMAND } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
@@ -248,7 +248,7 @@ export class HeadlessEngine {
     const truncated = !done && this.tickCount >= this.maxTicks;
     // gameOverTeam is the LOSING team, so winner is the OTHER team
     const winner = this.gameOverTeam !== null ? (this.gameOverTeam === this.rlTeam ? 1 - this.rlTeam : this.rlTeam) : null;
-    const reward = this.rewardTracker.calculateReward(prevState, currState, done, winner, this.rlTeam);
+    const reward = this.rewardTracker.calculateReward(prevState, currState, done, truncated, winner, this.rlTeam);
 
     const observation = extractObservation(
       this.world, this.resourceState, this.fogState,
@@ -309,6 +309,8 @@ export class HeadlessEngine {
       case RLActionType.AttackMove: {
         const entity = this.findNearestUnit(action.sourceX, action.sourceZ);
         if (entity === null) break;
+        // Don't interrupt workers that are building
+        if (this.world.getComponent(entity, BUILD_COMMAND)) break;
         issueMove(ctx, entity, action.targetX, action.targetZ);
         break;
       }

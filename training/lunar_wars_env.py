@@ -63,8 +63,8 @@ class LunarWarsEnv(gym.Env):
     def __init__(
         self,
         port: int = 5555,
-        ticks_per_step: int = 30,
-        max_ticks: int = 18000,
+        ticks_per_step: int = 120,
+        max_ticks: int = 54000,
         game_dir: Optional[str] = None,
         auto_start: bool = True,
         server_startup_wait: float = 3.0,

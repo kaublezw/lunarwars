@@ -11,7 +11,7 @@ import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import {
-  POSITION, TEAM, UNIT_TYPE, HEALTH, BUILDING, TURRET, CONSTRUCTION,
+  POSITION, TEAM, UNIT_TYPE, HEALTH, BUILDING, TURRET, CONSTRUCTION, BUILD_COMMAND,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { TeamComponent } from '@sim/components/Team';
@@ -391,6 +391,8 @@ export class RLAISystem implements System {
       // MoveUnit / AttackMove
       const entity = this.findNearestUnit(world, srcWorldX, srcWorldZ);
       if (entity === null) return;
+      // Don't interrupt workers that are building
+      if (world.getComponent(entity, BUILD_COMMAND)) return;
       issueMove(ctx, entity, tgtWorldX, tgtWorldZ);
     } else if (actionType === 3) {
       // TrainUnit
@@ -414,15 +416,15 @@ export class RLAISystem implements System {
       let buildZ = tgtWorldZ;
 
       if (buildingType === BuildingType.EnergyExtractor) {
-        const nodeIndex = Math.floor(tgtGridX);
-        if (nodeIndex < 0 || nodeIndex >= this.energyNodes.length) return;
-        buildX = this.energyNodes[nodeIndex].x;
-        buildZ = this.energyNodes[nodeIndex].z;
+        const node = this.findNearestUnclaimedNode(world, this.energyNodes);
+        if (!node) return;
+        buildX = node.x;
+        buildZ = node.z;
       } else if (buildingType === BuildingType.MatterPlant) {
-        const depositIndex = Math.floor(tgtGridX);
-        if (depositIndex < 0 || depositIndex >= this.oreDeposits.length) return;
-        buildX = this.oreDeposits[depositIndex].x;
-        buildZ = this.oreDeposits[depositIndex].z;
+        const deposit = this.findNearestUnclaimedNode(world, this.oreDeposits);
+        if (!deposit) return;
+        buildX = deposit.x;
+        buildZ = deposit.z;
       }
 
       // Find nearest worker to the build site
@@ -501,6 +503,35 @@ export class RLAISystem implements System {
       if (dx * dx + dz * dz < BUILDING_MIN_SPACING_SQ) return false;
     }
     return true;
+  }
+
+  private findNearestUnclaimedNode(world: World, nodes: Array<{ x: number; z: number }>): { x: number; z: number } | null {
+    let baseX = this.team === 0 ? 64 : 192;
+    let baseZ = this.team === 0 ? 64 : 192;
+    const buildings = world.query(BUILDING, TEAM, POSITION);
+    for (const e of buildings) {
+      const bldg = world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (bldg.buildingType !== BuildingType.HQ) continue;
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== this.team) continue;
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      baseX = pos.x;
+      baseZ = pos.z;
+      break;
+    }
+    let best: { x: number; z: number } | null = null;
+    let bestDist = Infinity;
+    for (const node of nodes) {
+      if (!this.isUnclaimed(world, node.x, node.z)) continue;
+      const dx = node.x - baseX;
+      const dz = node.z - baseZ;
+      const dist = dx * dx + dz * dz;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = node;
+      }
+    }
+    return best;
   }
 
   private findNearestWorker(world: World, x: number, z: number): number | null {
