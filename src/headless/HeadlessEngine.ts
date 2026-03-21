@@ -64,6 +64,8 @@ const UNIT_CATEGORIES_BY_INDEX: UnitCategory[] = [
   UnitCategory.FerryDrone,
 ];
 
+const BUILDING_MIN_SPACING_SQ = 25; // 5 world units squared
+
 const BUILDING_TYPES_BY_INDEX: (BuildingType | null)[] = [
   null, // 0 = unused (HQ can't be built)
   BuildingType.EnergyExtractor,
@@ -77,7 +79,6 @@ const BUILDING_TYPES_BY_INDEX: (BuildingType | null)[] = [
 const PRODUCTION_RULES: ReadonlyMap<BuildingType, readonly UnitCategory[]> = new Map([
   [BuildingType.HQ, [UnitCategory.WorkerDrone]],
   [BuildingType.DroneFactory, [UnitCategory.CombatDrone, UnitCategory.AssaultPlatform, UnitCategory.AerialDrone]],
-  [BuildingType.SupplyDepot, [UnitCategory.FerryDrone]],
 ]);
 
 export class HeadlessEngine {
@@ -320,6 +321,13 @@ export class HeadlessEngine {
         const entity = this.findNearestProductionBuilding(action.sourceX, action.sourceZ, unitCategory);
         if (entity === null) break;
 
+        // Enforce production rules: HQ can only train workers, DroneFactory cannot train workers
+        const bldg = this.world.getComponent<BuildingComponent>(entity, BUILDING);
+        if (bldg) {
+          if (bldg.buildingType === BuildingType.HQ && unitCategory !== UnitCategory.WorkerDrone) break;
+          if (bldg.buildingType === BuildingType.DroneFactory && unitCategory === UnitCategory.WorkerDrone) break;
+        }
+
         const pos = this.world.getComponent<PositionComponent>(entity, POSITION);
         const rallyX = pos ? pos.x : ctx.baseX;
         const rallyZ = pos ? pos.z + 5 : ctx.baseZ;
@@ -328,9 +336,6 @@ export class HeadlessEngine {
       }
 
       case RLActionType.BuildStructure: {
-        const entity = this.findNearestWorker(action.sourceX, action.sourceZ);
-        if (entity === null) break;
-
         const typeIndex = Math.floor(action.param);
         if (typeIndex < 1 || typeIndex >= BUILDING_TYPES_BY_INDEX.length) break;
         const buildingType = BUILDING_TYPES_BY_INDEX[typeIndex];
@@ -340,22 +345,26 @@ export class HeadlessEngine {
         let buildZ: number;
 
         if (buildingType === BuildingType.EnergyExtractor) {
-          // Index-based: targetX is a direct index into energyNodes array
-          const nodeIndex = Math.floor(action.targetX);
-          if (nodeIndex < 0 || nodeIndex >= this.energyNodes.length) break;
-          buildX = this.energyNodes[nodeIndex].x;
-          buildZ = this.energyNodes[nodeIndex].z;
+          // Macro: find nearest unclaimed energy node to HQ
+          const node = this.findNearestUnclaimedNode(this.energyNodes);
+          if (!node) break;
+          buildX = node.x;
+          buildZ = node.z;
         } else if (buildingType === BuildingType.MatterPlant) {
-          // Index-based: targetX is a direct index into oreDeposits array
-          const depositIndex = Math.floor(action.targetX);
-          if (depositIndex < 0 || depositIndex >= this.oreDeposits.length) break;
-          buildX = this.oreDeposits[depositIndex].x;
-          buildZ = this.oreDeposits[depositIndex].z;
+          // Macro: find nearest unclaimed ore deposit to HQ
+          const deposit = this.findNearestUnclaimedNode(this.oreDeposits);
+          if (!deposit) break;
+          buildX = deposit.x;
+          buildZ = deposit.z;
         } else {
-          // Other buildings (SupplyDepot, DroneFactory, Wall): world coordinates
+          // Other buildings: use agent's target coordinates
           buildX = action.targetX;
           buildZ = action.targetZ;
         }
+
+        // Find nearest worker to the build site (not sourceX/sourceZ)
+        const entity = this.findNearestWorker(buildX, buildZ);
+        if (entity === null) break;
 
         buildStructure(this.buildCmdCtx(), this.rlTeam, buildingType, buildX, buildZ, entity);
         break;
@@ -429,6 +438,58 @@ export class HeadlessEngine {
       if (dist < bestDist) {
         bestDist = dist;
         best = e;
+      }
+    }
+    return best;
+  }
+
+  private isUnclaimed(x: number, z: number): boolean {
+    const buildings = this.world.query(POSITION, BUILDING, HEALTH);
+    for (const e of buildings) {
+      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (health.dead) continue;
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = pos.x - x;
+      const dz = pos.z - z;
+      if (dx * dx + dz * dz < BUILDING_MIN_SPACING_SQ) return false;
+    }
+    const constructions = this.world.query(POSITION, CONSTRUCTION);
+    for (const e of constructions) {
+      if (this.world.getComponent(e, BUILDING)) continue;
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = pos.x - x;
+      const dz = pos.z - z;
+      if (dx * dx + dz * dz < BUILDING_MIN_SPACING_SQ) return false;
+    }
+    return true;
+  }
+
+  private findNearestUnclaimedNode(nodes: Array<{ x: number; z: number }>): { x: number; z: number } | null {
+    // Find HQ position for distance sorting
+    let baseX = this.rlTeam === 0 ? 64 : 192;
+    let baseZ = this.rlTeam === 0 ? 64 : 192;
+    const buildings = this.world.query(BUILDING, TEAM, POSITION);
+    for (const e of buildings) {
+      const bldg = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (bldg.buildingType !== BuildingType.HQ) continue;
+      const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== this.rlTeam) continue;
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      baseX = pos.x;
+      baseZ = pos.z;
+      break;
+    }
+
+    let best: { x: number; z: number } | null = null;
+    let bestDist = Infinity;
+    for (const node of nodes) {
+      if (!this.isUnclaimed(node.x, node.z)) continue;
+      const dx = node.x - baseX;
+      const dz = node.z - baseZ;
+      const dist = dx * dx + dz * dz;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = node;
       }
     }
     return best;

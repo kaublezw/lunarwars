@@ -233,33 +233,11 @@ export class RLAISystem implements System {
     }
     const allBuildings = [...ownBuildings, ...enemyBuildings];
 
-    // Compute action mask into temp buffer (needs building positions)
+    // Compute action mask into temp buffer
     const actionMaskBuf = new Float32Array(ACTION_MASK_SIZE);
     {
-      const buildingPositions: Array<{ x: number; z: number }> = [];
-      const bldgEntities = world.query(POSITION, BUILDING, HEALTH);
-      for (const e of bldgEntities) {
-        const health = world.getComponent<HealthComponent>(e, HEALTH)!;
-        if (health.dead) continue;
-        const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-        buildingPositions.push({ x: pos.x, z: pos.z });
-      }
-      const constrEntities = world.query(POSITION, CONSTRUCTION);
-      for (const e of constrEntities) {
-        const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-        if (world.getComponent(e, BUILDING)) continue;
-        buildingPositions.push({ x: pos.x, z: pos.z });
-      }
-      const isUnclaimed = (nx: number, nz: number): boolean => {
-        for (const bp of buildingPositions) {
-          const dx = bp.x - nx;
-          const dz = bp.z - nz;
-          if (dx * dx + dz * dz < BUILDING_MIN_SPACING_SQ) return false;
-        }
-        return true;
-      };
       for (const node of this.energyNodes) {
-        if (!isUnclaimed(node.x, node.z)) continue;
+        if (!this.isUnclaimed(world, node.x, node.z)) continue;
         const gx = Math.floor(node.x / cellSize);
         const gz = Math.floor(node.z / cellSize);
         if (gx >= 0 && gx < MAP_GRID_SIZE && gz >= 0 && gz < MAP_GRID_SIZE) {
@@ -267,7 +245,7 @@ export class RLAISystem implements System {
         }
       }
       for (const deposit of this.oreDeposits) {
-        if (!isUnclaimed(deposit.x, deposit.z)) continue;
+        if (!this.isUnclaimed(world, deposit.x, deposit.z)) continue;
         const gx = Math.floor(deposit.x / cellSize);
         const gz = Math.floor(deposit.z / cellSize);
         if (gx >= 0 && gx < MAP_GRID_SIZE && gz >= 0 && gz < MAP_GRID_SIZE) {
@@ -313,15 +291,45 @@ export class RLAISystem implements System {
       gameStateBuf[11] = hasProd;
     }
 
-    // --- Write into Float32Array in alphabetical key order ---
-    // actionMask, buildingData, energyGrid, gameState, mapGrid, oreGrid, resources, tick, unitData
+    // --- Write into Float32Array matching Python _parse_observation order ---
+    // resources, mapGrid, energyGrid, oreGrid, unitData, buildingData, gameState, actionMask, tick
     let idx = 0;
 
-    // 1. actionMask (1024)
-    obs.set(actionMaskBuf, idx);
-    idx += ACTION_MASK_SIZE;
+    // 1. resources (4)
+    obs[idx++] = res.energy / 1000;
+    obs[idx++] = res.matter / 1000;
+    obs[idx++] = res.energyRate / 1000;
+    obs[idx++] = res.matterRate / 1000;
 
-    // 2. buildingData (800)
+    // 2. mapGrid (1024)
+    obs.set(this.cachedMapGrid, idx);
+    idx += MAP_GRID_SIZE * MAP_GRID_SIZE;
+
+    // 3. energyGrid (1024)
+    obs.set(this.cachedEnergyGrid, idx);
+    idx += MAP_GRID_SIZE * MAP_GRID_SIZE;
+
+    // 4. oreGrid (1024)
+    obs.set(this.cachedOreGrid, idx);
+    idx += MAP_GRID_SIZE * MAP_GRID_SIZE;
+
+    // 5. unitData (900)
+    for (let i = 0; i < Math.min(allUnits.length, MAX_UNITS); i++) {
+      const [entityId, team, catIdx, px, pz, hp, maxHp, ammo, maxAmmo] = allUnits[i];
+      const base = idx + i * UNIT_FEATURES;
+      obs[base + 0] = entityId / 1000;
+      obs[base + 1] = team === this.team ? 1.0 : 0.0;
+      obs[base + 2] = catIdx / 4;
+      obs[base + 3] = px / 256;
+      obs[base + 4] = pz / 256;
+      obs[base + 5] = maxHp > 0 ? hp / maxHp : 0;
+      obs[base + 6] = maxHp / 2000;
+      obs[base + 7] = maxAmmo > 0 && ammo >= 0 ? ammo / maxAmmo : 0;
+      obs[base + 8] = maxAmmo > 0 ? maxAmmo / 50 : 0;
+    }
+    idx += MAX_UNITS * UNIT_FEATURES;
+
+    // 6. buildingData (800)
     for (let i = 0; i < Math.min(allBuildings.length, MAX_BUILDINGS); i++) {
       const [entityId, team, typeIdx, px, pz, hp, maxHp, progress] = allBuildings[i];
       const base = idx + i * BUILDING_FEATURES;
@@ -336,45 +344,18 @@ export class RLAISystem implements System {
     }
     idx += MAX_BUILDINGS * BUILDING_FEATURES;
 
-    // 3. energyGrid (1024)
-    obs.set(this.cachedEnergyGrid, idx);
-    idx += MAP_GRID_SIZE * MAP_GRID_SIZE;
-
-    // 4. gameState (12)
+    // 7. gameState (12)
     obs.set(gameStateBuf, idx);
     idx += GAME_STATE_FEATURES;
 
-    // 5. mapGrid (1024)
-    obs.set(this.cachedMapGrid, idx);
-    idx += MAP_GRID_SIZE * MAP_GRID_SIZE;
-
-    // 6. oreGrid (1024)
-    obs.set(this.cachedOreGrid, idx);
-    idx += MAP_GRID_SIZE * MAP_GRID_SIZE;
-
-    // 7. resources (4)
-    obs[idx++] = res.energy / 1000;
-    obs[idx++] = res.matter / 1000;
-    obs[idx++] = res.energyRate / 1000;
-    obs[idx++] = res.matterRate / 1000;
-
-    // 8. tick (1)
-    obs[idx++] = this.tickCount / MAX_TICKS;
-
-    // 9. unitData (900)
-    for (let i = 0; i < Math.min(allUnits.length, MAX_UNITS); i++) {
-      const [entityId, team, catIdx, px, pz, hp, maxHp, ammo, maxAmmo] = allUnits[i];
-      const base = idx + i * UNIT_FEATURES;
-      obs[base + 0] = entityId / 1000;
-      obs[base + 1] = team === this.team ? 1.0 : 0.0;
-      obs[base + 2] = catIdx / 4;
-      obs[base + 3] = px / 256;
-      obs[base + 4] = pz / 256;
-      obs[base + 5] = maxHp > 0 ? hp / maxHp : 0;
-      obs[base + 6] = maxHp / 2000;
-      obs[base + 7] = maxAmmo > 0 && ammo >= 0 ? ammo / maxAmmo : 0;
-      obs[base + 8] = maxAmmo > 0 ? maxAmmo / 50 : 0;
+    // 8. actionMask (1024, normalized by /2.0)
+    for (let i = 0; i < ACTION_MASK_SIZE; i++) {
+      obs[idx + i] = actionMaskBuf[i] / 2.0;
     }
+    idx += ACTION_MASK_SIZE;
+
+    // 9. tick (1)
+    obs[idx] = this.tickCount / MAX_TICKS;
 
     return obs;
   }
@@ -413,10 +394,10 @@ export class RLAISystem implements System {
       issueMove(ctx, entity, tgtWorldX, tgtWorldZ);
     } else if (actionType === 3) {
       // TrainUnit
-      const entity = this.findNearestProductionBuilding(world, srcWorldX, srcWorldZ);
-      if (entity === null) return;
       const catIdx = Math.min(param, 4);
       const unitCategory = UNIT_CATEGORIES_BY_INDEX[catIdx];
+      const entity = this.findNearestProductionBuilding(world, srcWorldX, srcWorldZ, unitCategory);
+      if (entity === null) return;
 
       const pos = world.getComponent<PositionComponent>(entity, POSITION);
       const rallyX = pos ? pos.x : ctx.baseX;
@@ -424,14 +405,31 @@ export class RLAISystem implements System {
       trainUnit(cmdCtx, this.team, entity, unitCategory, rallyX, rallyZ);
     } else if (actionType === 4) {
       // BuildStructure
-      const entity = this.findNearestWorker(world, srcWorldX, srcWorldZ);
-      if (entity === null) return;
-
-      const typeIdx = Math.max(1, Math.min(param, 5));
+      const typeIdx = Math.floor(param);
+      if (typeIdx < 1 || typeIdx >= BUILDING_TYPES_BY_INDEX.length) return;
       const buildingType = BUILDING_TYPES_BY_INDEX[typeIdx];
       if (!buildingType) return;
 
-      buildStructure(cmdCtx, this.team, buildingType, tgtWorldX, tgtWorldZ, entity);
+      let buildX = tgtWorldX;
+      let buildZ = tgtWorldZ;
+
+      if (buildingType === BuildingType.EnergyExtractor) {
+        const nodeIndex = Math.floor(tgtGridX);
+        if (nodeIndex < 0 || nodeIndex >= this.energyNodes.length) return;
+        buildX = this.energyNodes[nodeIndex].x;
+        buildZ = this.energyNodes[nodeIndex].z;
+      } else if (buildingType === BuildingType.MatterPlant) {
+        const depositIndex = Math.floor(tgtGridX);
+        if (depositIndex < 0 || depositIndex >= this.oreDeposits.length) return;
+        buildX = this.oreDeposits[depositIndex].x;
+        buildZ = this.oreDeposits[depositIndex].z;
+      }
+
+      // Find nearest worker to the build site
+      const entity = this.findNearestWorker(world, buildX, buildZ);
+      if (entity === null) return;
+
+      buildStructure(cmdCtx, this.team, buildingType, buildX, buildZ, entity);
     }
   }
 
@@ -456,7 +454,7 @@ export class RLAISystem implements System {
     return best;
   }
 
-  private findNearestProductionBuilding(world: World, x: number, z: number): number | null {
+  private findNearestProductionBuilding(world: World, x: number, z: number, unitCategory: UnitCategory): number | null {
     let best: number | null = null;
     let bestDist = Infinity;
     const entities = world.query(POSITION, TEAM, BUILDING, HEALTH);
@@ -468,8 +466,10 @@ export class RLAISystem implements System {
       if (world.getComponent(e, CONSTRUCTION)) continue;
       const bldg = world.getComponent<BuildingComponent>(e, BUILDING)!;
       if (bldg.buildingType !== BuildingType.HQ &&
-          bldg.buildingType !== BuildingType.DroneFactory &&
-          bldg.buildingType !== BuildingType.SupplyDepot) continue;
+          bldg.buildingType !== BuildingType.DroneFactory) continue;
+      // Enforce production rules: HQ only trains workers, DroneFactory cannot train workers
+      if (bldg.buildingType === BuildingType.HQ && unitCategory !== UnitCategory.WorkerDrone) continue;
+      if (bldg.buildingType === BuildingType.DroneFactory && unitCategory === UnitCategory.WorkerDrone) continue;
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
       const dx = pos.x - x;
       const dz = pos.z - z;
@@ -480,6 +480,27 @@ export class RLAISystem implements System {
       }
     }
     return best;
+  }
+
+  private isUnclaimed(world: World, x: number, z: number): boolean {
+    const buildings = world.query(POSITION, BUILDING, HEALTH);
+    for (const e of buildings) {
+      const health = world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (health.dead) continue;
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = pos.x - x;
+      const dz = pos.z - z;
+      if (dx * dx + dz * dz < BUILDING_MIN_SPACING_SQ) return false;
+    }
+    const constructions = world.query(POSITION, CONSTRUCTION);
+    for (const e of constructions) {
+      if (world.getComponent(e, BUILDING)) continue;
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = pos.x - x;
+      const dz = pos.z - z;
+      if (dx * dx + dz * dz < BUILDING_MIN_SPACING_SQ) return false;
+    }
+    return true;
   }
 
   private findNearestWorker(world: World, x: number, z: number): number | null {
