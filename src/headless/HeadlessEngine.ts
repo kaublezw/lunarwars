@@ -485,6 +485,7 @@ export class HeadlessEngine {
     let best: { x: number; z: number } | null = null;
     let bestDist = Infinity;
     for (const node of nodes) {
+      if (!this.fogState.isExplored(this.rlTeam, node.x, node.z)) continue;
       if (!this.isUnclaimed(node.x, node.z)) continue;
       const dx = node.x - baseX;
       const dz = node.z - baseZ;
