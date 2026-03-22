@@ -44,14 +44,10 @@ const BUILDING_TYPE_INDEX: Record<string, number> = {
 };
 
 let cachedMapGrid: number[] | null = null;
-let cachedEnergyGrid: number[] | null = null;
-let cachedOreGrid: number[] | null = null;
 let cachedGridSize = 0;
 
 export function clearMapGridCache(): void {
   cachedMapGrid = null;
-  cachedEnergyGrid = null;
-  cachedOreGrid = null;
 }
 
 function buildMapGrid(terrainData: TerrainData, gridSize: number): number[] {
@@ -74,13 +70,12 @@ function buildMapGrid(terrainData: TerrainData, gridSize: number): number[] {
   return grid;
 }
 
-function buildEnergyGrid(energyNodes: EnergyNode[], gridSize: number): number[] {
-  if (cachedEnergyGrid && cachedGridSize === gridSize) return cachedEnergyGrid;
-
+function buildEnergyGrid(energyNodes: EnergyNode[], gridSize: number, fogState: FogOfWarState, team: number): number[] {
   const cellSize = 256 / gridSize;
   const grid: number[] = new Array(gridSize * gridSize).fill(0);
 
   for (const node of energyNodes) {
+    if (!fogState.isExplored(team, node.x, node.z)) continue;
     const gx = Math.floor(node.x / cellSize);
     const gz = Math.floor(node.z / cellSize);
     if (gx >= 0 && gx < gridSize && gz >= 0 && gz < gridSize) {
@@ -88,17 +83,15 @@ function buildEnergyGrid(energyNodes: EnergyNode[], gridSize: number): number[] 
     }
   }
 
-  cachedEnergyGrid = grid;
   return grid;
 }
 
-function buildOreGrid(oreDeposits: OreDeposit[], gridSize: number): number[] {
-  if (cachedOreGrid && cachedGridSize === gridSize) return cachedOreGrid;
-
+function buildOreGrid(oreDeposits: OreDeposit[], gridSize: number, fogState: FogOfWarState, team: number): number[] {
   const cellSize = 256 / gridSize;
   const grid: number[] = new Array(gridSize * gridSize).fill(0);
 
   for (const deposit of oreDeposits) {
+    if (!fogState.isExplored(team, deposit.x, deposit.z)) continue;
     const gx = Math.floor(deposit.x / cellSize);
     const gz = Math.floor(deposit.z / cellSize);
     if (gx >= 0 && gx < gridSize && gz >= 0 && gz < gridSize) {
@@ -106,7 +99,6 @@ function buildOreGrid(oreDeposits: OreDeposit[], gridSize: number): number[] {
     }
   }
 
-  cachedOreGrid = grid;
   return grid;
 }
 
@@ -115,6 +107,8 @@ function buildActionMask(
   energyNodes: EnergyNode[],
   oreDeposits: OreDeposit[],
   gridSize: number,
+  fogState: FogOfWarState,
+  team: number,
 ): number[] {
   const cellSize = 256 / gridSize;
   const mask = new Array(gridSize * gridSize).fill(0);
@@ -146,8 +140,9 @@ function buildActionMask(
     return true;
   };
 
-  // Mark unclaimed energy nodes
+  // Mark unclaimed energy nodes (only if explored)
   for (const node of energyNodes) {
+    if (!fogState.isExplored(team, node.x, node.z)) continue;
     if (!isUnclaimed(node.x, node.z)) continue;
     const gx = Math.floor(node.x / cellSize);
     const gz = Math.floor(node.z / cellSize);
@@ -156,8 +151,9 @@ function buildActionMask(
     }
   }
 
-  // Mark unclaimed ore deposits
+  // Mark unclaimed ore deposits (only if explored)
   for (const deposit of oreDeposits) {
+    if (!fogState.isExplored(team, deposit.x, deposit.z)) continue;
     if (!isUnclaimed(deposit.x, deposit.z)) continue;
     const gx = Math.floor(deposit.x / cellSize);
     const gz = Math.floor(deposit.z / cellSize);
@@ -254,9 +250,9 @@ export function extractObservation(
   // Map grid (cached since terrain is static)
   const mapGrid = buildMapGrid(terrainData, gridSize);
 
-  // Resource deposit grids (cached since deposits are static)
-  const energyGrid = buildEnergyGrid(energyNodes, gridSize);
-  const oreGrid = buildOreGrid(oreDeposits, gridSize);
+  // Resource deposit grids (fog-filtered — only explored nodes visible)
+  const energyGrid = buildEnergyGrid(energyNodes, gridSize, fogState, team);
+  const oreGrid = buildOreGrid(oreDeposits, gridSize, fogState, team);
 
   // Units: collect own and enemy separately
   const ownUnits: number[][] = [];
@@ -348,8 +344,8 @@ export function extractObservation(
   // Game state (affordability + capability flags)
   const gameState = buildGameState(world, resourceState, team);
 
-  // Action mask (not cached — building positions change)
-  const actionMask = buildActionMask(world, energyNodes, oreDeposits, gridSize);
+  // Action mask (not cached — building positions and fog change)
+  const actionMask = buildActionMask(world, energyNodes, oreDeposits, gridSize, fogState, team);
 
   return { resources, mapGrid, energyGrid, oreGrid, unitData, buildingData, gameState, actionMask, tick };
 }
