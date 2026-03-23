@@ -12,7 +12,7 @@ export class InputManager {
   // Touch state machine
   // idle: no active touch
   // one_pending: single finger down, waiting to determine tap vs drag
-  // one_drag: single finger dragging (fires button 0 for selection box)
+  // one_drag: single finger dragging (fires button 2 for camera pan)
   // two_pending: two fingers down, determining pan vs pinch
   // two_pan: two-finger camera pan (locked, no zoom)
   // two_pinch: two-finger pinch zoom (locked, no pan)
@@ -96,7 +96,7 @@ export class InputManager {
     });
 
     // --- Touch handlers ---
-    // Single finger: tap = left click (context-sensitive), drag = selection box
+    // Single finger: tap = left click (context-sensitive), drag = camera pan
     // Double tap: select all visible units of same type
     // Two fingers: drag = camera pan (locked), pinch = zoom (locked)
 
@@ -142,9 +142,10 @@ export class InputManager {
           const dx = t.clientX - this.touchStartPos.x;
           const dy = t.clientY - this.touchStartPos.y;
           if (Math.sqrt(dx * dx + dy * dy) > this.DRAG_THRESHOLD_PX) {
-            // Transition to one-finger drag (selection box)
+            // Transition to one-finger drag (camera pan)
             this.touchMode = 'one_drag';
-            for (const cb of this.mouseDownCallbacks) cb(this.touchStartPos.x, this.touchStartPos.y, 0);
+            this.isPanHeld = true;
+            for (const cb of this.mouseDownCallbacks) cb(this.touchStartPos.x, this.touchStartPos.y, 2);
             this.mousePos.x = t.clientX;
             this.mousePos.y = t.clientY;
           }
@@ -244,9 +245,9 @@ export class InputManager {
         this.touchStartPos = null;
 
       } else if (this.touchMode === 'one_drag' && remainingCount === 0) {
-        // End one-finger drag (selection box)
-        const t = e.changedTouches[0];
-        for (const cb of this.mouseUpCallbacks) cb(t.clientX, t.clientY, 0);
+        // End one-finger drag (camera pan)
+        this.isPanHeld = false;
+        for (const cb of this.mouseUpCallbacks) cb(this.mousePos.x, this.mousePos.y, 2);
         this.touchMode = 'idle';
         this.touchStartPos = null;
 

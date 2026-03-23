@@ -838,11 +838,87 @@ export class SelectionController {
     }
   }
 
-  private deselectAll(): void {
+  deselectAll(): void {
     const selectables = this.world.query(SELECTABLE);
     for (const e of selectables) {
       const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
       sel.selected = false;
+    }
+  }
+
+  selectIdleWorker(): void {
+    const target = this.camera.getTarget();
+    const entities = this.world.query(POSITION, SELECTABLE, UNIT_TYPE, TEAM, HEALTH);
+    let bestEntity: Entity | null = null;
+    let bestDistSq = Infinity;
+
+    for (const e of entities) {
+      const team = this.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (team.team !== this.playerTeam) continue;
+      const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
+      if (ut.category !== UnitCategory.WorkerDrone) continue;
+      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (health.dead) continue;
+
+      // Skip busy workers
+      if (this.world.hasComponent(e, BUILD_COMMAND)) continue;
+      if (this.world.hasComponent(e, MOVE_COMMAND)) continue;
+      if (this.world.hasComponent(e, REPAIR_COMMAND)) continue;
+      if (this.world.hasComponent(e, SUPPLY_ROUTE)) continue;
+      if (this.world.hasComponent(e, RESUPPLY_SEEK)) continue;
+
+      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+      const dx = pos.x - target.x;
+      const dz = pos.z - target.z;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestEntity = e;
+      }
+    }
+
+    if (bestEntity !== null) {
+      this.deselectAll();
+      const sel = this.world.getComponent<SelectableComponent>(bestEntity, SELECTABLE)!;
+      sel.selected = true;
+
+      // Center camera on selected worker
+      const pos = this.world.getComponent<PositionComponent>(bestEntity, POSITION)!;
+      this.camera.setTarget(pos.x, 0, pos.z);
+    }
+  }
+
+  selectMilitary(categories: UnitCategory[], selectAll: boolean): void {
+    const entities = this.world.query(POSITION, SELECTABLE, UNIT_TYPE, TEAM, HEALTH);
+    const matches: Entity[] = [];
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const tmpVec = new THREE.Vector3();
+
+    for (const e of entities) {
+      const team = this.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (team.team !== this.playerTeam) continue;
+      const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
+      if (!categories.includes(ut.category)) continue;
+      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
+      if (health.dead) continue;
+
+      if (!selectAll) {
+        const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
+        tmpVec.set(pos.x, pos.y, pos.z);
+        const screenPos = this.camera.worldToScreen(tmpVec);
+        if (screenPos.x < 0 || screenPos.x > w || screenPos.y < 0 || screenPos.y > h) continue;
+      }
+
+      matches.push(e);
+    }
+
+    if (matches.length > 0) {
+      this.deselectAll();
+      for (const e of matches) {
+        const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
+        sel.selected = true;
+      }
     }
   }
 }

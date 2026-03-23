@@ -46,6 +46,7 @@ import { MatterPacketSystem } from '@sim/systems/MatterPacketSystem';
 import { Minimap } from '@ui/Minimap';
 import { UnitInfoPanel } from '@ui/UnitInfoPanel';
 import { ActionBar } from '@ui/ActionBar';
+import { QuickSelectBar } from '@ui/QuickSelectBar';
 import { ResourceDisplay } from '@ui/ResourceDisplay';
 import { GameOverOverlay } from '@ui/GameOverOverlay';
 import { PauseOverlay } from '@ui/PauseOverlay';
@@ -563,6 +564,11 @@ if (!spectatorMode && scenarioMode !== 'sandbox') {
   minimap.onLeftClick = (worldX, worldZ) => {
     isoCamera.setTarget(worldX, 0, worldZ);
   };
+
+  const quickSelectBar = new QuickSelectBar();
+  quickSelectBar.mount(app);
+  quickSelectBar.onSelectIdleWorker = () => selectionController!.selectIdleWorker();
+  quickSelectBar.onSelectMilitary = (cats, all) => selectionController!.selectMilitary(cats, all);
 }
 
 // --- Renderers ---
