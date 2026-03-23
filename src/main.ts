@@ -52,6 +52,7 @@ import { GameOverOverlay } from '@ui/GameOverOverlay';
 import { PauseOverlay } from '@ui/PauseOverlay';
 import { SandboxPanel } from '@ui/SandboxPanel';
 import { PerfPanel } from '@ui/PerfPanel';
+import { FpsDisplay } from '@ui/FpsDisplay';
 import { SpectatorPanel } from '@ui/SpectatorPanel';
 import type { FogMode } from '@ui/SpectatorPanel';
 import { ParticleRenderer } from '@render/effects/ParticleRenderer';
@@ -187,6 +188,8 @@ if (spectatorMode) {
 
 const perfPanel = new PerfPanel();
 perfPanel.mount(app);
+const fpsDisplay = new FpsDisplay();
+fpsDisplay.mount(app);
 
 const gameOverOverlay = new GameOverOverlay(() => {
   sessionStorage.removeItem(SAVE_KEY);
@@ -855,6 +858,7 @@ const gameLoop = new GameLoop(
     lastFrameTime = now;
     const fps = frameDelta > 0 ? 1000 / frameDelta : 60;
     perfPanel.update(fps, renderer.info, world.getEntities().length, debrisRenderer.getActiveCount());
+    fpsDisplay.update(fps);
   }
 );
 

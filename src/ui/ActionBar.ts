@@ -42,6 +42,9 @@ export class ActionBar {
   private currentMode: BarMode = 'hidden';
   private buttonElements: Map<string, HTMLButtonElement> = new Map();
   private buttonAffordable: Map<string, boolean> = new Map();
+  private labelElements: Map<string, HTMLSpanElement> = new Map();
+  private badgeElements: Map<string, HTMLDivElement> = new Map();
+  private progressBarElements: Map<string, HTMLDivElement> = new Map();
 
   constructor() {
     this.container = document.createElement('div');
@@ -157,6 +160,9 @@ export class ActionBar {
       this.currentMode = targetMode;
       this.buttonElements.clear();
       this.buttonAffordable.clear();
+      this.labelElements.clear();
+      this.badgeElements.clear();
+      this.progressBarElements.clear();
       this.buttonsDiv.innerHTML = '';
       this.progressDiv.innerHTML = '';
 
@@ -302,7 +308,6 @@ export class ActionBar {
       const pct = Math.floor(constructionProgress * 100);
       this.progressDiv.innerHTML = `Building... ${pct}%<br>` + this.barHtml(constructionProgress * 100, '#4af');
     } else if (targetMode === 'worker') {
-      // Update affordability styling without replacing elements
       for (const btn of BUILD_BUTTONS) {
         const def = BUILDING_DEFS[btn.type];
         if (!def) continue;
@@ -310,7 +315,7 @@ export class ActionBar {
         if (affordable !== this.buttonAffordable.get(btn.type)) {
           this.buttonAffordable.set(btn.type, affordable);
           const el = this.buttonElements.get(btn.type);
-          if (el) this.updateButtonStyle(el, btn.label, `${def.energyCost}e ${def.matterCost}m`, affordable);
+          if (el) this.updateButtonStyle(el, btn.type, btn.label, `${def.energyCost}e ${def.matterCost}m`, affordable);
         }
       }
     } else if (targetMode === 'hq') {
@@ -320,19 +325,12 @@ export class ActionBar {
         if (affordable !== this.buttonAffordable.get('train_worker')) {
           this.buttonAffordable.set('train_worker', affordable);
           const el = this.buttonElements.get('train_worker');
-          if (el) this.updateButtonStyle(el, 'Train Worker', `${workerDef.energyCost}e ${workerDef.matterCost}m`, affordable);
+          if (el) this.updateButtonStyle(el, 'train_worker', 'Train Worker', `${workerDef.energyCost}e ${workerDef.matterCost}m`, affordable);
         }
       }
 
-      // Show production progress
       const pq = world.getComponent<ProductionQueueComponent>(hqEntity, PRODUCTION_QUEUE);
-      if (pq && pq.queue.length > 0) {
-        const item = pq.queue[0];
-        const pct = Math.max(0, (1 - item.timeRemaining / item.totalTime) * 100);
-        this.progressDiv.innerHTML = `Training... ${Math.floor(pct)}%<br>` + this.barHtml(pct, '#4c4');
-      } else {
-        this.progressDiv.innerHTML = '';
-      }
+      this.updateQueueBadgesAndProgress(pq, [{ key: 'train_worker', unitType: UnitCategory.WorkerDrone }]);
     } else if (targetMode === 'depot') {
       const ferryDef = UNIT_DEFS[UnitCategory.FerryDrone];
       if (ferryDef) {
@@ -340,47 +338,55 @@ export class ActionBar {
         if (affordable !== this.buttonAffordable.get('train_ferry')) {
           this.buttonAffordable.set('train_ferry', affordable);
           const el = this.buttonElements.get('train_ferry');
-          if (el) this.updateButtonStyle(el, 'Train Ferry Drone', `${ferryDef.energyCost}e ${ferryDef.matterCost}m`, affordable);
+          if (el) this.updateButtonStyle(el, 'train_ferry', 'Train Ferry Drone', `${ferryDef.energyCost}e ${ferryDef.matterCost}m`, affordable);
         }
       }
 
-      // Show production progress
       const pq = world.getComponent<ProductionQueueComponent>(depotEntity, PRODUCTION_QUEUE);
-      if (pq && pq.queue.length > 0) {
-        const item = pq.queue[0];
-        const pct = Math.max(0, (1 - item.timeRemaining / item.totalTime) * 100);
-        this.progressDiv.innerHTML = `Training... ${Math.floor(pct)}%<br>` + this.barHtml(pct, '#4c4');
-      } else {
-        this.progressDiv.innerHTML = '';
-      }
+      this.updateQueueBadgesAndProgress(pq, [{ key: 'train_ferry', unitType: UnitCategory.FerryDrone }]);
     } else if (targetMode === 'factory') {
+      const trainButtons: { key: string; unitType: string }[] = [];
       for (const btn of FACTORY_TRAIN_BUTTONS) {
         const def = UNIT_DEFS[btn.unitType];
         if (!def) continue;
         const key = `train_${btn.unitType}`;
+        trainButtons.push({ key, unitType: btn.unitType });
         const affordable = resources.canAfford(playerTeam, def.energyCost) && totalMatter >= def.matterCost;
         if (affordable !== this.buttonAffordable.get(key)) {
           this.buttonAffordable.set(key, affordable);
           const el = this.buttonElements.get(key);
-          if (el) this.updateButtonStyle(el, btn.label, `${def.energyCost}e ${def.matterCost}m`, affordable);
+          if (el) this.updateButtonStyle(el, key, btn.label, `${def.energyCost}e ${def.matterCost}m`, affordable);
         }
       }
 
-      // Show production progress
       const pq = world.getComponent<ProductionQueueComponent>(factoryEntity, PRODUCTION_QUEUE);
-      if (pq && pq.queue.length > 0) {
-        const item = pq.queue[0];
-        const pct = Math.max(0, (1 - item.timeRemaining / item.totalTime) * 100);
-        this.progressDiv.innerHTML = `Training... ${Math.floor(pct)}%<br>` + this.barHtml(pct, '#4c4');
-      } else {
-        this.progressDiv.innerHTML = '';
-      }
+      this.updateQueueBadgesAndProgress(pq, trainButtons);
     }
   }
 
   private createButton(key: string, label: string, costText: string, enabled: boolean, onClick: () => void): HTMLButtonElement {
     const btn = document.createElement('button');
-    this.applyButtonStyle(btn, label, costText, enabled);
+    this.applyButtonCss(btn, enabled);
+
+    // Progress bar (behind label)
+    const progressBar = document.createElement('div');
+    progressBar.style.cssText = 'position:absolute;left:0;top:0;width:0%;height:100%;background:rgba(100,200,100,0.3);z-index:0;pointer-events:none;transition:width 0.1s linear;';
+    btn.appendChild(progressBar);
+    this.progressBarElements.set(key, progressBar);
+
+    // Label span (above progress bar)
+    const labelSpan = document.createElement('span');
+    labelSpan.style.cssText = 'position:relative;z-index:1;display:block;';
+    this.setLabelContent(labelSpan, label, costText, enabled);
+    btn.appendChild(labelSpan);
+    this.labelElements.set(key, labelSpan);
+
+    // Badge (top-right corner)
+    const badge = document.createElement('div');
+    badge.style.cssText = 'position:absolute;top:-4px;right:-4px;background:#ff4444;color:#fff;font-weight:bold;font-size:11px;min-width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%;z-index:2;pointer-events:none;display:none;';
+    btn.appendChild(badge);
+    this.badgeElements.set(key, badge);
+
     btn.addEventListener('mousedown', (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -399,8 +405,10 @@ export class ActionBar {
     return btn;
   }
 
-  private applyButtonStyle(btn: HTMLButtonElement, label: string, costText: string, enabled: boolean): void {
+  private applyButtonCss(btn: HTMLButtonElement, enabled: boolean): void {
     btn.style.cssText = `
+      position: relative;
+      overflow: hidden;
       background: ${enabled ? 'rgba(68, 136, 255, 0.3)' : 'rgba(100, 100, 100, 0.3)'};
       border: 1px solid ${enabled ? 'rgba(68, 136, 255, 0.6)' : 'rgba(100, 100, 100, 0.4)'};
       border-radius: 4px;
@@ -412,11 +420,61 @@ export class ActionBar {
       min-width: 100px;
       text-align: center;
     `;
-    btn.innerHTML = `${label}<br><span style="font-size:10px;color:${enabled ? '#aaa' : '#555'}">${costText}</span>`;
   }
 
-  private updateButtonStyle(btn: HTMLButtonElement, label: string, costText: string, enabled: boolean): void {
-    this.applyButtonStyle(btn, label, costText, enabled);
+  private setLabelContent(labelSpan: HTMLSpanElement, label: string, costText: string, enabled: boolean): void {
+    labelSpan.innerHTML = `${label}<br><span style="font-size:10px;color:${enabled ? '#aaa' : '#555'}">${costText}</span>`;
+  }
+
+  private updateButtonStyle(btn: HTMLButtonElement, key: string, label: string, costText: string, enabled: boolean): void {
+    this.applyButtonCss(btn, enabled);
+    const labelSpan = this.labelElements.get(key);
+    if (labelSpan) this.setLabelContent(labelSpan, label, costText, enabled);
+  }
+
+  private updateQueueBadgesAndProgress(
+    pq: ProductionQueueComponent | undefined,
+    buttons: { key: string; unitType: string }[],
+  ): void {
+    // Count queued items per unit type
+    const counts = new Map<string, number>();
+    if (pq) {
+      for (const item of pq.queue) {
+        counts.set(item.unitType, (counts.get(item.unitType) || 0) + 1);
+      }
+    }
+
+    // Find the active item's button key for progress bar
+    const activeUnitType = pq && pq.queue.length > 0 ? pq.queue[0].unitType : null;
+
+    for (const { key, unitType } of buttons) {
+      const count = counts.get(unitType) || 0;
+      const badge = this.badgeElements.get(key);
+      const progressBar = this.progressBarElements.get(key);
+
+      // Badge
+      if (badge) {
+        if (count > 0) {
+          badge.style.display = 'block';
+          badge.textContent = String(count);
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+
+      // Progress bar: only on the button whose unit type is actively building
+      if (progressBar) {
+        if (activeUnitType === unitType && pq && pq.queue.length > 0) {
+          const item = pq.queue[0];
+          const pct = Math.max(0, (1 - item.timeRemaining / item.totalTime) * 100);
+          progressBar.style.width = `${pct}%`;
+        } else {
+          progressBar.style.width = '0%';
+        }
+      }
+    }
+
+    this.progressDiv.innerHTML = '';
   }
 
   private barHtml(pct: number, color: string): string {

@@ -29,7 +29,7 @@ import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import { validateAndSnapPlacement } from '@sim/ai/PlacementValidator';
 
-import { TEAM_COLORS, MAX_QUEUE_DEPTH } from '@sim/ai/AITypes';
+import { TEAM_COLORS } from '@sim/ai/AITypes';
 
 export interface GameCommandContext {
   world: World;
@@ -287,8 +287,6 @@ export function trainUnit(
   // Production queue
   const pq = ctx.world.getComponent<ProductionQueueComponent>(factory, PRODUCTION_QUEUE);
   if (!pq) return false;
-  if (pq.queue.length >= MAX_QUEUE_DEPTH) return false;
-
   // Deduct resources
   ctx.resources.spend(team, def.energyCost);
   if (def.matterCost > 0) {
