@@ -237,6 +237,7 @@ export class RLAISystem implements System {
     const actionMaskBuf = new Float32Array(ACTION_MASK_SIZE);
     {
       for (const node of this.energyNodes) {
+        if (!this.fogState.isExplored(this.team, node.x, node.z)) continue;
         if (!this.isUnclaimed(world, node.x, node.z)) continue;
         const gx = Math.floor(node.x / cellSize);
         const gz = Math.floor(node.z / cellSize);
@@ -245,6 +246,7 @@ export class RLAISystem implements System {
         }
       }
       for (const deposit of this.oreDeposits) {
+        if (!this.fogState.isExplored(this.team, deposit.x, deposit.z)) continue;
         if (!this.isUnclaimed(world, deposit.x, deposit.z)) continue;
         const gx = Math.floor(deposit.x / cellSize);
         const gz = Math.floor(deposit.z / cellSize);
