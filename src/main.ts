@@ -8,6 +8,7 @@ import { WaypointRenderer } from '@render/WaypointRenderer';
 import { BoxSelectRenderer } from '@render/BoxSelectRenderer';
 import { FogRenderer } from '@render/FogRenderer';
 import { GhostBuildingRenderer } from '@render/GhostBuildingRenderer';
+import { GridRenderer } from '@render/GridRenderer';
 import { InputManager } from '@input/InputManager';
 import { CameraController } from '@input/CameraController';
 import { SelectionController } from '@input/SelectionController';
@@ -113,6 +114,8 @@ const scenarioMode = new URLSearchParams(window.location.search).get('scenario')
 
 // --- Scene ---
 const sceneManager = new SceneManager();
+const gridRenderer = new GridRenderer(276, 276);
+gridRenderer.addTo(sceneManager.scene);
 const isoCamera = new IsometricCamera(window.innerWidth, window.innerHeight);
 isoCamera.setCanvas(renderer.domElement);
 
