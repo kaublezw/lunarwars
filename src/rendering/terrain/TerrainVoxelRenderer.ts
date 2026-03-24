@@ -8,16 +8,16 @@ const PAL_MOUNTAIN = 2;
 const PAL_BORDER = 3;
 
 const PALETTE_COLORS: Record<number, number> = {
-  [PAL_FLOOR]: 0x4a4a4a,
-  [PAL_MOUNTAIN]: 0x5a5a5a,
-  [PAL_BORDER]: 0x2a2a2a,
+  [PAL_FLOOR]: 0x45404d,    // Deep mauve-gray
+  [PAL_MOUNTAIN]: 0x555060, // Mid mauve-gray
+  [PAL_BORDER]: 0x25202b,   // Very dark purple-gray
 };
 
 // Top faces get a lighter shade
 const PALETTE_TOP_COLORS: Record<number, number> = {
-  [PAL_FLOOR]: 0x555555,
-  [PAL_MOUNTAIN]: 0x666666,
-  [PAL_BORDER]: 0x333333,
+  [PAL_FLOOR]: 0x55505e,    // Lighter mauve-gray
+  [PAL_MOUNTAIN]: 0x656070, // Highlighted mauve-gray
+  [PAL_BORDER]: 0x302a38,   // Dark purple-gray
 };
 
 // Chunk size in tiles

@@ -7,10 +7,10 @@ export class SceneManager {
 
   constructor() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x000004);
+    this.scene.background = new THREE.Color(0x0a0514);
 
     // Directional light (upper-left in isometric view)
-    this.dirLight = new THREE.DirectionalLight(0xffffff, 1.9);
+    this.dirLight = new THREE.DirectionalLight(0xffeedd, 1.9);
     this.dirLight.position.set(70.4, 73.1, 141.3);
     this.dirLight.target.position.set(128, 0, 128);
     this.dirLight.castShadow = true;
@@ -22,11 +22,16 @@ export class SceneManager {
     this.dirLight.shadow.camera.right = 150;
     this.dirLight.shadow.camera.top = 150;
     this.dirLight.shadow.camera.bottom = -150;
+    // Use a much smaller negative number (added another zero)
+    this.dirLight.shadow.bias = -0.0001;
+
+    // Cut the normal bias down as well
+    this.dirLight.shadow.normalBias = 0.005;
     this.scene.add(this.dirLight);
     this.scene.add(this.dirLight.target);
 
     // Dim ambient to keep shadow areas slightly visible
-    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+    this.ambientLight = new THREE.AmbientLight(0x6a5a8a, 0.35);
     this.scene.add(this.ambientLight);
   }
 }
