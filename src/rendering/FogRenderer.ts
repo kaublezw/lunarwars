@@ -234,15 +234,15 @@ export class FogRenderer {
       const idx = i * 4;
 
       if (state === FOG_UNEXPLORED) {
-        this.textureData[idx + 0] = 0;   // R
-        this.textureData[idx + 1] = 0;   // G
-        this.textureData[idx + 2] = 4;   // B — very dark blue
-        this.textureData[idx + 3] = 255;
+        this.textureData[idx + 0] = 10;  // R
+        this.textureData[idx + 1] = 5;   // G
+        this.textureData[idx + 2] = 20;  // B - deep cosmic purple
+        this.textureData[idx + 3] = 255; // A - fully opaque
       } else if (state === FOG_EXPLORED) {
-        this.textureData[idx + 0] = 0;   // R
-        this.textureData[idx + 1] = 0;   // G
-        this.textureData[idx + 2] = 3;   // B
-        this.textureData[idx + 3] = 150;
+        this.textureData[idx + 0] = 20;  // R
+        this.textureData[idx + 1] = 15;  // G
+        this.textureData[idx + 2] = 35;  // B - cool purple shadow
+        this.textureData[idx + 3] = 150; // A - partially transparent
       } else {
         this.textureData[idx + 0] = 0;
         this.textureData[idx + 1] = 0;
