@@ -44,6 +44,7 @@ export class InputManager {
   private keyDownCallbacks: KeyCallback[] = [];
   private keyUpCallbacks: KeyCallback[] = [];
   private doubleTapCallbacks: MouseCallback[] = [];
+  private twoFingerTapCallbacks: MouseCallback[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     canvas.addEventListener('mousedown', (e) => {
@@ -251,11 +252,22 @@ export class InputManager {
         this.touchMode = 'idle';
         this.touchStartPos = null;
 
+      } else if (this.touchMode === 'two_pending' && remainingCount <= 1) {
+        // Two fingers down then lifted without moving — 2-finger tap
+        if (this.twoFingerStartCentroid) {
+          const cx = this.twoFingerStartCentroid.x;
+          const cy = this.twoFingerStartCentroid.y;
+          for (const cb of this.twoFingerTapCallbacks) cb(cx, cy, 0);
+        }
+        this.touchMode = 'idle';
+        this.touchStartPos = null;
+        this.twoFingerStartCentroid = null;
+
       } else if (
-        (this.touchMode === 'two_pan' || this.touchMode === 'two_pinch' || this.touchMode === 'two_pending') &&
+        (this.touchMode === 'two_pan' || this.touchMode === 'two_pinch') &&
         remainingCount <= 1
       ) {
-        // End two-finger gesture
+        // End two-finger gesture (pan or pinch — not a tap)
         if (this.isPanHeld) {
           this.isPanHeld = false;
           for (const cb of this.mouseUpCallbacks) cb(this.mousePos.x, this.mousePos.y, 2);
@@ -325,6 +337,10 @@ export class InputManager {
 
   onDoubleTap(callback: MouseCallback): void {
     this.doubleTapCallbacks.push(callback);
+  }
+
+  onTwoFingerTap(callback: MouseCallback): void {
+    this.twoFingerTapCallbacks.push(callback);
   }
 
   getMousePosition(): { x: number; y: number } {

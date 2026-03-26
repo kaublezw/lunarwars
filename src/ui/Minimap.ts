@@ -4,7 +4,8 @@ import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { PositionComponent } from '@sim/components/Position';
 import type { TeamComponent } from '@sim/components/Team';
-import { POSITION, TEAM } from '@sim/components/ComponentTypes';
+import { POSITION, TEAM, SELECTABLE } from '@sim/components/ComponentTypes';
+import type { SelectableComponent } from '@sim/components/Selectable';
 import { FOG_UNEXPLORED, FOG_EXPLORED } from '@sim/fog/FogOfWarState';
 
 // Height range for grayscale mapping (world units)
@@ -185,8 +186,15 @@ export class Minimap {
 
       const mx = Math.floor(((pos.x - this.playableStart) / this.playableSize) * w);
       const mz = Math.floor(((pos.z - this.playableStart) / this.playableSize) * h);
-      const color = TEAM_COLORS[team.team] ?? [255, 255, 255];
-      this.drawDot(mx, mz, 2, color[0], color[1], color[2]);
+
+      // Selected entities render as bright green, larger dot
+      const sel = world.getComponent<SelectableComponent>(e, SELECTABLE);
+      if (sel && sel.selected) {
+        this.drawDot(mx, mz, 3, 68, 255, 68);
+      } else {
+        const color = TEAM_COLORS[team.team] ?? [255, 255, 255];
+        this.drawDot(mx, mz, 2, color[0], color[1], color[2]);
+      }
     }
 
     this.ctx.putImageData(this.frameImage, 0, 0);

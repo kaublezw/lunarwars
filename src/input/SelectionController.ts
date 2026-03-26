@@ -52,6 +52,7 @@ export class SelectionController {
   private fogState: FogOfWarState | null = null;
   private playerTeam = 0;
   private placementCheck: (() => boolean) | null = null;
+  private stickySelection = false;
 
   // Callbacks for box select rendering
   onBoxSelectStart?: () => void;
@@ -65,6 +66,10 @@ export class SelectionController {
 
   setPlacementCheck(fn: () => boolean): void {
     this.placementCheck = fn;
+  }
+
+  setStickySelection(active: boolean): void {
+    this.stickySelection = active;
   }
 
   constructor(
@@ -86,6 +91,11 @@ export class SelectionController {
 
     // Double-tap: select all visible units of same type
     input.onDoubleTap((x, y) => {
+      this.handleDoubleTap(x, y);
+    });
+
+    // Two-finger tap: select all visible units of same type as tapped unit
+    input.onTwoFingerTap((x, y) => {
       this.handleDoubleTap(x, y);
     });
 
@@ -133,7 +143,7 @@ export class SelectionController {
 
   private handleClick(sx: number, sy: number): void {
     if (this.placementCheck?.()) return;
-    const shift = this.input.isKeyDown('shift');
+    const shift = this.input.isKeyDown('shift') || this.stickySelection;
     const isTouch = this.input.isLastInputTouch();
 
     const selectables = this.world.query(POSITION, SELECTABLE);
@@ -227,7 +237,7 @@ export class SelectionController {
 
   private handleBoxSelect(box: { x0: number; y0: number; x1: number; y1: number }): void {
     if (this.placementCheck?.()) return;
-    const shift = this.input.isKeyDown('shift');
+    const shift = this.input.isKeyDown('shift') || this.stickySelection;
     if (!shift) this.deselectAll();
 
     const tmpVec = new THREE.Vector3();
@@ -881,10 +891,6 @@ export class SelectionController {
       this.deselectAll();
       const sel = this.world.getComponent<SelectableComponent>(bestEntity, SELECTABLE)!;
       sel.selected = true;
-
-      // Center camera on selected worker
-      const pos = this.world.getComponent<PositionComponent>(bestEntity, POSITION)!;
-      this.camera.setTarget(pos.x, 0, pos.z);
     }
   }
 

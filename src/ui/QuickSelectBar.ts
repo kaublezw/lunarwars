@@ -1,12 +1,14 @@
-import { UnitCategory } from '@sim/components/UnitType';
-
 export class QuickSelectBar {
   private container: HTMLDivElement;
-  private scopeButton: HTMLButtonElement;
-  private selectAll = false;
+  private stickyButton: HTMLButtonElement;
+  private _stickySelection = false;
 
   onSelectIdleWorker: (() => void) | null = null;
-  onSelectMilitary: ((categories: UnitCategory[], selectAll: boolean) => void) | null = null;
+  onStickySelectionChanged: ((active: boolean) => void) | null = null;
+
+  get stickySelection(): boolean {
+    return this._stickySelection;
+  }
 
   constructor() {
     this.container = document.createElement('div');
@@ -22,37 +24,23 @@ export class QuickSelectBar {
       pointer-events: auto;
     `;
 
-    this.scopeButton = this.createButton('Screen', () => {
-      this.selectAll = !this.selectAll;
-      this.scopeButton.textContent = this.selectAll ? 'MAP' : 'Screen';
-      this.scopeButton.style.background = this.selectAll
+    this.stickyButton = this.createButton('Sticky: OFF', () => {
+      this._stickySelection = !this._stickySelection;
+      this.stickyButton.textContent = this._stickySelection ? 'Sticky: ON' : 'Sticky: OFF';
+      this.stickyButton.style.background = this._stickySelection
         ? 'rgba(68, 200, 68, 0.3)'
         : 'rgba(68, 136, 255, 0.3)';
-      this.scopeButton.style.borderColor = this.selectAll
+      this.stickyButton.style.borderColor = this._stickySelection
         ? 'rgba(68, 200, 68, 0.6)'
         : 'rgba(68, 136, 255, 0.6)';
+      this.onStickySelectionChanged?.(this._stickySelection);
     });
-    this.container.appendChild(this.scopeButton);
+    this.container.appendChild(this.stickyButton);
 
     const idleWorkerBtn = this.createButton('Idle Worker', () => {
       this.onSelectIdleWorker?.();
     });
     this.container.appendChild(idleWorkerBtn);
-
-    const tankBtn = this.createButton('Tanks', () => {
-      this.onSelectMilitary?.([UnitCategory.AssaultPlatform], this.selectAll);
-    });
-    this.container.appendChild(tankBtn);
-
-    const airBtn = this.createButton('Air', () => {
-      this.onSelectMilitary?.([UnitCategory.AerialDrone], this.selectAll);
-    });
-    this.container.appendChild(airBtn);
-
-    const combatBtn = this.createButton('Combat', () => {
-      this.onSelectMilitary?.([UnitCategory.CombatDrone], this.selectAll);
-    });
-    this.container.appendChild(combatBtn);
   }
 
   mount(parent: HTMLElement): void {

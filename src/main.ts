@@ -574,7 +574,7 @@ if (!spectatorMode && scenarioMode !== 'sandbox') {
   const quickSelectBar = new QuickSelectBar();
   quickSelectBar.mount(app);
   quickSelectBar.onSelectIdleWorker = () => selectionController!.selectIdleWorker();
-  quickSelectBar.onSelectMilitary = (cats, all) => selectionController!.selectMilitary(cats, all);
+  quickSelectBar.onStickySelectionChanged = (active) => selectionController!.setStickySelection(active);
 }
 
 // --- Renderers ---
