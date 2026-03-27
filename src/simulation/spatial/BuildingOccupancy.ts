@@ -8,7 +8,7 @@ const FOOTPRINT_RADIUS: Record<string, number> = {
   energy_extractor: 1,
   matter_plant: 2,
   supply_depot: 1,
-  drone_factory: 2,
+  drone_factory: 3,
   construction_site: 1,
 };
 

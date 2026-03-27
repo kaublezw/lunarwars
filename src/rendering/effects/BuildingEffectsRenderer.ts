@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, POSITION, ENERGY_PACKET, HEALTH } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, POSITION, ENERGY_PACKET, HEALTH, PRODUCTION_QUEUE } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { EnergyPacketComponent } from '@sim/components/EnergyPacket';
+import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { ParticleRenderer } from '@render/effects/ParticleRenderer';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
@@ -18,6 +19,10 @@ const FADE_DURATION = 2.0;  // seconds for HQ glow to fade after receiving
 const MAX_GLOW_INTENSITY = 50.0;
 const TOWER_GLOW_Y = 5.5;  // wu above building base (matches tower cap / PACKET_ELEVATION)
 const ARRIVAL_CHECK_SQ = 4; // 2 wu squared — proximity to consider a packet "arrived"
+const PRODUCTION_LIGHT_COLOR = 0xff8833;  // warm orange — welding sparks
+const PRODUCTION_LIGHT_INTENSITY = 15.0;
+const PRODUCTION_LIGHT_DISTANCE = 8.0;
+const PRODUCTION_LIGHT_Y_OFFSET = 1.5;   // inside building
 
 interface SmokeTracker {
   entity: number;
@@ -36,6 +41,12 @@ interface PacketGlowTracker {
   light: THREE.PointLight;
 }
 
+interface ProductionGlowTracker {
+  entity: number;
+  light: THREE.PointLight;
+  time: number;
+}
+
 interface TrackedPacket {
   source: number;
   target: number;
@@ -50,6 +61,7 @@ export class BuildingEffectsRenderer {
   private hqGlowTrackers = new Map<number, GlowTracker>();
   private packetGlowTrackers = new Map<number, PacketGlowTracker>();
   private matterPacketGlowTrackers = new Map<number, PacketGlowTracker>();
+  private productionGlowTrackers = new Map<number, ProductionGlowTracker>();
   private trackedPackets = new Map<number, TrackedPacket>();
   private particleRenderer: ParticleRenderer;
   private debrisRenderer: DebrisRenderer;
@@ -98,6 +110,13 @@ export class BuildingEffectsRenderer {
       } else if (building.buildingType === BuildingType.HQ) {
         activeEntities.add(e);
         this.updateHQGlow(e, pos, dt, visible);
+      } else if (building.buildingType === BuildingType.DroneFactory) {
+        activeEntities.add(e);
+      }
+
+      // Production flicker lights for HQ and DroneFactory
+      if (building.buildingType === BuildingType.HQ || building.buildingType === BuildingType.DroneFactory) {
+        this.updateProductionGlow(e, pos, dt, visible, world);
       }
     }
 
@@ -121,6 +140,14 @@ export class BuildingEffectsRenderer {
         this.scene.remove(tracker.light);
         tracker.light.dispose();
         this.hqGlowTrackers.delete(entity);
+      }
+    }
+
+    for (const [entity, tracker] of this.productionGlowTrackers) {
+      if (!activeEntities.has(entity)) {
+        this.scene.remove(tracker.light);
+        tracker.light.dispose();
+        this.productionGlowTrackers.delete(entity);
       }
     }
 
@@ -269,6 +296,41 @@ export class BuildingEffectsRenderer {
     tracker.light.position.set(pos.x, pos.y + TOWER_GLOW_Y, pos.z);
   }
 
+  private updateProductionGlow(entity: number, pos: PositionComponent, dt: number, visible: boolean, world: World): void {
+    const queue = world.getComponent<ProductionQueueComponent>(entity, PRODUCTION_QUEUE);
+    const isProducing = queue && queue.queue.length > 0 && queue.queue[0].timeRemaining > 0;
+
+    if (!isProducing) {
+      const existing = this.productionGlowTrackers.get(entity);
+      if (existing) {
+        this.scene.remove(existing.light);
+        existing.light.dispose();
+        this.productionGlowTrackers.delete(entity);
+      }
+      return;
+    }
+
+    let tracker = this.productionGlowTrackers.get(entity);
+    if (!tracker) {
+      const light = new THREE.PointLight(PRODUCTION_LIGHT_COLOR, 0, PRODUCTION_LIGHT_DISTANCE);
+      this.scene.add(light);
+      tracker = { entity, light, time: 0 };
+      this.productionGlowTrackers.set(entity, tracker);
+    }
+
+    tracker.time += dt;
+
+    // Welding flicker: sinusoidal base + random noise
+    const sin1 = Math.sin(tracker.time * 12.0) * 0.3;
+    const sin2 = Math.sin(tracker.time * 5.3) * 0.2;
+    const noise = (Math.random() - 0.5) * 0.4;
+    const flicker = Math.max(0, 0.5 + sin1 + sin2 + noise);
+    const intensity = flicker * PRODUCTION_LIGHT_INTENSITY;
+
+    tracker.light.intensity = visible ? intensity : 0;
+    tracker.light.position.set(pos.x, pos.y + PRODUCTION_LIGHT_Y_OFFSET, pos.z);
+  }
+
   private updatePacketGlows(world: World): void {
     const packets = world.query(ENERGY_PACKET, POSITION);
     const activePackets = new Set<number>();
@@ -331,10 +393,15 @@ export class BuildingEffectsRenderer {
       this.scene.remove(tracker.light);
       tracker.light.dispose();
     }
+    for (const [, tracker] of this.productionGlowTrackers) {
+      this.scene.remove(tracker.light);
+      tracker.light.dispose();
+    }
     this.glowTrackers.clear();
     this.hqGlowTrackers.clear();
     this.packetGlowTrackers.clear();
     this.matterPacketGlowTrackers.clear();
+    this.productionGlowTrackers.clear();
     this.trackedPackets.clear();
     this.smokeTrackers.clear();
   }

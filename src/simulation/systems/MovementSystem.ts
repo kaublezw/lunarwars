@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { POSITION, VELOCITY, UNIT_TYPE, STEERING, GARAGE_EXIT } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, UNIT_TYPE, STEERING, GARAGE_EXIT, ROOF_EXIT } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { VelocityComponent } from '@sim/components/Velocity';
 import type { SteeringComponent } from '@sim/components/Steering';
@@ -63,8 +63,15 @@ export class MovementSystem implements System {
 
       const isAerial = unitType?.category === UnitCategory.AerialDrone;
       const isGarageExit = world.hasComponent(e, GARAGE_EXIT);
+      const isRoofExit = world.hasComponent(e, ROOF_EXIT);
 
-      if (isAerial) {
+      if (isRoofExit) {
+        // RoofExitSystem handles Y movement; suppress all XZ movement here
+        vel.x = 0;
+        vel.z = 0;
+        if (steering) { steering.forceX = 0; steering.forceZ = 0; }
+        continue;
+      } else if (isAerial) {
         pos.x += vel.x * dt;
         pos.z += vel.z * dt;
         pos.y = AERIAL_HEIGHT;

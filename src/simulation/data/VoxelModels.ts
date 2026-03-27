@@ -301,19 +301,25 @@ export const SUPPLY_DEPOT_MODEL = createModel(24, 6, 24, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 10, 1, 10, 13, 1, 13, PAL_TEAM_PRIMARY);
 });
 
-export const DRONE_FACTORY_MODEL = createModel(24, 18, 24, (g, sx, _sy, sz) => {
-  // Main body
-  fillBox(g, sx, sz, 0, 0, 0, 23, 10, 23, PAL_DARK_GREY);
+export const DRONE_FACTORY_MODEL = createModel(32, 22, 32, (g, sx, _sy, sz) => {
+  // Main body (lower section)
+  fillBox(g, sx, sz, 0, 0, 0, 31, 12, 31, PAL_MED_GREY);
   // Upper hull
-  fillBox(g, sx, sz, 2, 11, 2, 21, 13, 21, PAL_TEAM_PRIMARY);
-  // Tower
-  fillBox(g, sx, sz, 1, 0, 8, 4, 16, 15, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 2, 13, 2, 29, 17, 29, PAL_TEAM_PRIMARY);
+  // Tower (left side)
+  fillBox(g, sx, sz, 1, 0, 10, 5, 20, 21, PAL_TEAM_ACCENT);
   // Dish on top of tower
-  fillCylinder(g, sx, sz, 3, 12, 3, 14, 17, PAL_LIGHT_GREY);
-  // Factory door (dark opening)
-  fillBox(g, sx, sz, 8, 1, 23, 15, 8, 23, PAL_MED_GREY);
+  fillCylinder(g, sx, sz, 3, 16, 4, 18, 21, PAL_LIGHT_GREY);
   // Roof stripe
-  fillBox(g, sx, sz, 4, 13, 4, 19, 13, 19, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 5, 17, 5, 26, 17, 26, PAL_TEAM_ACCENT);
+  // Side garage opening on +Z face (14 wide x 10 tall — fits assault platform)
+  fillBox(g, sx, sz, 9, 1, 31, 22, 10, 31, 0);
+  // Interior bay behind side garage (indented 4 deep)
+  fillBox(g, sx, sz, 10, 1, 27, 21, 10, 30, 0);
+  // Roof hatch opening (16x16 — fits aerial drone 12x12)
+  fillBox(g, sx, sz, 8, 13, 8, 23, 17, 23, 0);
+  // Roof hatch interior bay (indented 2 voxels below the opening)
+  fillBox(g, sx, sz, 9, 11, 9, 22, 12, 22, 0);
 });
 
 export const CONSTRUCTION_SITE_MODEL = createModel(14, 4, 14, (g, sx, _sy, sz) => {
@@ -379,6 +385,16 @@ export const MATTER_PACKET_MODEL = createModel(2, 2, 2, (g, sx, _sy, sz) => {
 // Garage door model (7 wide x 8 tall x 1 deep) — renderer-managed, not ECS-managed
 export const GARAGE_DOOR_MODEL = createModel(7, 8, 1, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 0, 0, 0, 6, 7, 0, PAL_WHITE);
+});
+
+// Factory side garage door (14 wide x 10 tall x 1 deep) — fits assault platform
+export const FACTORY_DOOR_MODEL = createModel(14, 10, 1, (g, sx, _sy, sz) => {
+  fillBox(g, sx, sz, 0, 0, 0, 13, 9, 0, PAL_WHITE);
+});
+
+// Factory roof hatch (16 wide x 1 tall x 16 deep) — fits aerial drone
+export const FACTORY_ROOF_DOOR_MODEL = createModel(16, 1, 16, (g, sx, _sy, sz) => {
+  fillBox(g, sx, sz, 0, 0, 0, 15, 0, 15, PAL_TEAM_ACCENT);
 });
 
 // Map meshType -> VoxelModel

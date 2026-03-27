@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { POSITION, VELOCITY, UNIT_TYPE, MOVE_COMMAND, STEERING } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, UNIT_TYPE, MOVE_COMMAND, STEERING, ROOF_EXIT } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { VelocityComponent } from '@sim/components/Velocity';
 import type { SteeringComponent } from '@sim/components/Steering';
@@ -36,6 +36,9 @@ export class CollisionAvoidanceSystem implements System {
       const vel = world.getComponent<VelocityComponent>(e, VELOCITY)!;
       const unitType = world.getComponent<UnitTypeComponent>(e, UNIT_TYPE);
       const steering = world.getComponent<SteeringComponent>(e, STEERING);
+
+      // Skip units rising through a building roof
+      if (world.hasComponent(e, ROOF_EXIT)) continue;
 
       const radius = unitType?.radius ?? 0.25;
       const isAerial = unitType?.category === UnitCategory.AerialDrone;

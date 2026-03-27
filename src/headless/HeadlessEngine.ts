@@ -7,6 +7,7 @@ import { ResourceState } from '@sim/economy/ResourceState';
 import { FogOfWarState } from '@sim/fog/FogOfWarState';
 import { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import { GarageExitSystem } from '@sim/systems/GarageExitSystem';
+import { RoofExitSystem } from '@sim/systems/RoofExitSystem';
 import { PathfindingSystem } from '@sim/systems/PathfindingSystem';
 import { CollisionAvoidanceSystem } from '@sim/systems/CollisionAvoidanceSystem';
 import { MovementSystem } from '@sim/systems/MovementSystem';
@@ -150,6 +151,7 @@ export class HeadlessEngine {
     movementSystem.setOccupancy(this.buildingOccupancy);
 
     this.world.addSystem(new GarageExitSystem());
+    this.world.addSystem(new RoofExitSystem());
     this.world.addSystem(pathfindingSystem);
     this.world.addSystem(new CollisionAvoidanceSystem(simRng));
     this.world.addSystem(movementSystem);

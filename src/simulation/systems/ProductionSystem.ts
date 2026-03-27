@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT } from '@sim/components/ComponentTypes';
+import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT, ROOF_EXIT } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
@@ -17,6 +17,7 @@ import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { GarageExitComponent } from '@sim/components/GarageExit';
+import type { RoofExitComponent } from '@sim/components/RoofExit';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
@@ -52,9 +53,15 @@ export class ProductionSystem implements System {
 
         const isHQ = world.hasComponent(e, BUILDING)
           && world.getComponent<BuildingComponent>(e, BUILDING)!.buildingType === BuildingType.HQ;
+        const isDroneFactory = world.hasComponent(e, BUILDING)
+          && world.getComponent<BuildingComponent>(e, BUILDING)!.buildingType === BuildingType.DroneFactory;
 
-        const spawnX = isHQ ? bldgPos.x : bldgPos.x + 4;
-        const spawnZ = isHQ ? bldgPos.z + 0.5 : bldgPos.z + 4;
+        const isFactoryAerial = isDroneFactory && def.category === UnitCategory.AerialDrone;
+        const spawnInside = isHQ || isDroneFactory;
+        // Aerial drones from factory spawn at building center (aligned with roof hatch)
+        // Ground units spawn offset toward the +Z side door
+        const spawnX = spawnInside ? bldgPos.x : bldgPos.x + 4;
+        const spawnZ = isFactoryAerial ? bldgPos.z : (spawnInside ? bldgPos.z + 0.5 : bldgPos.z + 4);
         const spawnY = this.terrainData.getHeight(spawnX, spawnZ) + 0.02;
 
         const unit = world.createEntity();
@@ -148,6 +155,23 @@ export class ProductionSystem implements System {
             rallyX: queue.rallyX,
             rallyZ: queue.rallyZ,
           });
+        } else if (isDroneFactory) {
+          if (def.category === UnitCategory.AerialDrone) {
+            // Aerial units rise through the roof
+            world.addComponent<RoofExitComponent>(unit, ROOF_EXIT, {
+              exitY: 5.5, // AERIAL_HEIGHT — seamless handoff to MovementSystem
+              rallyX: queue.rallyX,
+              rallyZ: queue.rallyZ,
+            });
+          } else {
+            // Ground units exit through the +Z factory door
+            // Factory is 32 voxels deep, halfZ = 2.4 wu, exit past the face
+            world.addComponent<GarageExitComponent>(unit, GARAGE_EXIT, {
+              exitZ: bldgPos.z + 3.0,
+              rallyX: queue.rallyX,
+              rallyZ: queue.rallyZ,
+            });
+          }
         } else if (queue.rallyX !== bldgPos.x || queue.rallyZ !== bldgPos.z) {
           // Move to rally point
           world.addComponent<MoveCommandComponent>(unit, MOVE_COMMAND, {

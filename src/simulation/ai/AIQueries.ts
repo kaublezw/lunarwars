@@ -3,7 +3,7 @@ import {
   POSITION, UNIT_TYPE, HEALTH, TEAM, BUILDING,
   BUILD_COMMAND, CONSTRUCTION, SUPPLY_ROUTE,
   MATTER_STORAGE, RESUPPLY_SEEK, PRODUCTION_QUEUE,
-  REPAIR_COMMAND, GARAGE_EXIT,
+  REPAIR_COMMAND, GARAGE_EXIT, ROOF_EXIT,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
@@ -48,6 +48,7 @@ export function getIdleWorkers(ctx: AIContext, state: AIWorldState): number[] {
     e => !ctx.world.hasComponent(e, BUILD_COMMAND)
       && !ctx.world.hasComponent(e, REPAIR_COMMAND)
       && !ctx.world.hasComponent(e, GARAGE_EXIT)
+      && !ctx.world.hasComponent(e, ROOF_EXIT)
   );
 }
 

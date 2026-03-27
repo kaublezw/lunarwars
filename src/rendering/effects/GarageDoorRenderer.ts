@@ -9,7 +9,8 @@ import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { VoxelStateComponent, BufferedImpact } from '@sim/components/VoxelState';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
-import { VOXEL_SIZE, GARAGE_DOOR_MODEL, indexToCoords } from '@sim/data/VoxelModels';
+import { VOXEL_SIZE, GARAGE_DOOR_MODEL, FACTORY_DOOR_MODEL, FACTORY_ROOF_DOOR_MODEL, indexToCoords } from '@sim/data/VoxelModels';
+import { UnitCategory } from '@sim/components/UnitType';
 import { buildVoxelGeometry } from '@render/VoxelGeometryBuilder';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
 
@@ -32,6 +33,21 @@ const OPEN_SPEED = DOOR_HEIGHT / 1.0;   // slides up fully in ~1s
 const CLOSE_SPEED = DOOR_HEIGHT / 0.8;  // closes slightly faster
 const OPEN_TRIGGER_TIME = 1.5;          // start opening when production has <=1.5s left
 const CLOSE_DELAY = 2.0;               // seconds after spawn before closing
+
+// Factory side door constants (32x22x32 factory, center at grid 16)
+// Side opening: x=9..22, y=1..10, z=31. Interior bay z=27..30. Door inset at grid z~28.5
+const FACTORY_SIDE_Z_OFFSET = (28.5 - 16) * VOXEL_SIZE; // 1.875 wu
+const FACTORY_SIDE_Y_OFFSET = 1 * VOXEL_SIZE;            // 0.15 wu — door at y=1
+const FACTORY_SIDE_DOOR_HEIGHT = 10 * VOXEL_SIZE;         // 1.5 wu
+const FACTORY_SIDE_CLIP_VOXEL_Y = 11;                    // wall above door opening (y=11)
+
+// Factory roof door constants (32x22x32 factory)
+// Roof opening: x=8..23, y=13..17, z=8..23. Interior bay y=10..12
+// Door sits at y=13 (bottom of upper hull opening)
+const FACTORY_ROOF_Y_OFFSET = 13 * VOXEL_SIZE;            // 1.95 wu
+const FACTORY_ROOF_X_CENTER = (15.5 - 16) * VOXEL_SIZE;   // -0.075 wu (near center)
+const FACTORY_ROOF_Z_CENTER = (15.5 - 16) * VOXEL_SIZE;   // -0.075 wu
+const FACTORY_ROOF_SLIDE_DIST = 16 * VOXEL_SIZE;          // 2.4 wu — slides +X fully open
 
 // Damage sync threshold: rebuild geometry when HQ damage changes by this much
 const DAMAGE_REBUILD_THRESHOLD = 0.01;
@@ -64,10 +80,28 @@ interface DoorTracker {
   hasCoolingVoxels: boolean;
 }
 
+interface SimpleDoor {
+  mesh: THREE.Mesh;
+  material: THREE.MeshStandardMaterial;
+  state: DoorState;
+  openAmount: number;
+  closeTimer: number;
+  clipPlane?: THREE.Plane;
+}
+
+interface FactoryDoorsTracker {
+  entity: number;
+  side: SimpleDoor;
+  roof: SimpleDoor;
+  lastQueueLength: number;
+  team: number;
+}
+
 export class GarageDoorRenderer {
   private scene: THREE.Scene;
   private debrisRenderer: DebrisRenderer;
   private trackers = new Map<number, DoorTracker>();
+  private factoryTrackers = new Map<number, FactoryDoorsTracker>();
   private fogState: FogOfWarState | null = null;
   private playerTeam = 0;
   private flashMaterial: THREE.MeshStandardMaterial;
@@ -95,11 +129,19 @@ export class GarageDoorRenderer {
   update(world: World, dt: number): void {
     const buildings = world.query(BUILDING, TEAM, POSITION);
     const activeHQs = new Set<number>();
+    const activeFactories = new Set<number>();
 
     for (const e of buildings) {
       if (world.hasComponent(e, CONSTRUCTION)) continue;
 
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
+
+      if (building.buildingType === BuildingType.DroneFactory) {
+        activeFactories.add(e);
+        this.updateFactory(world, e, dt);
+        continue;
+      }
+
       if (building.buildingType !== BuildingType.HQ) continue;
 
       activeHQs.add(e);
@@ -273,6 +315,19 @@ export class GarageDoorRenderer {
           tracker.material.dispose();
         }
         this.trackers.delete(entity);
+      }
+    }
+
+    // Clean up destroyed factories
+    for (const [entity, ft] of this.factoryTrackers) {
+      if (!activeFactories.has(entity)) {
+        this.scene.remove(ft.side.mesh);
+        ft.side.mesh.geometry.dispose();
+        ft.side.material.dispose();
+        this.scene.remove(ft.roof.mesh);
+        ft.roof.mesh.geometry.dispose();
+        ft.roof.material.dispose();
+        this.factoryTrackers.delete(entity);
       }
     }
   }
@@ -516,6 +571,135 @@ export class GarageDoorRenderer {
     }
   }
 
+  // --- Factory door logic (side + roof) ---
+
+  private updateFactory(world: World, entity: number, dt: number): void {
+    const team = world.getComponent<TeamComponent>(entity, TEAM)!;
+    const pos = world.getComponent<PositionComponent>(entity, POSITION)!;
+    const queue = world.getComponent<ProductionQueueComponent>(entity, PRODUCTION_QUEUE);
+
+    let ft = this.factoryTrackers.get(entity);
+    if (!ft) {
+      ft = this.createFactoryDoors(entity, team.team);
+      this.factoryTrackers.set(entity, ft);
+    }
+
+    const queueLen = queue ? queue.queue.length : 0;
+    const firstItem = queue && queue.queue.length > 0 ? queue.queue[0] : null;
+    const isAerial = firstItem ? firstItem.unitType === UnitCategory.AerialDrone : false;
+
+    // Side door triggers for ground units, roof for aerial
+    const sideReady = firstItem != null && !isAerial && firstItem.timeRemaining <= OPEN_TRIGGER_TIME;
+    const roofReady = firstItem != null && isAerial && firstItem.timeRemaining <= OPEN_TRIGGER_TIME;
+
+    this.animateDoor(ft.side, sideReady, queueLen, ft.lastQueueLength, dt,
+      OPEN_SPEED, CLOSE_SPEED);
+    this.animateDoor(ft.roof, roofReady, queueLen, ft.lastQueueLength, dt,
+      OPEN_SPEED, CLOSE_SPEED);
+
+    ft.lastQueueLength = queueLen;
+
+    // Position side door (slides up, like HQ)
+    const sideY = pos.y + FACTORY_SIDE_Y_OFFSET + ft.side.openAmount * FACTORY_SIDE_DOOR_HEIGHT;
+    ft.side.mesh.position.set(pos.x, sideY, pos.z + FACTORY_SIDE_Z_OFFSET);
+    ft.side.clipPlane!.constant = pos.y + FACTORY_SIDE_CLIP_VOXEL_Y * VOXEL_SIZE;
+
+    // Position roof door (slides +X to open, clipped at building edge)
+    const roofSlide = ft.roof.openAmount * FACTORY_ROOF_SLIDE_DIST;
+    ft.roof.mesh.position.set(
+      pos.x + FACTORY_ROOF_X_CENTER + roofSlide,
+      pos.y + FACTORY_ROOF_Y_OFFSET,
+      pos.z + FACTORY_ROOF_Z_CENTER,
+    );
+    // Clip plane: hide geometry past the +X edge of the upper hull (grid x=29, half=16)
+    ft.roof.clipPlane!.constant = pos.x + 29 * VOXEL_SIZE - 16 * VOXEL_SIZE;
+
+    // Fog visibility
+    const visible = !this.fogState || this.playerTeam < 0
+      || this.fogState.isVisible(this.playerTeam, pos.x, pos.z);
+    ft.side.mesh.visible = visible;
+    ft.roof.mesh.visible = visible;
+  }
+
+  private createFactoryDoors(entity: number, team: number): FactoryDoorsTracker {
+    // Side door
+    const sideModel = FACTORY_DOOR_MODEL;
+    const sideDestroyed = new Uint8Array(Math.ceil(sideModel.totalSolid / 8));
+    const sideSH = new Float32Array(sideModel.totalSolid);
+    const sideBuilt = buildVoxelGeometry(sideModel, sideDestroyed, team, sideSH);
+    const sideClip = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+    const sideMat = new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.7, metalness: 0.3,
+      clippingPlanes: [sideClip],
+    });
+    const sideMesh = new THREE.Mesh(sideBuilt.bodyGeometry, sideMat);
+    sideMesh.castShadow = false;
+    sideMesh.receiveShadow = false;
+    this.scene.add(sideMesh);
+
+    // Roof door — clips at the +X edge of the building so it slides under the hull
+    const roofModel = FACTORY_ROOF_DOOR_MODEL;
+    const roofDestroyed = new Uint8Array(Math.ceil(roofModel.totalSolid / 8));
+    const roofSH = new Float32Array(roofModel.totalSolid);
+    const roofBuilt = buildVoxelGeometry(roofModel, roofDestroyed, team, roofSH);
+    const roofClip = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+    const roofMat = new THREE.MeshStandardMaterial({
+      vertexColors: true, roughness: 0.7, metalness: 0.3,
+      clippingPlanes: [roofClip],
+    });
+    const roofMesh = new THREE.Mesh(roofBuilt.bodyGeometry, roofMat);
+    roofMesh.castShadow = false;
+    roofMesh.receiveShadow = false;
+    this.scene.add(roofMesh);
+
+    return {
+      entity,
+      side: { mesh: sideMesh, material: sideMat, state: 'closed', openAmount: 0, closeTimer: 0, clipPlane: sideClip },
+      roof: { mesh: roofMesh, material: roofMat, state: 'closed', openAmount: 0, closeTimer: 0, clipPlane: roofClip },
+      lastQueueLength: 0,
+      team,
+    };
+  }
+
+  private animateDoor(door: SimpleDoor, shouldOpen: boolean, queueLen: number, lastQueueLen: number, dt: number, openSpeed: number, closeSpeed: number): void {
+    switch (door.state) {
+      case 'closed':
+        if (shouldOpen) door.state = 'opening';
+        break;
+      case 'opening':
+        if (door.openAmount >= 1.0) {
+          door.state = 'open';
+          door.openAmount = 1.0;
+        }
+        break;
+      case 'open':
+        if (queueLen < lastQueueLen) door.closeTimer = CLOSE_DELAY;
+        if (door.closeTimer > 0) {
+          door.closeTimer -= dt;
+          if (door.closeTimer <= 0) {
+            if (shouldOpen) { door.closeTimer = 0; }
+            else { door.state = 'closing'; }
+          }
+        } else if (!shouldOpen) {
+          door.state = 'closing';
+        }
+        break;
+      case 'closing':
+        if (shouldOpen) { door.state = 'opening'; break; }
+        if (door.openAmount <= 0) {
+          door.state = 'closed';
+          door.openAmount = 0;
+        }
+        break;
+    }
+
+    if (door.state === 'opening') {
+      door.openAmount = Math.min(1.0, door.openAmount + openSpeed / FACTORY_SIDE_DOOR_HEIGHT * dt);
+    } else if (door.state === 'closing') {
+      door.openAmount = Math.max(0, door.openAmount - closeSpeed / FACTORY_SIDE_DOOR_HEIGHT * dt);
+    }
+  }
+
   /** Remove all tracked door meshes but keep the renderer alive (for world revert). */
   clearAll(): void {
     for (const [, tracker] of this.trackers) {
@@ -524,6 +708,16 @@ export class GarageDoorRenderer {
       tracker.material.dispose();
     }
     this.trackers.clear();
+
+    for (const [, ft] of this.factoryTrackers) {
+      this.scene.remove(ft.side.mesh);
+      ft.side.mesh.geometry.dispose();
+      ft.side.material.dispose();
+      this.scene.remove(ft.roof.mesh);
+      ft.roof.mesh.geometry.dispose();
+      ft.roof.material.dispose();
+    }
+    this.factoryTrackers.clear();
   }
 
   dispose(): void {
