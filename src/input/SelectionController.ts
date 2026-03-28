@@ -23,6 +23,7 @@ import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { RepairCommandComponent } from '@sim/components/RepairCommand';
 import { UnitCategory } from '@sim/components/UnitType';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
+import type { GameCommandPayload } from '@network/Protocol';
 
 const DRAG_THRESHOLD = 5; // pixels
 
@@ -53,6 +54,10 @@ export class SelectionController {
   private playerTeam = 0;
   private placementCheck: (() => boolean) | null = null;
   private stickySelection = false;
+
+  // Multiplayer command interception: when set, commands go through network instead of direct ECS mutation
+  onCommand: ((payload: GameCommandPayload) => void) | null = null;
+  tickProvider: (() => number) | null = null;
 
   // Callbacks for box select rendering
   onBoxSelectStart?: () => void;
@@ -286,6 +291,10 @@ export class SelectionController {
       const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
       if (!sel.selected) continue;
 
+      // Only command own-team units
+      const teamComp = this.world.getComponent<TeamComponent>(e, TEAM);
+      if (teamComp && teamComp.team !== this.playerTeam) continue;
+
       const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
       const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE);
       const radius = ut ? ut.radius : 0.5;
@@ -309,9 +318,13 @@ export class SelectionController {
         this.world.hasComponent(s.entity, BUILDING) &&
         !this.world.hasComponent(s.entity, CONSTRUCTION)
       ) {
-        const queue = this.world.getComponent<ProductionQueueComponent>(s.entity, PRODUCTION_QUEUE)!;
-        queue.rallyX = destX;
-        queue.rallyZ = destZ;
+        if (this.onCommand) {
+          this.onCommand({ type: 'setRallyPoint', buildingEntity: s.entity, rallyX: destX, rallyZ: destZ });
+        } else {
+          const queue = this.world.getComponent<ProductionQueueComponent>(s.entity, PRODUCTION_QUEUE)!;
+          queue.rallyX = destX;
+          queue.rallyZ = destZ;
+        }
         setRally = true;
       } else {
         mobileUnits.push(s);
@@ -340,6 +353,23 @@ export class SelectionController {
       }
 
       if (workers.length > 0) {
+        if (this.onCommand) {
+          // Reassign first worker via network, move others
+          this.onCommand({ type: 'reassignWorker', workerEntity: workers[0].entity, constructionSiteEntity: constructionSite });
+          const others = [...workers.slice(1), ...nonWorkers];
+          if (others.length > 0) {
+            const tick = this.tickProvider?.() ?? 0;
+            this.onCommand({
+              type: 'moveUnits',
+              entityIds: others.map(s => s.entity),
+              destX, destZ,
+              jitterSeed: (tick * 31 + others[0].entity) >>> 0,
+            });
+          }
+          this.events.emit('command:move', destX, destZ);
+          return;
+        }
+
         const sitePos = this.world.getComponent<PositionComponent>(constructionSite, POSITION)!;
         const construction = this.world.getComponent<ConstructionComponent>(constructionSite, CONSTRUCTION)!;
 
@@ -407,10 +437,22 @@ export class SelectionController {
     const enemy = this.findEnemyAtScreen(sx, sy);
     if (enemy !== null) {
       // Check if any selected unit has a turret (combat unit)
-      const hasCombat = selected.some(s => this.world.hasComponent(s.entity, TURRET));
+      const hasCombat = mobileUnits.some(s => this.world.hasComponent(s.entity, TURRET));
       if (hasCombat) {
+        if (this.onCommand) {
+          const enemyPos = this.world.getComponent<PositionComponent>(enemy, POSITION)!;
+          this.onCommand({
+            type: 'attackMove',
+            entityIds: mobileUnits.map(s => s.entity),
+            targetEntity: enemy,
+            targetX: enemyPos.x,
+            targetZ: enemyPos.z,
+          });
+          this.events.emit('command:move', enemyPos.x, enemyPos.z);
+          return;
+        }
         const enemyPos = this.world.getComponent<PositionComponent>(enemy, POSITION)!;
-        for (const s of selected) {
+        for (const s of mobileUnits) {
           // Cancel ferry and resupply
           if (this.world.hasComponent(s.entity, SUPPLY_ROUTE)) {
             this.world.removeComponent(s.entity, SUPPLY_ROUTE);
@@ -450,8 +492,39 @@ export class SelectionController {
 
     // Check if right-clicked on a friendly damaged building (assign worker repair)
     const damagedBuilding = this.findDamagedBuildingAtScreen(sx, sy);
-    if (damagedBuilding !== null && this.tryAssignWorkerToRepair(damagedBuilding)) {
-      this.events.emit('command:repair', worldPos.x, worldPos.z);
+    if (damagedBuilding !== null) {
+      if (this.onCommand) {
+        // Find selected workers for repair command
+        const workerIds = mobileUnits
+          .filter(s => {
+            const ut = this.world.getComponent<UnitTypeComponent>(s.entity, UNIT_TYPE);
+            return ut && ut.category === UnitCategory.WorkerDrone;
+          })
+          .map(s => s.entity);
+        if (workerIds.length > 0) {
+          this.onCommand({ type: 'repairBuilding', workerEntities: workerIds, targetBuildingEntity: damagedBuilding });
+          this.events.emit('command:repair', worldPos.x, worldPos.z);
+          return;
+        }
+      } else if (this.tryAssignWorkerToRepair(damagedBuilding)) {
+        this.events.emit('command:repair', worldPos.x, worldPos.z);
+        return;
+      }
+    }
+
+    // Multiplayer: route all move commands through network
+    if (this.onCommand) {
+      const entityIds = mobileUnits.map(s => s.entity);
+      if (entityIds.length > 0) {
+        const tick = this.tickProvider?.() ?? 0;
+        this.onCommand({
+          type: 'moveUnits',
+          entityIds,
+          destX, destZ,
+          jitterSeed: (tick * 31 + entityIds[0]) >>> 0,
+        });
+        this.events.emit('command:move', destX, destZ);
+      }
       return;
     }
 
@@ -696,15 +769,23 @@ export class SelectionController {
       const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
       if (!sel.selected) continue;
 
+      // Only command own-team units
+      const teamComp = this.world.getComponent<TeamComponent>(e, TEAM);
+      if (teamComp && teamComp.team !== this.playerTeam) continue;
+
       // Set rally point on production buildings
       if (
         this.world.hasComponent(e, PRODUCTION_QUEUE) &&
         this.world.hasComponent(e, BUILDING) &&
         !this.world.hasComponent(e, CONSTRUCTION)
       ) {
-        const queue = this.world.getComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE)!;
-        queue.rallyX = destX;
-        queue.rallyZ = destZ;
+        if (this.onCommand) {
+          this.onCommand({ type: 'setRallyPoint', buildingEntity: e, rallyX: destX, rallyZ: destZ });
+        } else {
+          const queue = this.world.getComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE)!;
+          queue.rallyX = destX;
+          queue.rallyZ = destZ;
+        }
         continue;
       }
 
@@ -721,6 +802,20 @@ export class SelectionController {
     }
 
     if (mobile.length === 0) return;
+
+    // Multiplayer: route move through network
+    if (this.onCommand) {
+      const entityIds = mobile.map(s => s.entity);
+      const tick = this.tickProvider?.() ?? 0;
+      this.onCommand({
+        type: 'moveUnits',
+        entityIds,
+        destX, destZ,
+        jitterSeed: (tick * 31 + entityIds[0]) >>> 0,
+      });
+      this.events.emit('command:move', destX, destZ);
+      return;
+    }
 
     for (const s of mobile) {
       if (this.world.hasComponent(s.entity, SUPPLY_ROUTE)) {

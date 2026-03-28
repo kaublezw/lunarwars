@@ -7,6 +7,7 @@ export class GameLoop {
   private rafId = 0;
   private timeScale = 1;
   private tickCount = 0;
+  private beforeTick: ((tick: number) => boolean) | null = null;
 
   constructor(
     private simulate: (dt: number) => void,
@@ -53,6 +54,11 @@ export class GameLoop {
     return this.tickCount;
   }
 
+  /** Optional gate called before each tick. Return false to stall (e.g., waiting for network). */
+  setBeforeTick(fn: ((tick: number) => boolean) | null): void {
+    this.beforeTick = fn;
+  }
+
   private loop = (): void => {
     if (!this.running) return;
     this.rafId = requestAnimationFrame(this.loop);
@@ -73,6 +79,9 @@ export class GameLoop {
       }
 
       while (this.accumulator >= this.TICK_RATE) {
+        if (this.beforeTick && !this.beforeTick(this.tickCount)) {
+          break; // stall — waiting for network or other gate
+        }
         this.simulate(this.TICK_RATE);
         this.tickCount++;
         this.accumulator -= this.TICK_RATE;

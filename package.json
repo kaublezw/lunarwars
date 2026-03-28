@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "convert-vox": "tsx scripts/convert-vox.ts",
     "headless": "tsx scripts/run-headless.ts",
-    "rl": "tsx scripts/run-rl-server.ts"
+    "rl": "tsx scripts/run-rl-server.ts",
+    "server": "cd server && npx tsx server.ts"
   },
   "dependencies": {
     "three": "^0.170.0",

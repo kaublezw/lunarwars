@@ -84,7 +84,14 @@ import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import * as GameCommands from '@sim/commands/GameCommands';
+import type { GameCommandContext } from '@sim/commands/GameCommands';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import { NetworkClient } from '@network/NetworkClient';
+import { CommandBuffer } from '@network/CommandBuffer';
+import { executeCommand } from '@network/CommandExecutor';
+import { DesyncDetector } from '@network/DesyncDetector';
+import { LobbyOverlay } from '@ui/LobbyOverlay';
+import type { GameCommandPayload } from '@network/Protocol';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 
@@ -103,6 +110,12 @@ const replayMode = replaySeedParam !== null;
 
 // --- RL Model Mode (URL param: ?rl) — trained model vs built-in AI spectator ---
 const rlMode = new URLSearchParams(window.location.search).has('rl');
+
+// --- Multiplayer Mode ---
+const urlParams = new URLSearchParams(window.location.search);
+const multiplayerHost = urlParams.has('host');
+const multiplayerJoinCode = urlParams.get('room');
+const isMultiplayer = multiplayerHost || multiplayerJoinCode !== null;
 
 // --- Spectator Mode ---
 const SPECTATOR_KEY = 'lunarwars_spectator';
@@ -147,9 +160,65 @@ if (savedRaw && !replayMode) {
   }
 }
 
-const seed = replayMode
-  ? (parseInt(replaySeedParam!, 10) || 1)
-  : saveData ? saveData.seed : Math.floor(Math.random() * 2147483647);
+// --- Multiplayer Lobby (blocks until game_start if multiplayer) ---
+let mpSeed = 0;
+let mpTeam = 0;
+let mpInputDelay = 6;
+let networkClient: NetworkClient | null = null;
+let commandBuffer: CommandBuffer | null = null;
+let desyncDetector: DesyncDetector | null = null;
+const lobbyOverlay = new LobbyOverlay();
+lobbyOverlay.mount(app);
+
+if (isMultiplayer) {
+  lobbyOverlay.show();
+  lobbyOverlay.setStatus('Connecting to server...');
+
+  networkClient = new NetworkClient();
+  try {
+    await networkClient.connect();
+  } catch {
+    lobbyOverlay.setStatus('Failed to connect to server');
+  }
+
+  const mpConfig = await new Promise<{ seed: number; team: number; inputDelay: number }>((resolve) => {
+    networkClient!.onRoomCreated = (code) => {
+      lobbyOverlay.showRoomCode(code);
+      lobbyOverlay.setStatus('Waiting for opponent...');
+    };
+    networkClient!.onJoinedRoom = () => {
+      lobbyOverlay.setStatus('Joined! Waiting for game to start...');
+    };
+    networkClient!.onLobbyError = (msg) => {
+      lobbyOverlay.setStatus('Error: ' + msg);
+    };
+    networkClient!.onGameStart = (seed, team, inputDelay) => {
+      resolve({ seed, team, inputDelay });
+    };
+
+    if (multiplayerHost) {
+      networkClient!.createRoom();
+    } else if (multiplayerJoinCode) {
+      networkClient!.joinRoom(multiplayerJoinCode);
+    }
+  });
+
+  mpSeed = mpConfig.seed;
+  mpTeam = mpConfig.team;
+  mpInputDelay = mpConfig.inputDelay;
+  commandBuffer = new CommandBuffer(mpTeam, mpInputDelay);
+  desyncDetector = new DesyncDetector();
+
+  lobbyOverlay.setStatus('Game starting!');
+  lobbyOverlay.hideRoomCode();
+  setTimeout(() => lobbyOverlay.hide(), 500);
+}
+
+const seed = isMultiplayer
+  ? mpSeed
+  : replayMode
+    ? (parseInt(replaySeedParam!, 10) || 1)
+    : saveData ? saveData.seed : Math.floor(Math.random() * 2147483647);
 
 // --- Terrain ---
 const terrainData = new TerrainData({ seed });
@@ -221,8 +290,8 @@ const buildingOccupancy = new BuildingOccupancy(276, 276);
 
 // Team colors: team 0 = blue, team 1 = red
 const TEAM_COLORS = [0x4488ff, 0xff4444];
-const PLAYER_TEAM = 0;
-const AI_TEAM = 1;
+const PLAYER_TEAM = isMultiplayer ? mpTeam : 0;
+const AI_TEAM = isMultiplayer ? -1 : 1; // -1 = no AI in multiplayer
 
 // --- Seeded RNG for deterministic simulation ---
 const simRng = new SeededRandom(seed * 9973);
@@ -271,7 +340,9 @@ world.addSystem(new EconomySystem(resourceState, 2, terrainData));
 world.addSystem(new SupplySystem(terrainData, resourceState));
 world.addSystem(new BuildSystem());
 world.addSystem(new ProductionSystem(resourceState, terrainData));
-if (rlMode) {
+if (isMultiplayer) {
+  // Multiplayer: no AI — both teams are human players
+} else if (rlMode) {
   // RL mode: built-in AI for team 0 (PLAYER_TEAM), trained model for team 1 (AI_TEAM)
   world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
   world.addSystem(new RLAISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
@@ -621,14 +692,26 @@ if (selectionController) {
 // --- Wire Action Bar + Placement ---
 let wallWorkerEntity = -1; // captured when Wall button is clicked so it survives deselection during drag
 
+// Shared command context for GameCommands and CommandExecutor
+const cmdCtx: GameCommandContext = {
+  world,
+  resources: resourceState,
+  terrain: terrainData,
+  energyNodes,
+  oreDeposits,
+};
+
+/** Send a command through multiplayer network, or execute immediately in single-player. */
+function issueCommand(payload: GameCommandPayload): void {
+  if (isMultiplayer && commandBuffer && networkClient) {
+    const tagged = commandBuffer.addLocalCommand(gameLoop.getTickCount(), payload);
+    networkClient.sendCommand(tagged.tick, tagged.playerId, tagged.payload);
+  } else {
+    executeCommand(payload, cmdCtx, world);
+  }
+}
+
 function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void {
-  const cmdCtx: GameCommands.GameCommandContext = {
-    world,
-    resources: resourceState,
-    terrain: terrainData,
-    energyNodes,
-    oreDeposits,
-  };
 
   ab.onBuildRequest((type) => {
     // Find a selected worker belonging to the player
@@ -688,7 +771,14 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
       if (building.buildingType !== targetBuildingType) continue;
 
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-      GameCommands.trainUnit(cmdCtx, PLAYER_TEAM, e, unitType as UnitCategory, pos.x, pos.z + 5);
+      issueCommand({
+        type: 'trainUnit',
+        team: PLAYER_TEAM,
+        factoryEntity: e,
+        unitType: unitType as string,
+        rallyX: pos.x,
+        rallyZ: pos.z + 5,
+      });
       break;
     }
   });
@@ -697,19 +787,11 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     // Verify entity is a valid non-HQ building belonging to player
     const building = world.getComponent<BuildingComponent>(entity, BUILDING);
     if (!building || building.buildingType === BuildingType.HQ) return;
-    const team = world.getComponent<TeamComponent>(entity, TEAM);
-    if (!team || team.team !== PLAYER_TEAM) return;
-    // Don't demolish buildings still under construction
+    const teamComp = world.getComponent<TeamComponent>(entity, TEAM);
+    if (!teamComp || teamComp.team !== PLAYER_TEAM) return;
     if (world.hasComponent(entity, CONSTRUCTION)) return;
 
-    // Refund 70% of matter cost
-    const def = BUILDING_DEFS[building.buildingType];
-    if (def) {
-      const refund = Math.floor(def.matterCost * 0.7);
-      resourceState.get(PLAYER_TEAM).matter += refund;
-    }
-
-    world.destroyEntity(entity);
+    issueCommand({ type: 'demolish', entityId: entity, team: PLAYER_TEAM });
   });
 
   pc.onPlacementConfirmed((type, x, z) => {
@@ -729,7 +811,13 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     }
     if (workerEntity === -1) return;
 
-    GameCommands.buildStructure(cmdCtx, PLAYER_TEAM, type as BuildingType, x, z, workerEntity);
+    issueCommand({
+      type: 'buildStructure',
+      team: PLAYER_TEAM,
+      buildingType: type as string,
+      x, z,
+      workerEntity,
+    });
     ghostRenderer.hide();
   });
 
@@ -755,7 +843,12 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     // Verify the worker is still alive
     if (!world.getComponent<PositionComponent>(workerEntity, POSITION)) return;
 
-    GameCommands.buildWallSegments(cmdCtx, PLAYER_TEAM, segments as GameCommands.WallSegment[], workerEntity);
+    issueCommand({
+      type: 'buildWallSegments',
+      team: PLAYER_TEAM,
+      segments: segments as { x: number; z: number; meshType: string }[],
+      workerEntity,
+    });
     ghostRenderer.hideWall();
   });
 
@@ -771,6 +864,12 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
 // Call for normal game mode
 if (actionBar && placementController) {
   wireActionBarAndPlacement(actionBar, placementController);
+}
+
+// Wire SelectionController for multiplayer command routing
+if (isMultiplayer && selectionController) {
+  selectionController.onCommand = (payload) => issueCommand(payload);
+  selectionController.tickProvider = () => gameLoop.getTickCount();
 }
 
 // --- Wire Spectator Panel ---
@@ -867,12 +966,64 @@ const gameLoop = new GameLoop(
   }
 );
 
+// --- Multiplayer Network Wiring ---
+if (isMultiplayer && networkClient && commandBuffer) {
+  // Wire network message handlers
+  networkClient.onGameCommand = (cmd) => {
+    commandBuffer!.addRemoteCommand(cmd);
+  };
+  networkClient.onTickConfirm = (playerId, tick) => {
+    commandBuffer!.addTickConfirm(playerId, tick);
+  };
+  networkClient.onOpponentDisconnected = () => {
+    gameOver = true;
+    gameLoop.stop();
+    // Show a simple disconnect message using the game over overlay
+    const playerWon = true; // opponent left = you win
+    gameOverOverlay.show(playerWon);
+  };
+
+  // Pre-confirm initial ticks so the game can start
+  commandBuffer.initializeForGameStart(0);
+
+  // Desync detection
+  if (desyncDetector) {
+    desyncDetector.setSendFn((tick, checksum) => {
+      networkClient!.sendDesyncAlert(tick, checksum);
+    });
+  }
+
+  // beforeTick gate: apply buffered commands, confirm ticks
+  gameLoop.setBeforeTick((tick: number) => {
+    if (!commandBuffer!.canAdvanceTick(tick)) {
+      return false; // stall — waiting for opponent's commands/confirm
+    }
+    // Apply all commands for this tick
+    const commands = commandBuffer!.getCommandsForTick(tick);
+    if (commands) {
+      for (const cmd of commands) {
+        executeCommand(cmd, cmdCtx, world);
+      }
+    }
+    // Confirm the future tick (inputDelay ahead) so opponent can advance
+    const futureTick = tick + commandBuffer!.getInputDelay();
+    commandBuffer!.confirmLocalTick(futureTick);
+    networkClient!.sendTickConfirm(futureTick);
+    // Desync check
+    desyncDetector?.update(tick, world, resourceState);
+    return true;
+  });
+
+  // Lock time scale and disable save in multiplayer
+  gameLoop.setTimeScale(1);
+}
+
 // --- Pause Toggle (P key) ---
 inputManager.onKeyDown((key: string) => {
   if (key === 'f3') {
     perfPanel.toggle();
   }
-  if (key === 'p' && !gameOver) {
+  if (key === 'p' && !gameOver && !isMultiplayer) {
     gameLoop.togglePause();
     if (gameLoop.isPaused()) {
       pauseOverlay.show();
@@ -1127,8 +1278,8 @@ if (replayMode || rlMode) {
   document.body.appendChild(tickLabel);
 }
 
-// --- Auto-Save (every 5 seconds, skip for sandbox) ---
-if (scenarioMode !== 'sandbox') {
+// --- Auto-Save (every 5 seconds, skip for sandbox and multiplayer) ---
+if (scenarioMode !== 'sandbox' && !isMultiplayer) {
   setInterval(() => {
     try {
       const data: Record<string, unknown> = {
