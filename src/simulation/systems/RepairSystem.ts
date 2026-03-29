@@ -13,7 +13,7 @@ import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import { REPAIR_RATE, REPAIR_MATTER_COST } from '@sim/economy/DepotUtils';
 
-const REPAIR_RANGE = 4;
+const REPAIR_RANGE = 6; // must exceed largest building footprint radius + pathfinding margin
 const REPAIR_RANGE_SQ = REPAIR_RANGE * REPAIR_RANGE;
 
 export class RepairSystem implements System {
@@ -55,7 +55,7 @@ export class RepairSystem implements System {
         storage.stored -= affordable;
       }
 
-      this.restoreVoxels(world, d, health);
+      this.restoreVoxels(world, d, health, actualRepair);
     }
   }
 
@@ -131,7 +131,7 @@ export class RepairSystem implements System {
         this.resources.spendMatter(team.team, affordable);
       }
 
-      this.restoreVoxels(world, repair.targetEntity, targetHealth);
+      this.restoreVoxels(world, repair.targetEntity, targetHealth, actualRepair);
 
       // Check if fully repaired
       if (targetHealth.current >= targetHealth.max) {
@@ -140,26 +140,33 @@ export class RepairSystem implements System {
     }
   }
 
-  /** Restore voxels proportionally to HP (same pattern as ResupplySystem). */
-  private restoreVoxels(world: World, entity: number, health: HealthComponent): void {
+  /** Restore voxels proportionally to HP repaired this tick. */
+  private restoreVoxels(world: World, entity: number, health: HealthComponent, hpRepaired: number): void {
     const voxelState = world.getComponent<VoxelStateComponent>(entity, VOXEL_STATE);
     if (!voxelState || voxelState.destroyedCount <= 0) return;
+    if (hpRepaired <= 0 && health.current < health.max) return;
 
-    const hpFraction = health.current / health.max;
-    const targetDestroyed = Math.floor(voxelState.totalVoxels * (1 - hpFraction));
-    if (voxelState.destroyedCount > targetDestroyed) {
-      let toRestore = voxelState.destroyedCount - targetDestroyed;
-      for (let byteIdx = 0; byteIdx < voxelState.destroyed.length && toRestore > 0; byteIdx++) {
-        if (voxelState.destroyed[byteIdx] === 0) continue;
-        for (let bitIdx = 0; bitIdx < 8 && toRestore > 0; bitIdx++) {
-          if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) {
-            voxelState.destroyed[byteIdx] &= ~(1 << bitIdx);
-            voxelState.destroyedCount--;
-            toRestore--;
-          }
+    let toRestore: number;
+    if (health.current >= health.max) {
+      // Fully healed: restore all remaining
+      toRestore = voxelState.destroyedCount;
+    } else {
+      // Restore voxels proportionally: destroyed remaining * (hpRepaired / hpStillNeeded)
+      const hpStillMissing = health.max - health.current;
+      toRestore = Math.max(1, Math.round(voxelState.destroyedCount * hpRepaired / (hpStillMissing + hpRepaired)));
+    }
+
+    let restored = 0;
+    for (let byteIdx = 0; byteIdx < voxelState.destroyed.length && restored < toRestore; byteIdx++) {
+      if (voxelState.destroyed[byteIdx] === 0) continue;
+      for (let bitIdx = 0; bitIdx < 8 && restored < toRestore; bitIdx++) {
+        if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) {
+          voxelState.destroyed[byteIdx] &= ~(1 << bitIdx);
+          voxelState.destroyedCount--;
+          restored++;
         }
       }
-      voxelState.dirty = true;
     }
+    if (restored > 0) voxelState.dirty = true;
   }
 }

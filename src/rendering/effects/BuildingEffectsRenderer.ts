@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, POSITION, ENERGY_PACKET, HEALTH, PRODUCTION_QUEUE } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, POSITION, ENERGY_PACKET, HEALTH, PRODUCTION_QUEUE, BUILD_COMMAND, REPAIR_COMMAND } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -8,6 +8,8 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { EnergyPacketComponent } from '@sim/components/EnergyPacket';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
+import type { BuildCommandComponent } from '@sim/components/BuildCommand';
+import type { RepairCommandComponent } from '@sim/components/RepairCommand';
 import type { ParticleRenderer } from '@render/effects/ParticleRenderer';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
@@ -23,6 +25,12 @@ const PRODUCTION_LIGHT_COLOR = 0xff8833;  // warm orange — welding sparks
 const PRODUCTION_LIGHT_INTENSITY = 15.0;
 const PRODUCTION_LIGHT_DISTANCE = 8.0;
 const PRODUCTION_LIGHT_Y_OFFSET = 1.5;   // inside building
+const BUILD_SPARK_INTERVAL = 0.08;        // seconds between spark bursts (~12/sec)
+const BUILD_SPARK_COUNT = 2;              // sparks per burst
+const BUILD_SPARK_COLOR = 0xffaa44;       // warm welding yellow-orange
+const BUILD_GLOW_COLOR = 0xff8833;        // welding glow orange
+const BUILD_GLOW_INTENSITY = 12.0;
+const BUILD_GLOW_DISTANCE = 6.0;
 
 interface SmokeTracker {
   entity: number;
@@ -47,6 +55,13 @@ interface ProductionGlowTracker {
   time: number;
 }
 
+interface BuildSparkTracker {
+  entity: number;
+  sparkTimer: number;
+  time: number;
+  glowLight: THREE.PointLight;
+}
+
 interface TrackedPacket {
   source: number;
   target: number;
@@ -62,6 +77,7 @@ export class BuildingEffectsRenderer {
   private packetGlowTrackers = new Map<number, PacketGlowTracker>();
   private matterPacketGlowTrackers = new Map<number, PacketGlowTracker>();
   private productionGlowTrackers = new Map<number, ProductionGlowTracker>();
+  private buildSparkTrackers = new Map<number, BuildSparkTracker>();
   private trackedPackets = new Map<number, TrackedPacket>();
   private particleRenderer: ParticleRenderer;
   private debrisRenderer: DebrisRenderer;
@@ -156,6 +172,9 @@ export class BuildingEffectsRenderer {
 
     // Matter packets: no glow (dark ore cubes)
     this.cleanupMatterPacketGlows();
+
+    // Construction welding sparks
+    this.updateBuildSparks(world, dt);
   }
 
   private detectPacketEvents(world: World): void {
@@ -331,6 +350,87 @@ export class BuildingEffectsRenderer {
     tracker.light.position.set(pos.x, pos.y + PRODUCTION_LIGHT_Y_OFFSET, pos.z);
   }
 
+  private updateBuildSparks(world: World, dt: number): void {
+    const activeWorkers = new Set<number>();
+
+    // Collect active workers: building construction sites
+    const builders = world.query(BUILD_COMMAND, POSITION);
+    for (const e of builders) {
+      const cmd = world.getComponent<BuildCommandComponent>(e, BUILD_COMMAND)!;
+      if (cmd.state !== 'building') continue;
+      const sitePos = world.getComponent<PositionComponent>(cmd.siteEntity, POSITION);
+      if (!sitePos) continue;
+      activeWorkers.add(e);
+      this.emitWorkerSparks(e, cmd.siteEntity, world, dt);
+    }
+
+    // Collect active workers: repairing buildings
+    const repairers = world.query(REPAIR_COMMAND, POSITION);
+    for (const e of repairers) {
+      const repair = world.getComponent<RepairCommandComponent>(e, REPAIR_COMMAND)!;
+      if (repair.state !== 'repairing') continue;
+      const targetPos = world.getComponent<PositionComponent>(repair.targetEntity, POSITION);
+      if (!targetPos) continue;
+      activeWorkers.add(e);
+      this.emitWorkerSparks(e, repair.targetEntity, world, dt);
+    }
+
+    // Clean up workers no longer building or repairing
+    for (const [entity, tracker] of this.buildSparkTrackers) {
+      if (!activeWorkers.has(entity)) {
+        this.scene.remove(tracker.glowLight);
+        tracker.glowLight.dispose();
+        this.buildSparkTrackers.delete(entity);
+      }
+    }
+  }
+
+  private emitWorkerSparks(workerEntity: number, targetEntity: number, world: World, dt: number): void {
+    const workerPos = world.getComponent<PositionComponent>(workerEntity, POSITION)!;
+    const targetPos = world.getComponent<PositionComponent>(targetEntity, POSITION)!;
+
+    const visible = !this.fogState || this.playerTeam < 0 ||
+      this.fogState.isVisible(this.playerTeam, workerPos.x, workerPos.z);
+
+    let tracker = this.buildSparkTrackers.get(workerEntity);
+    if (!tracker) {
+      const light = new THREE.PointLight(BUILD_GLOW_COLOR, 0, BUILD_GLOW_DISTANCE);
+      this.scene.add(light);
+      tracker = { entity: workerEntity, sparkTimer: 0, time: 0, glowLight: light };
+      this.buildSparkTrackers.set(workerEntity, tracker);
+    }
+
+    // Spark origin: midway between worker and target, slightly above ground
+    const sparkX = (workerPos.x + targetPos.x) * 0.5;
+    const sparkY = Math.max(workerPos.y, targetPos.y) + 0.5;
+    const sparkZ = (workerPos.z + targetPos.z) * 0.5;
+
+    // Welding flicker light
+    tracker.time += dt;
+    const sin1 = Math.sin(tracker.time * 15.0) * 0.3;
+    const sin2 = Math.sin(tracker.time * 7.3) * 0.2;
+    const noise = (Math.random() - 0.5) * 0.4;
+    const flicker = Math.max(0, 0.5 + sin1 + sin2 + noise);
+    tracker.glowLight.intensity = visible ? flicker * BUILD_GLOW_INTENSITY : 0;
+    tracker.glowLight.position.set(sparkX, sparkY, sparkZ);
+
+    // Spawn glowing voxel sparks
+    tracker.sparkTimer += dt;
+    if (tracker.sparkTimer >= BUILD_SPARK_INTERVAL && visible) {
+      tracker.sparkTimer -= BUILD_SPARK_INTERVAL;
+      for (let i = 0; i < BUILD_SPARK_COUNT; i++) {
+        const dx = (Math.random() - 0.5) * 0.3;
+        const dy = Math.random() * 0.3;
+        const dz = (Math.random() - 0.5) * 0.3;
+        this.debrisRenderer.spawn(
+          sparkX, sparkY, sparkZ,
+          dx, dy, dz,
+          BUILD_SPARK_COLOR, 1.0, BUILD_SPARK_COLOR, true,
+        );
+      }
+    }
+  }
+
   private updatePacketGlows(world: World): void {
     const packets = world.query(ENERGY_PACKET, POSITION);
     const activePackets = new Set<number>();
@@ -397,11 +497,16 @@ export class BuildingEffectsRenderer {
       this.scene.remove(tracker.light);
       tracker.light.dispose();
     }
+    for (const [, tracker] of this.buildSparkTrackers) {
+      this.scene.remove(tracker.glowLight);
+      tracker.glowLight.dispose();
+    }
     this.glowTrackers.clear();
     this.hqGlowTrackers.clear();
     this.packetGlowTrackers.clear();
     this.matterPacketGlowTrackers.clear();
     this.productionGlowTrackers.clear();
+    this.buildSparkTrackers.clear();
     this.trackedPackets.clear();
     this.smokeTrackers.clear();
   }

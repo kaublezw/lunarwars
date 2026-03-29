@@ -79,36 +79,40 @@ export class ResupplySystem implements System {
         }
 
         // Repair gradually
+        let actualRepair = 0;
         if (health.current < health.max && storage.stored > 0) {
           const hpToRepair = Math.min(REPAIR_RATE * dt, health.max - health.current);
           const repairCost = hpToRepair * REPAIR_MATTER_COST;
           const affordable = Math.min(repairCost, storage.stored);
-          const actualRepair = affordable / REPAIR_MATTER_COST;
+          actualRepair = affordable / REPAIR_MATTER_COST;
           if (actualRepair > 0) {
             health.current = Math.min(health.current + actualRepair, health.max);
             storage.stored -= affordable;
           }
         }
 
-        // Restore voxels proportionally to HP
+        // Restore voxels proportionally to HP repaired this tick
         const voxelState = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE);
-        if (voxelState && voxelState.destroyedCount > 0) {
-          const hpFraction = health.current / health.max;
-          const targetDestroyed = Math.floor(voxelState.totalVoxels * (1 - hpFraction));
-          if (voxelState.destroyedCount > targetDestroyed) {
-            let toRestore = voxelState.destroyedCount - targetDestroyed;
-            for (let byteIdx = 0; byteIdx < voxelState.destroyed.length && toRestore > 0; byteIdx++) {
-              if (voxelState.destroyed[byteIdx] === 0) continue;
-              for (let bitIdx = 0; bitIdx < 8 && toRestore > 0; bitIdx++) {
-                if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) {
-                  voxelState.destroyed[byteIdx] &= ~(1 << bitIdx);
-                  voxelState.destroyedCount--;
-                  toRestore--;
-                }
+        if (voxelState && voxelState.destroyedCount > 0 && (actualRepair > 0 || health.current >= health.max)) {
+          let toRestore: number;
+          if (health.current >= health.max) {
+            toRestore = voxelState.destroyedCount;
+          } else {
+            const hpStillMissing = health.max - health.current;
+            toRestore = Math.max(1, Math.round(voxelState.destroyedCount * actualRepair / (hpStillMissing + actualRepair)));
+          }
+          let restored = 0;
+          for (let byteIdx = 0; byteIdx < voxelState.destroyed.length && restored < toRestore; byteIdx++) {
+            if (voxelState.destroyed[byteIdx] === 0) continue;
+            for (let bitIdx = 0; bitIdx < 8 && restored < toRestore; bitIdx++) {
+              if (voxelState.destroyed[byteIdx] & (1 << bitIdx)) {
+                voxelState.destroyed[byteIdx] &= ~(1 << bitIdx);
+                voxelState.destroyedCount--;
+                restored++;
               }
             }
-            voxelState.dirty = true;
           }
+          if (restored > 0) voxelState.dirty = true;
         }
 
         // Cancel any active RESUPPLY_SEEK since we're being passively served

@@ -23,7 +23,7 @@ interface Particle {
   active: boolean;
 }
 
-const sparkGeometry = new THREE.SphereGeometry(0.06, 4, 3);
+const sparkGeometry = new THREE.BoxGeometry(0.15, 0.15, 0.15);
 
 export class ParticleRenderer {
   private particles: Particle[] = [];
