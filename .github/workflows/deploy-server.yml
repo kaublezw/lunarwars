@@ -1,12 +1,8 @@
-name: Deploy Server
+name: Deploy
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'server/**'
-      - 'deploy/**'
-      - '.github/workflows/deploy-server.yml'
 
 env:
   SG_ID: sg-0adc30cb5051eec9b
@@ -20,6 +16,20 @@ jobs:
       AWS_DEFAULT_REGION: us-east-1
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client
+        run: npm run build
+        env:
+          VITE_WS_SERVER_URL: ws://${{ secrets.EC2_HOST }}/ws
 
       - name: Get runner IP
         id: ip
@@ -38,6 +48,13 @@ jobs:
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/key.pem
           chmod 400 ~/.ssh/key.pem
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload client build
+        run: |
+          rsync -avz --delete \
+            --exclude='rl_model_weights.json' \
+            -e "ssh -i ~/.ssh/key.pem" \
+            dist/ ubuntu@${{ secrets.EC2_HOST }}:/var/www/lunarwars/
 
       - name: Upload server files
         run: |
