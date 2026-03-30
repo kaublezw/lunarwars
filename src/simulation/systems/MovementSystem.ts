@@ -53,6 +53,10 @@ export class MovementSystem implements System {
           steering.forceX = 0;
           steering.forceZ = 0;
         }
+        // Sync prev position so interpolation produces correct stationary position
+        pos.prevX = pos.x;
+        pos.prevY = pos.y;
+        pos.prevZ = pos.z;
         continue;
       }
 
