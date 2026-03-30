@@ -16,6 +16,7 @@ import { PlacementController } from '@input/PlacementController';
 import { World } from '@core/ECS';
 import { GameLoop } from '@core/GameLoop';
 import { EventBus } from '@core/EventBus';
+import { AudioManager } from './audio/AudioManager';
 import { RenderSync } from '@render/RenderSync';
 import { EnergyNodeRenderer } from '@render/EnergyNodeRenderer';
 import { GarageExitSystem } from '@sim/systems/GarageExitSystem';
@@ -274,6 +275,11 @@ pauseOverlay.mount(app);
 
 // --- EventBus ---
 const eventBus = new EventBus();
+
+// --- Audio ---
+if (!spectatorMode) {
+  new AudioManager(eventBus);
+}
 
 // --- Input ---
 const inputManager = new InputManager(renderer.domElement);
