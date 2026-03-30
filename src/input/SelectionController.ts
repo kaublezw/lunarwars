@@ -54,6 +54,7 @@ export class SelectionController {
   private playerTeam = 0;
   private placementCheck: (() => boolean) | null = null;
   private stickySelection = false;
+  private _sandboxMode = false;
 
   // Multiplayer command interception: when set, commands go through network instead of direct ECS mutation
   onCommand: ((payload: GameCommandPayload) => void) | null = null;
@@ -75,6 +76,10 @@ export class SelectionController {
 
   setStickySelection(active: boolean): void {
     this.stickySelection = active;
+  }
+
+  setSandboxMode(enabled: boolean): void {
+    this._sandboxMode = enabled;
   }
 
   constructor(
@@ -291,9 +296,9 @@ export class SelectionController {
       const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
       if (!sel.selected) continue;
 
-      // Only command own-team units
+      // Only command own-team units (sandbox mode allows all teams)
       const teamComp = this.world.getComponent<TeamComponent>(e, TEAM);
-      if (teamComp && teamComp.team !== this.playerTeam) continue;
+      if (!this._sandboxMode && teamComp && teamComp.team !== this.playerTeam) continue;
 
       const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
       const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE);
@@ -682,6 +687,9 @@ export class SelectionController {
   }
 
   private findEnemyAtScreen(sx: number, sy: number): Entity | null {
+    // In sandbox mode, no entity is treated as "enemy" — all units are controllable
+    if (this._sandboxMode) return null;
+
     const entities = this.world.query(POSITION, HEALTH, TEAM);
     let bestEntity: Entity | null = null;
     const pickRadiusPx = 50;
@@ -769,9 +777,9 @@ export class SelectionController {
       const sel = this.world.getComponent<SelectableComponent>(e, SELECTABLE)!;
       if (!sel.selected) continue;
 
-      // Only command own-team units
+      // Only command own-team units (sandbox mode allows all teams)
       const teamComp = this.world.getComponent<TeamComponent>(e, TEAM);
-      if (teamComp && teamComp.team !== this.playerTeam) continue;
+      if (!this._sandboxMode && teamComp && teamComp.team !== this.playerTeam) continue;
 
       // Set rally point on production buildings
       if (

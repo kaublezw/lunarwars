@@ -1085,8 +1085,9 @@ if (scenarioMode === 'sandbox') {
       resources: resourceState.serialize(),
     });
 
-    // Create SelectionController for play mode (no fog check, all entities pickable)
+    // Create SelectionController for play mode (no fog check, all entities pickable and commandable)
     selectionController = new SelectionController(inputManager, isoCamera, world, eventBus);
+    selectionController.setSandboxMode(true);
     selectionController.onBoxSelectUpdate = (x0, y0, x1, y1) => boxSelectRenderer.show(x0, y0, x1, y1);
     selectionController.onBoxSelectEnd = () => boxSelectRenderer.hide();
     minimap.onRightClick = (worldX, worldZ) => {

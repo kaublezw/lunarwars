@@ -9,7 +9,7 @@ import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { VoxelStateComponent, BufferedImpact } from '@sim/components/VoxelState';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
-import { VOXEL_SIZE, GARAGE_DOOR_MODEL, FACTORY_DOOR_MODEL, FACTORY_ROOF_DOOR_MODEL, indexToCoords } from '@sim/data/VoxelModels';
+import { VOXEL_SIZE, GARAGE_DOOR_MODEL, FACTORY_DOOR_MODEL, FACTORY_ROOF_DOOR_MODEL, indexToCoords, type VoxelModel } from '@sim/data/VoxelModels';
 import { UnitCategory } from '@sim/components/UnitType';
 import { buildVoxelGeometry } from '@render/VoxelGeometryBuilder';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
@@ -87,6 +87,14 @@ interface SimpleDoor {
   openAmount: number;
   closeTimer: number;
   clipPlane?: THREE.Plane;
+  // Damage tracking
+  model: VoxelModel;
+  destroyed: Uint8Array;
+  scorchHeat: Float32Array;
+  damageOrder: number[];
+  lastDamageRatio: number;
+  hasCoolingVoxels: boolean;
+  scorchRebuildTimer: number;
 }
 
 interface FactoryDoorsTracker {
@@ -95,6 +103,8 @@ interface FactoryDoorsTracker {
   roof: SimpleDoor;
   lastQueueLength: number;
   team: number;
+  isFlashing: boolean;
+  hasExploded: boolean;
 }
 
 export class GarageDoorRenderer {
@@ -306,6 +316,37 @@ export class GarageDoorRenderer {
       tracker.mesh.geometry = built.bodyGeometry;
     }
 
+    // Scorch heat decay for factory doors
+    for (const [, ft] of this.factoryTrackers) {
+      if (ft.hasExploded) continue;
+      const doors = [ft.side, ft.roof];
+      for (const door of doors) {
+        if (!door.hasCoolingVoxels) continue;
+        door.scorchRebuildTimer--;
+        if (door.scorchRebuildTimer > 0) continue;
+        door.scorchRebuildTimer = SCORCH_REBUILD_INTERVAL;
+
+        let stillCooling = false;
+        const heat = door.scorchHeat;
+        for (let i = 0; i < heat.length; i++) {
+          const h = heat[i];
+          if (h <= 0) continue;
+          heat[i] = h - HEAT_DECAY_PER_REBUILD;
+          if (heat[i] <= 0) {
+            heat[i] = -1;
+          } else {
+            stillCooling = true;
+          }
+        }
+        door.hasCoolingVoxels = stillCooling;
+
+        const model = door.model;
+        const built = buildVoxelGeometry(model, door.destroyed, ft.team, door.scorchHeat);
+        door.mesh.geometry.dispose();
+        door.mesh.geometry = built.bodyGeometry;
+      }
+    }
+
     // Clean up destroyed HQs
     for (const [entity, tracker] of this.trackers) {
       if (!activeHQs.has(entity)) {
@@ -324,9 +365,16 @@ export class GarageDoorRenderer {
         this.scene.remove(ft.side.mesh);
         ft.side.mesh.geometry.dispose();
         ft.side.material.dispose();
+        // Dispose flash material if different from original
+        if (ft.isFlashing && ft.side.mesh.material !== ft.side.material) {
+          (ft.side.mesh.material as THREE.MeshStandardMaterial).dispose();
+        }
         this.scene.remove(ft.roof.mesh);
         ft.roof.mesh.geometry.dispose();
         ft.roof.material.dispose();
+        if (ft.isFlashing && ft.roof.mesh.material !== ft.roof.material) {
+          (ft.roof.mesh.material as THREE.MeshStandardMaterial).dispose();
+        }
         this.factoryTrackers.delete(entity);
       }
     }
@@ -350,18 +398,7 @@ export class GarageDoorRenderer {
     mesh.receiveShadow = false;
     this.scene.add(mesh);
 
-    // Build stable random damage order seeded by entity ID
-    const damageOrder: number[] = [];
-    for (let i = 0; i < model.totalSolid; i++) {
-      damageOrder.push(i);
-    }
-    // Simple deterministic shuffle using entity ID as seed
-    let seed = entity * 2654435761;
-    for (let i = damageOrder.length - 1; i > 0; i--) {
-      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-      const j = seed % (i + 1);
-      [damageOrder[i], damageOrder[j]] = [damageOrder[j], damageOrder[i]];
-    }
+    const damageOrder = GarageDoorRenderer.buildDamageOrder(entity, model.totalSolid);
 
     return {
       entity,
@@ -571,6 +608,182 @@ export class GarageDoorRenderer {
     }
   }
 
+  private static buildDamageOrder(entitySeed: number, totalSolid: number): number[] {
+    const order: number[] = [];
+    for (let i = 0; i < totalSolid; i++) {
+      order.push(i);
+    }
+    let seed = entitySeed * 2654435761;
+    for (let i = order.length - 1; i > 0; i--) {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      const j = seed % (i + 1);
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+    return order;
+  }
+
+  private syncSimpleDoorDamage(door: SimpleDoor, team: number, newRatio: number): void {
+    const model = door.model;
+    const targetDestroyed = Math.floor(newRatio * model.totalSolid);
+    let currentDestroyed = 0;
+    for (let si = 0; si < model.totalSolid; si++) {
+      if (door.destroyed[si >> 3] & (1 << (si & 7))) currentDestroyed++;
+    }
+    if (targetDestroyed > currentDestroyed) {
+      let destroyed = currentDestroyed;
+      for (const si of door.damageOrder) {
+        if (destroyed >= targetDestroyed) break;
+        const byteIdx = si >> 3;
+        const bitIdx = si & 7;
+        if (!(door.destroyed[byteIdx] & (1 << bitIdx))) {
+          door.destroyed[byteIdx] |= (1 << bitIdx);
+          destroyed++;
+        }
+      }
+    }
+    const built = buildVoxelGeometry(model, door.destroyed, team, door.scorchHeat);
+    door.mesh.geometry.dispose();
+    door.mesh.geometry = built.bodyGeometry;
+    door.lastDamageRatio = newRatio;
+  }
+
+  private applySimpleDoorImpact(door: SimpleDoor, impact: BufferedImpact, team: number): void {
+    const model = door.model;
+    const doorPos = door.mesh.position;
+    const halfX = (model.sizeX * VOXEL_SIZE) / 2;
+    const halfZ = (model.sizeZ * VOXEL_SIZE) / 2;
+
+    const localX = impact.impactX - doorPos.x;
+    const localY = impact.impactY - doorPos.y;
+    const localZ = impact.impactZ - doorPos.z;
+
+    const gridX = Math.floor((localX + halfX) / VOXEL_SIZE);
+    const gridY = Math.floor(localY / VOXEL_SIZE);
+    const gridZ = Math.floor((localZ + halfZ) / VOXEL_SIZE);
+
+    const blastR = impact.blastRadius;
+    if (gridX < -blastR || gridX >= model.sizeX + blastR) return;
+    if (gridY < -blastR || gridY >= model.sizeY + blastR) return;
+    if (gridZ < -blastR || gridZ >= model.sizeZ + blastR) return;
+
+    let anyDestroyed = false;
+
+    for (let dy = -blastR; dy <= blastR; dy++) {
+      for (let dz = -blastR; dz <= blastR; dz++) {
+        for (let dx = -blastR; dx <= blastR; dx++) {
+          const gx = gridX + dx;
+          const gy = gridY + dy;
+          const gz = gridZ + dz;
+          if (gx < 0 || gx >= model.sizeX || gy < 0 || gy >= model.sizeY || gz < 0 || gz >= model.sizeZ) continue;
+          if (dx * dx + dy * dy + dz * dz > blastR * blastR + 1) continue;
+
+          const gridIdx = gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ;
+          if (model.grid[gridIdx] === 0) continue;
+
+          const solidIdx = model.gridToSolid[gridIdx];
+          if (solidIdx === -1) continue;
+
+          const byteIdx = solidIdx >> 3;
+          const bitIdx = solidIdx & 7;
+          if (door.destroyed[byteIdx] & (1 << bitIdx)) continue;
+
+          door.destroyed[byteIdx] |= (1 << bitIdx);
+          anyDestroyed = true;
+
+          const [svGx, svGy, svGz] = indexToCoords(gridIdx, model.sizeX, model.sizeZ);
+          const wx = doorPos.x - halfX + svGx * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+          const wy = doorPos.y + svGy * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+          const wz = doorPos.z - halfZ + svGz * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+
+          let color = TEAM_COLORS[team] ?? 0xffffff;
+          const palIdx = model.solidVoxels[solidIdx][1];
+          if (palIdx !== 254 && palIdx !== 253) {
+            color = model.palette[palIdx] ?? 0x333333;
+          }
+
+          this.debrisRenderer.spawn(
+            wx, wy, wz,
+            -impact.dirX + (Math.random() - 0.5) * 0.4,
+            -impact.dirY + Math.random() * 0.5,
+            -impact.dirZ + (Math.random() - 0.5) * 0.4,
+            color, 1.0, 0xffffff,
+          );
+        }
+      }
+    }
+
+    const scorchR = blastR + 1;
+    for (let dy = -scorchR; dy <= scorchR; dy++) {
+      for (let dz = -scorchR; dz <= scorchR; dz++) {
+        for (let dx = -scorchR; dx <= scorchR; dx++) {
+          const gx = gridX + dx;
+          const gy = gridY + dy;
+          const gz = gridZ + dz;
+          if (gx < 0 || gx >= model.sizeX || gy < 0 || gy >= model.sizeY || gz < 0 || gz >= model.sizeZ) continue;
+          if (dx * dx + dy * dy + dz * dz > scorchR * scorchR + 1) continue;
+
+          const gridIdx = gx + gz * model.sizeX + gy * model.sizeX * model.sizeZ;
+          if (model.grid[gridIdx] === 0) continue;
+          const solidIdx = model.gridToSolid[gridIdx];
+          if (solidIdx === -1) continue;
+          if (door.destroyed[solidIdx >> 3] & (1 << (solidIdx & 7))) continue;
+
+          const randomHeat = 0.7 + Math.random() * 0.3;
+          door.scorchHeat[solidIdx] = Math.max(door.scorchHeat[solidIdx], randomHeat);
+        }
+      }
+    }
+    door.hasCoolingVoxels = true;
+    door.scorchRebuildTimer = 0;
+
+    if (anyDestroyed || door.hasCoolingVoxels) {
+      const built = buildVoxelGeometry(model, door.destroyed, team, door.scorchHeat);
+      door.mesh.geometry.dispose();
+      door.mesh.geometry = built.bodyGeometry;
+    }
+  }
+
+  private explodeSimpleDoor(door: SimpleDoor, team: number, biasPos: PositionComponent): void {
+    const model = door.model;
+    const pos = door.mesh.position;
+    const halfX = model.sizeX * VOXEL_SIZE * 0.5;
+    const halfZ = model.sizeZ * VOXEL_SIZE * 0.5;
+    const centerY = pos.y + model.sizeY * VOXEL_SIZE * 0.5;
+
+    for (let si = 0; si < model.totalSolid; si++) {
+      const byteIdx = si >> 3;
+      const bitIdx = si & 7;
+      if (door.destroyed[byteIdx] & (1 << bitIdx)) continue;
+
+      const [gridIdx, palIdx] = model.solidVoxels[si];
+      const [gx, gy, gz] = indexToCoords(gridIdx, model.sizeX, model.sizeZ);
+
+      const wx = pos.x - halfX + gx * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+      const wy = pos.y + gy * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+      const wz = pos.z - halfZ + gz * VOXEL_SIZE + VOXEL_SIZE * 0.5;
+
+      let color = TEAM_COLORS[team] ?? 0xffffff;
+      if (palIdx !== 254 && palIdx !== 253) {
+        color = model.palette[palIdx] ?? 0x333333;
+      }
+
+      const dirX = wx - pos.x;
+      const dirY = wy - centerY;
+      const dirZ = wz - biasPos.z;
+      const len = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ) || 1;
+
+      this.debrisRenderer.spawn(
+        wx, wy, wz,
+        (dirX / len) * 2.5 + (Math.random() - 0.5) * 1.0,
+        (dirY / len) * 2.5 + Math.random() * 1.5,
+        (dirZ / len) * 2.5 + (Math.random() - 0.5) * 1.0,
+        color, 1.0, 0xffffff,
+      );
+
+      door.destroyed[byteIdx] |= (1 << bitIdx);
+    }
+  }
+
   // --- Factory door logic (side + roof) ---
 
   private updateFactory(world: World, entity: number, dt: number): void {
@@ -582,6 +795,62 @@ export class GarageDoorRenderer {
     if (!ft) {
       ft = this.createFactoryDoors(entity, team.team);
       this.factoryTrackers.set(entity, ft);
+    }
+
+    // Skip all logic if already exploded
+    if (ft.hasExploded) return;
+
+    // Check for death timer (factory dying)
+    const deathTimer = world.getComponent<DeathTimerComponent>(entity, DEATH_TIMER);
+    if (deathTimer) {
+      if (deathTimer.timeRemaining > 0 && !deathTimer.exploded) {
+        // Flash white — create per-door flash materials (different clipping planes)
+        if (!ft.isFlashing) {
+          const sideFlash = new THREE.MeshStandardMaterial({
+            color: 0xffffff, roughness: 0.5, metalness: 0.0, vertexColors: false,
+            clippingPlanes: ft.side.clipPlane ? [ft.side.clipPlane] : [],
+          });
+          const roofFlash = new THREE.MeshStandardMaterial({
+            color: 0xffffff, roughness: 0.5, metalness: 0.0, vertexColors: false,
+            clippingPlanes: ft.roof.clipPlane ? [ft.roof.clipPlane] : [],
+          });
+          ft.side.mesh.material = sideFlash;
+          ft.roof.mesh.material = roofFlash;
+          ft.isFlashing = true;
+        }
+        const flashIntensity = Math.sin(deathTimer.timeRemaining * 30) * 0.5 + 0.5;
+        const r = 0.5 + 0.5 * flashIntensity;
+        (ft.side.mesh.material as THREE.MeshStandardMaterial).color.setRGB(r, r, r);
+        (ft.roof.mesh.material as THREE.MeshStandardMaterial).color.setRGB(r, r, r);
+      } else if (deathTimer.exploded || deathTimer.timeRemaining <= 0) {
+        this.explodeSimpleDoor(ft.side, ft.team, pos);
+        this.explodeSimpleDoor(ft.roof, ft.team, pos);
+        ft.hasExploded = true;
+        ft.side.mesh.visible = false;
+        ft.roof.mesh.visible = false;
+        return;
+      }
+    } else {
+      // Sync door damage with factory voxel state
+      const voxelState = world.getComponent<VoxelStateComponent>(entity, VOXEL_STATE);
+      if (voxelState && voxelState.totalVoxels > 0) {
+        const damageRatio = voxelState.destroyedCount / voxelState.totalVoxels;
+        if (Math.abs(damageRatio - ft.side.lastDamageRatio) > DAMAGE_REBUILD_THRESHOLD) {
+          this.syncSimpleDoorDamage(ft.side, ft.team, damageRatio);
+        }
+        if (Math.abs(damageRatio - ft.roof.lastDamageRatio) > DAMAGE_REBUILD_THRESHOLD) {
+          this.syncSimpleDoorDamage(ft.roof, ft.team, damageRatio);
+        }
+      }
+
+      // Direct impact damage on doors
+      if (voxelState?.recentImpacts && voxelState.recentImpacts.length > 0) {
+        for (const impact of voxelState.recentImpacts) {
+          this.applySimpleDoorImpact(ft.side, impact, ft.team);
+          this.applySimpleDoorImpact(ft.roof, impact, ft.team);
+        }
+        voxelState.recentImpacts.length = 0;
+      }
     }
 
     const queueLen = queue ? queue.queue.length : 0;
@@ -611,7 +880,6 @@ export class GarageDoorRenderer {
       pos.y + FACTORY_ROOF_Y_OFFSET,
       pos.z + FACTORY_ROOF_Z_CENTER,
     );
-    // Clip plane: hide geometry past the +X edge of the upper hull (grid x=29, half=16)
     ft.roof.clipPlane!.constant = pos.x + 29 * VOXEL_SIZE - 16 * VOXEL_SIZE;
 
     // Fog visibility
@@ -636,6 +904,7 @@ export class GarageDoorRenderer {
     sideMesh.castShadow = false;
     sideMesh.receiveShadow = false;
     this.scene.add(sideMesh);
+    const sideDamageOrder = GarageDoorRenderer.buildDamageOrder(entity, sideModel.totalSolid);
 
     // Roof door — clips at the +X edge of the building so it slides under the hull
     const roofModel = FACTORY_ROOF_DOOR_MODEL;
@@ -651,13 +920,29 @@ export class GarageDoorRenderer {
     roofMesh.castShadow = false;
     roofMesh.receiveShadow = false;
     this.scene.add(roofMesh);
+    // Use offset seed so side and roof have different damage patterns
+    const roofDamageOrder = GarageDoorRenderer.buildDamageOrder(entity + 7919, roofModel.totalSolid);
 
     return {
       entity,
-      side: { mesh: sideMesh, material: sideMat, state: 'closed', openAmount: 0, closeTimer: 0, clipPlane: sideClip },
-      roof: { mesh: roofMesh, material: roofMat, state: 'closed', openAmount: 0, closeTimer: 0, clipPlane: roofClip },
+      side: {
+        mesh: sideMesh, material: sideMat, state: 'closed', openAmount: 0, closeTimer: 0,
+        clipPlane: sideClip,
+        model: sideModel, destroyed: sideDestroyed, scorchHeat: sideSH,
+        damageOrder: sideDamageOrder, lastDamageRatio: 0,
+        hasCoolingVoxels: false, scorchRebuildTimer: 0,
+      },
+      roof: {
+        mesh: roofMesh, material: roofMat, state: 'closed', openAmount: 0, closeTimer: 0,
+        clipPlane: roofClip,
+        model: roofModel, destroyed: roofDestroyed, scorchHeat: roofSH,
+        damageOrder: roofDamageOrder, lastDamageRatio: 0,
+        hasCoolingVoxels: false, scorchRebuildTimer: 0,
+      },
       lastQueueLength: 0,
       team,
+      isFlashing: false,
+      hasExploded: false,
     };
   }
 
@@ -713,9 +998,15 @@ export class GarageDoorRenderer {
       this.scene.remove(ft.side.mesh);
       ft.side.mesh.geometry.dispose();
       ft.side.material.dispose();
+      if (ft.isFlashing && ft.side.mesh.material !== ft.side.material) {
+        (ft.side.mesh.material as THREE.MeshStandardMaterial).dispose();
+      }
       this.scene.remove(ft.roof.mesh);
       ft.roof.mesh.geometry.dispose();
       ft.roof.material.dispose();
+      if (ft.isFlashing && ft.roof.mesh.material !== ft.roof.material) {
+        (ft.roof.mesh.material as THREE.MeshStandardMaterial).dispose();
+      }
     }
     this.factoryTrackers.clear();
   }
