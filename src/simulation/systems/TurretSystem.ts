@@ -16,6 +16,7 @@ import { COUNTER_MULTIPLIERS, UNIT_DEFS } from '@sim/data/UnitData';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_SIZE, VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { SeededRandom } from '@sim/utils/SeededRandom';
+import type { EventBus } from '@core/EventBus';
 
 // Interpolate between two angles, handling wraparound
 function lerpAngle(a: number, b: number, t: number): number {
@@ -44,10 +45,12 @@ export class TurretSystem implements System {
   readonly name = 'TurretSystem';
   private spatialHash: SpatialHash;
   private rng: SeededRandom;
+  private eventBus?: EventBus;
 
-  constructor(rng: SeededRandom) {
+  constructor(rng: SeededRandom, eventBus?: EventBus) {
     this.spatialHash = new SpatialHash(4, 276, 276);
     this.rng = rng;
+    this.eventBus = eventBus;
   }
 
   update(world: World, dt: number): void {
@@ -145,8 +148,19 @@ export class TurretSystem implements System {
         turret.cooldown -= dt;
         if (turret.cooldown <= 0 && turret.ammo > 0) {
           turret.firedThisFrame = true;
-          turret.cooldown = 1 / turret.fireRate;
+          const baseCooldown = 1 / turret.fireRate;
+          turret.cooldown = baseCooldown * (0.85 + this.rng.next() * 0.30);
           turret.ammo--;
+
+          if (this.eventBus) {
+            const firerType = world.getComponent<UnitTypeComponent>(e, UNIT_TYPE);
+            const cat = firerType?.category;
+            if (cat === UnitCategory.AssaultPlatform) {
+              this.eventBus.emit('weapon:fire:large', pos.x, pos.z);
+            } else if (cat === UnitCategory.CombatDrone || cat === UnitCategory.AerialDrone) {
+              this.eventBus.emit('weapon:fire:small', pos.x, pos.z);
+            }
+          }
 
           // Compute damage with counter multiplier
           const attackerType = world.getComponent<UnitTypeComponent>(e, UNIT_TYPE);

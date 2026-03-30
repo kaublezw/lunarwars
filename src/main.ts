@@ -278,7 +278,7 @@ const eventBus = new EventBus();
 
 // --- Audio ---
 if (!spectatorMode) {
-  new AudioManager(eventBus);
+  new AudioManager(eventBus, isoCamera);
 }
 
 // --- Input ---
@@ -333,7 +333,7 @@ world.addSystem(pathfindingSystem);
 world.addSystem(new CollisionAvoidanceSystem(simRng));
 world.addSystem(movementSystem);
 world.addSystem(new FogOfWarSystem(fogState));
-world.addSystem(new TurretSystem(simRng));
+world.addSystem(new TurretSystem(simRng, eventBus));
 world.addSystem(new ProjectileSystem());
 world.addSystem(new VoxelDamageSystem(simRng));
 world.addSystem(new ResupplySystem());
