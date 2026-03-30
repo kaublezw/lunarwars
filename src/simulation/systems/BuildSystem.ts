@@ -17,12 +17,18 @@ import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import type { EventBus } from '@core/EventBus';
 const DEPOT_VISUAL_RADIUS = 38;
 
 const BUILD_RANGE = 6; // max distance worker can be from site to build (must exceed largest footprint radius + pathfinding margin)
 
 export class BuildSystem implements System {
   readonly name = 'BuildSystem';
+  private eventBus?: EventBus;
+
+  constructor(eventBus?: EventBus) {
+    this.eventBus = eventBus;
+  }
 
   update(world: World, dt: number): void {
     const builders = world.query(BUILD_COMMAND, POSITION);
@@ -72,6 +78,9 @@ export class BuildSystem implements System {
 
       // Increment progress
       construction.progress += dt / construction.buildTime;
+      if (this.eventBus) {
+        this.eventBus.emit('construction:active', workerPos.x, workerPos.z);
+      }
 
       // Progressive voxel reveal during construction
       const voxelState = world.getComponent<VoxelStateComponent>(site, VOXEL_STATE);

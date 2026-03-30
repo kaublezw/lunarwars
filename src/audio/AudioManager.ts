@@ -9,6 +9,7 @@ export class AudioManager {
   private largeWeaponFire: Howl;
   private unitExplosion: Howl;
   private buildingExplosion: Howl;
+  private construction: Howl;
   private camera: IsometricCamera;
   private tmpVec = new THREE.Vector3();
 
@@ -21,6 +22,7 @@ export class AudioManager {
     this.largeWeaponFire = new Howl({ src: ['/sounds/largeWeaponFire.mp3'], volume: 0.15 });
     this.unitExplosion = new Howl({ src: ['/sounds/unitexplosion.mp3'], volume: 0.3 });
     this.buildingExplosion = new Howl({ src: ['/sounds/buildingexplosion.mp3'], volume: 0.4 });
+    this.construction = new Howl({ src: ['/sounds/construction.mp3'], volume: 0.25 });
 
     // Command events
     eventBus.on('command:move', () => this.acknowledge.play());
@@ -43,6 +45,13 @@ export class AudioManager {
     });
     eventBus.on('explosion:building', (...args: unknown[]) => {
       if (this.isOnScreen(args[0] as number, args[1] as number)) this.buildingExplosion.play();
+    });
+
+    // Construction events (plays while workers are building/repairing)
+    eventBus.on('construction:active', (...args: unknown[]) => {
+      if (this.isOnScreen(args[0] as number, args[1] as number) && !this.construction.playing()) {
+        this.construction.play();
+      }
     });
   }
 

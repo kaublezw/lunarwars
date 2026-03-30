@@ -12,6 +12,7 @@ import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import { REPAIR_RATE, REPAIR_MATTER_COST } from '@sim/economy/DepotUtils';
+import type { EventBus } from '@core/EventBus';
 
 const REPAIR_RANGE = 6; // must exceed largest building footprint radius + pathfinding margin
 const REPAIR_RANGE_SQ = REPAIR_RANGE * REPAIR_RANGE;
@@ -21,10 +22,12 @@ export class RepairSystem implements System {
 
   private resources: ResourceState;
   private teamCount: number;
+  private eventBus?: EventBus;
 
-  constructor(resources: ResourceState, teamCount: number) {
+  constructor(resources: ResourceState, teamCount: number, eventBus?: EventBus) {
     this.resources = resources;
     this.teamCount = teamCount;
+    this.eventBus = eventBus;
   }
 
   update(world: World, dt: number): void {
@@ -129,6 +132,9 @@ export class RepairSystem implements System {
       if (actualRepair > 0) {
         targetHealth.current = Math.min(targetHealth.current + actualRepair, targetHealth.max);
         this.resources.spendMatter(team.team, affordable);
+        if (this.eventBus) {
+          this.eventBus.emit('construction:active', workerPos.x, workerPos.z);
+        }
       }
 
       this.restoreVoxels(world, repair.targetEntity, targetHealth, actualRepair);

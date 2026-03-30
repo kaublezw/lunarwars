@@ -402,6 +402,7 @@ export class SelectionController {
           state: 'moving',
           siteEntity: constructionSite,
         });
+        this.events.emit('command:build', sitePos.x, sitePos.z);
 
         if (this.world.hasComponent(w.entity, MOVE_COMMAND)) {
           this.world.removeComponent(w.entity, MOVE_COMMAND);
