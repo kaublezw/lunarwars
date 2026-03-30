@@ -339,7 +339,7 @@ world.addSystem(new VoxelDamageSystem(simRng));
 world.addSystem(new ResupplySystem());
 world.addSystem(new RepairSystem(resourceState, 2));
 world.addSystem(gameOverSystem);
-world.addSystem(new HealthSystem());
+world.addSystem(new HealthSystem(eventBus));
 world.addSystem(new EnergyPacketSystem(resourceState));
 world.addSystem(new MatterPacketSystem(resourceState));
 world.addSystem(new EconomySystem(resourceState, 2, terrainData));

@@ -7,6 +7,8 @@ export class AudioManager {
   private acknowledge: Howl;
   private smallWeaponFire: Howl;
   private largeWeaponFire: Howl;
+  private unitExplosion: Howl;
+  private buildingExplosion: Howl;
   private camera: IsometricCamera;
   private tmpVec = new THREE.Vector3();
 
@@ -17,6 +19,8 @@ export class AudioManager {
     this.acknowledge = new Howl({ src: ['/sounds/acknowledge.mp3'], volume: 1 });
     this.smallWeaponFire = new Howl({ src: ['/sounds/smallWeaponFire.mp3'], volume: 0.15 });
     this.largeWeaponFire = new Howl({ src: ['/sounds/largeWeaponFire.mp3'], volume: 0.15 });
+    this.unitExplosion = new Howl({ src: ['/sounds/unitexplosion.mp3'], volume: 0.3 });
+    this.buildingExplosion = new Howl({ src: ['/sounds/buildingexplosion.mp3'], volume: 0.4 });
 
     // Command events
     eventBus.on('command:move', () => this.acknowledge.play());
@@ -31,6 +35,14 @@ export class AudioManager {
     });
     eventBus.on('weapon:fire:large', (...args: unknown[]) => {
       if (this.isOnScreen(args[0] as number, args[1] as number)) this.largeWeaponFire.play();
+    });
+
+    // Explosion events (screen-proximity gated)
+    eventBus.on('explosion:unit', (...args: unknown[]) => {
+      if (this.isOnScreen(args[0] as number, args[1] as number)) this.unitExplosion.play();
+    });
+    eventBus.on('explosion:building', (...args: unknown[]) => {
+      if (this.isOnScreen(args[0] as number, args[1] as number)) this.buildingExplosion.play();
     });
   }
 
