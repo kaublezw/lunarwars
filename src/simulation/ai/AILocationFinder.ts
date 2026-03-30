@@ -38,46 +38,36 @@ export function findDepotLocation(
   _state: AIWorldState,
   enemyMemory: Map<number, EnemyMemoryEntry>,
 ): { x: number; z: number } | null {
-  const existing = ctx.world.query(BUILDING, TEAM).filter(e => {
-    const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
-    if (team.team !== ctx.team) return false;
-    const bldg = ctx.world.getComponent<BuildingComponent>(e, BUILDING)!;
-    return bldg.buildingType === BuildingType.SupplyDepot;
-  });
-
-  const underConstruction = ctx.world.query(CONSTRUCTION, TEAM).filter(e => {
-    const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
-    if (team.team !== ctx.team) return false;
-    const con = ctx.world.getComponent<ConstructionComponent>(e, CONSTRUCTION)!;
-    return con.buildingType === BuildingType.SupplyDepot;
-  });
-
-  const depotIndex = existing.length + underConstruction.length;
-
-  if (depotIndex === 0) {
-    return findLocationNear(ctx, ctx.baseX, ctx.baseZ);
+  // Enemy must be discovered before placing a forward depot
+  let enemyDiscovered = false;
+  for (const [, entry] of enemyMemory) {
+    if (entry.type === 'building') {
+      enemyDiscovered = true;
+      break;
+    }
   }
+  if (!enemyDiscovered) return null;
 
   const enemy = estimateEnemyPosition(ctx, enemyMemory);
   const midX = (ctx.baseX + enemy.x) / 2;
   const midZ = (ctx.baseZ + enemy.z) / 2;
 
-  let targetX = midX;
-  let targetZ = midZ;
+  // Walk from midpoint back toward our base, testing each spot
+  const dx = ctx.baseX - midX;
+  const dz = ctx.baseZ - midZ;
+  const dist = Math.sqrt(dx * dx + dz * dz) || 1;
+  const stepX = dx / dist;
+  const stepZ = dz / dist;
+  const STEP_SIZE = 4;
 
-  if (depotIndex >= 2) {
-    const axisX = enemy.x - ctx.baseX;
-    const axisZ = enemy.z - ctx.baseZ;
-    const len = Math.sqrt(axisX * axisX + axisZ * axisZ) || 1;
-    const perpX = -axisZ / len;
-    const perpZ = axisX / len;
-    const side = (depotIndex % 2 === 0) ? 1 : -1;
-    const spread = 10 * Math.ceil((depotIndex - 1) / 2);
-    targetX = midX + perpX * spread * side;
-    targetZ = midZ + perpZ * spread * side;
+  for (let t = 0; t <= dist; t += STEP_SIZE) {
+    const x = Math.round(midX + stepX * t);
+    const z = Math.round(midZ + stepZ * t);
+    const loc = findLocationNear(ctx, x, z);
+    if (loc) return loc;
   }
 
-  return findLocationNear(ctx, targetX, targetZ);
+  return null;
 }
 
 export function findLocationNear(
