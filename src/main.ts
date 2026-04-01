@@ -56,6 +56,7 @@ import { PauseOverlay } from '@ui/PauseOverlay';
 import { SandboxPanel } from '@ui/SandboxPanel';
 import { PerfPanel } from '@ui/PerfPanel';
 import { FpsDisplay } from '@ui/FpsDisplay';
+import { MusicControls } from '@ui/MusicControls';
 import { SpectatorPanel } from '@ui/SpectatorPanel';
 import type { FogMode } from '@ui/SpectatorPanel';
 import { ParticleRenderer } from '@render/effects/ParticleRenderer';
@@ -277,9 +278,19 @@ pauseOverlay.mount(app);
 const eventBus = new EventBus();
 
 // --- Audio ---
-if (!spectatorMode) {
-  new AudioManager(eventBus, isoCamera);
-}
+const audioManager = spectatorMode
+  ? new AudioManager()
+  : new AudioManager(eventBus, isoCamera);
+
+// --- Music Controls ---
+const musicControls = new MusicControls(
+  audioManager.getMusicVolume(),
+  audioManager.isMusicMuted()
+);
+musicControls.mount(app);
+musicControls.onVolumeChange = (vol) => audioManager.setMusicVolume(vol);
+musicControls.onMuteToggle = (muted) => audioManager.setMusicMuted(muted);
+audioManager.startMusic();
 
 // --- Input ---
 const inputManager = new InputManager(renderer.domElement);
@@ -298,6 +309,7 @@ const buildingOccupancy = new BuildingOccupancy(276, 276);
 const TEAM_COLORS = [0x4488ff, 0xff4444];
 const PLAYER_TEAM = isMultiplayer ? mpTeam : 0;
 const AI_TEAM = isMultiplayer ? -1 : 1; // -1 = no AI in multiplayer
+audioManager.setFogState(fogState, PLAYER_TEAM);
 
 // --- Seeded RNG for deterministic simulation ---
 const simRng = new SeededRandom(seed * 9973);
@@ -317,6 +329,7 @@ gameOverSystem.setCallback((losingTeam: number) => {
   gameOver = true;
   pauseOverlay.hide();
   gameLoop.stop();
+  audioManager.stopMusic();
   if (spectatorMode) {
     gameOverOverlay.showSpectator(losingTeam);
   } else {
@@ -985,6 +998,7 @@ if (isMultiplayer && networkClient && commandBuffer) {
   networkClient.onOpponentDisconnected = () => {
     gameOver = true;
     gameLoop.stop();
+    audioManager.stopMusic();
     // Show a simple disconnect message using the game over overlay
     const playerWon = true; // opponent left = you win
     gameOverOverlay.show(playerWon);
@@ -1034,8 +1048,10 @@ inputManager.onKeyDown((key: string) => {
     gameLoop.togglePause();
     if (gameLoop.isPaused()) {
       pauseOverlay.show();
+      audioManager.pauseMusic();
     } else {
       pauseOverlay.hide();
+      audioManager.resumeMusic();
     }
   }
   // Toggle fog of war visibility (player mode only)
@@ -1144,14 +1160,17 @@ if (scenarioMode === 'sandbox') {
 
     gameLoop.togglePause(); // unpause
     pauseOverlay.hide();
+    audioManager.resumeMusic();
   };
 
   sandboxPanel.onPause = () => {
     gameLoop.togglePause();
     if (gameLoop.isPaused()) {
       pauseOverlay.show();
+      audioManager.pauseMusic();
     } else {
       pauseOverlay.hide();
+      audioManager.resumeMusic();
     }
   };
 
@@ -1208,6 +1227,7 @@ if (scenarioMode === 'sandbox') {
     }
     gameLoop.setTimeScale(1);
     pauseOverlay.show();
+    audioManager.pauseMusic();
     sandboxPanel!.enterEditorMode();
   };
 
