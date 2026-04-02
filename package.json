@@ -8,14 +8,12 @@
     "preview": "vite preview",
     "convert-vox": "tsx scripts/convert-vox.ts",
     "headless": "tsx scripts/run-headless.ts",
-    "rl": "tsx scripts/run-rl-server.ts",
     "server": "cd server && npx tsx server.ts"
   },
   "dependencies": {
     "@types/howler": "^2.2.12",
     "howler": "^2.2.4",
-    "three": "^0.170.0",
-    "zeromq": "^6.5.0"
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.13",

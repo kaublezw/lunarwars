@@ -26,7 +26,7 @@ import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { FogOfWarSystem } from '@sim/systems/FogOfWarSystem';
 import { AISystem } from '@sim/systems/AIBrain';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, CONSTRUCTION, BUILD_COMMAND, MATTER_STORAGE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, MATTER_STORAGE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
@@ -45,44 +45,9 @@ import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 
-import type { AIContext } from '@sim/ai/AITypes';
 import { TEAM_COLORS } from '@sim/ai/AITypes';
-import { issueMove } from '@sim/ai/AIActions';
-import {
-  buildStructure, trainUnit,
-  type GameCommandContext,
-} from '@sim/commands/GameCommands';
 
 import type { HeadlessConfig, GameResult } from './types';
-import type { AIAction, StepResult } from './RLTypes';
-import { RLActionType } from './RLTypes';
-import { extractObservation, clearMapGridCache } from './RLObservation';
-import { captureRewardState, RewardTracker } from './RLReward';
-
-const UNIT_CATEGORIES_BY_INDEX: UnitCategory[] = [
-  UnitCategory.WorkerDrone,
-  UnitCategory.CombatDrone,
-  UnitCategory.AssaultPlatform,
-  UnitCategory.AerialDrone,
-  UnitCategory.FerryDrone,
-];
-
-const BUILDING_MIN_SPACING_SQ = 25; // 5 world units squared
-
-const BUILDING_TYPES_BY_INDEX: (BuildingType | null)[] = [
-  null, // 0 = unused (HQ can't be built)
-  BuildingType.EnergyExtractor,
-  BuildingType.MatterPlant,
-  BuildingType.SupplyDepot,
-  BuildingType.DroneFactory,
-  BuildingType.Wall,
-];
-
-// Which building types can produce which unit categories
-const PRODUCTION_RULES: ReadonlyMap<BuildingType, readonly UnitCategory[]> = new Map([
-  [BuildingType.HQ, [UnitCategory.WorkerDrone]],
-  [BuildingType.DroneFactory, [UnitCategory.CombatDrone, UnitCategory.AssaultPlatform, UnitCategory.AerialDrone]],
-]);
 
 export class HeadlessEngine {
   private world!: World;
@@ -94,24 +59,13 @@ export class HeadlessEngine {
   private oreDeposits!: OreDeposit[];
   private gameOverTeam: number | null = null;
   private tickCount = 0;
-  private rewardTracker!: RewardTracker;
 
   seed: number;
   private readonly maxTicks: number;
 
-  // RL mode config
-  private readonly rlMode: boolean;
-  private readonly rlTeam: number;
-  private readonly ticksPerStep: number;
-  private readonly observationGridSize: number;
-
   constructor(private readonly config: HeadlessConfig = {}) {
     this.seed = config.seed ?? Math.floor(Math.random() * 2147483647);
-    this.maxTicks = config.maxTicks ?? (config.rlMode ? 3000 : 72000);
-    this.rlMode = config.rlMode ?? false;
-    this.rlTeam = config.rlTeam ?? 1;
-    this.ticksPerStep = config.ticksPerStep ?? 30;
-    this.observationGridSize = config.observationGridSize ?? 32;
+    this.maxTicks = config.maxTicks ?? 72000;
 
     this.initWorld();
   }
@@ -172,18 +126,9 @@ export class HeadlessEngine {
     this.world.addSystem(new BuildSystem());
     this.world.addSystem(new ProductionSystem(this.resourceState, this.terrainData));
 
-    if (this.rlMode) {
-      // Only the non-RL team gets AI; RL team is externally controlled
-      const aiTeam = this.rlTeam === 1 ? 0 : 1;
-      this.world.addSystem(new AISystem(
-        aiTeam, this.resourceState, this.terrainData, this.fogState,
-        this.energyNodes, this.oreDeposits, this.buildingOccupancy,
-      ));
-    } else {
-      // Both teams controlled by AI (team 1 first to match main.ts spectator order)
-      this.world.addSystem(new AISystem(1, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy));
-      this.world.addSystem(new AISystem(0, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy));
-    }
+    // Both teams controlled by AI
+    this.world.addSystem(new AISystem(1, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy));
+    this.world.addSystem(new AISystem(0, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy));
 
     // Spawn HQs + workers
     this.spawnInitialEntities();
@@ -193,12 +138,7 @@ export class HeadlessEngine {
     this.resourceState.addMatter(0, 100);
     this.resourceState.addEnergy(1, 100);
     this.resourceState.addMatter(1, 100);
-
-    // Reward tracker (reset per episode)
-    this.rewardTracker = new RewardTracker(this.fogState);
   }
-
-  // --- AI vs AI mode ---
 
   run(): GameResult {
     while (this.gameOverTeam === null && this.tickCount < this.maxTicks) {
@@ -206,73 +146,6 @@ export class HeadlessEngine {
     }
     return { seed: this.seed, totalTicks: this.tickCount, winner: this.gameOverTeam };
   }
-
-  // --- RL mode ---
-
-  reset(): StepResult {
-    this.seed = Math.floor(Math.random() * 2147483647);
-    clearMapGridCache();
-    this.initWorld();
-
-    // Initial fog update
-    this.fogState.update(this.world);
-
-    const observation = extractObservation(
-      this.world, this.resourceState, this.fogState,
-      this.terrainData, this.tickCount, this.rlTeam, this.observationGridSize,
-      this.energyNodes, this.oreDeposits,
-    );
-
-    return {
-      observation,
-      reward: 0,
-      done: false,
-      truncated: false,
-      info: { seed: this.seed },
-    };
-  }
-
-  step(actions: AIAction[]): StepResult {
-    const prevState = captureRewardState(this.world, this.resourceState, this.fogState, this.rlTeam, this.tickCount);
-
-    // Apply all RL agent actions before ticking
-    for (const action of actions) {
-      this.applyAction(action);
-    }
-
-    // Advance simulation
-    for (let i = 0; i < this.ticksPerStep; i++) {
-      this.tick();
-      if (this.gameOverTeam !== null) break;
-    }
-
-    const currState = captureRewardState(this.world, this.resourceState, this.fogState, this.rlTeam, this.tickCount);
-
-    const done = this.gameOverTeam !== null;
-    const truncated = !done && this.tickCount >= this.maxTicks;
-    // gameOverTeam is the LOSING team, so winner is the OTHER team
-    const winner = this.gameOverTeam !== null ? (this.gameOverTeam === this.rlTeam ? 1 - this.rlTeam : this.rlTeam) : null;
-    const reward = this.rewardTracker.calculateReward(prevState, currState, done, truncated, winner, this.rlTeam);
-
-    const observation = extractObservation(
-      this.world, this.resourceState, this.fogState,
-      this.terrainData, this.tickCount, this.rlTeam, this.observationGridSize,
-      this.energyNodes, this.oreDeposits,
-    );
-
-    const info: Record<string, unknown> = {};
-    if (done) {
-      info.winner = winner;
-      info.losingTeam = this.gameOverTeam;
-    }
-    if (truncated) {
-      info.truncated_reason = 'max_ticks';
-    }
-
-    return { observation, reward, done: done || truncated, truncated, info };
-  }
-
-  // --- Internal ---
 
   private tick(): void {
     this.buildingOccupancy.update(this.world);
@@ -291,250 +164,6 @@ export class HeadlessEngine {
     }
 
     this.tickCount++;
-  }
-
-  private buildCmdCtx(): GameCommandContext {
-    return {
-      world: this.world,
-      resources: this.resourceState,
-      terrain: this.terrainData,
-      energyNodes: this.energyNodes,
-      oreDeposits: this.oreDeposits,
-    };
-  }
-
-  private applyAction(action: AIAction): void {
-    if (action.actionType === RLActionType.NoOp) return;
-
-    const ctx = this.buildAIContext();
-
-    switch (action.actionType) {
-      case RLActionType.MoveUnit:
-      case RLActionType.AttackMove: {
-        const entity = this.findNearestUnit(action.sourceX, action.sourceZ);
-        if (entity === null) break;
-        // Don't interrupt workers that are building
-        if (this.world.getComponent(entity, BUILD_COMMAND)) break;
-        issueMove(ctx, entity, action.targetX, action.targetZ);
-        break;
-      }
-
-      case RLActionType.TrainUnit: {
-        const catIndex = Math.floor(action.param);
-        if (catIndex < 0 || catIndex >= UNIT_CATEGORIES_BY_INDEX.length) break;
-        const unitCategory = UNIT_CATEGORIES_BY_INDEX[catIndex];
-
-        const entity = this.findNearestProductionBuilding(action.sourceX, action.sourceZ, unitCategory);
-        if (entity === null) break;
-
-        // Enforce production rules: HQ can only train workers, DroneFactory cannot train workers
-        const bldg = this.world.getComponent<BuildingComponent>(entity, BUILDING);
-        if (bldg) {
-          if (bldg.buildingType === BuildingType.HQ && unitCategory !== UnitCategory.WorkerDrone) break;
-          if (bldg.buildingType === BuildingType.DroneFactory && unitCategory === UnitCategory.WorkerDrone) break;
-        }
-
-        const pos = this.world.getComponent<PositionComponent>(entity, POSITION);
-        const rallyX = pos ? pos.x : ctx.baseX;
-        const rallyZ = pos ? pos.z + 5 : ctx.baseZ;
-        trainUnit(this.buildCmdCtx(), this.rlTeam, entity, unitCategory, rallyX, rallyZ);
-        break;
-      }
-
-      case RLActionType.BuildStructure: {
-        const typeIndex = Math.floor(action.param);
-        if (typeIndex < 1 || typeIndex >= BUILDING_TYPES_BY_INDEX.length) break;
-        const buildingType = BUILDING_TYPES_BY_INDEX[typeIndex];
-        if (!buildingType) break;
-
-        let buildX: number;
-        let buildZ: number;
-
-        if (buildingType === BuildingType.EnergyExtractor) {
-          // Macro: find nearest unclaimed energy node to HQ
-          const node = this.findNearestUnclaimedNode(this.energyNodes);
-          if (!node) break;
-          buildX = node.x;
-          buildZ = node.z;
-        } else if (buildingType === BuildingType.MatterPlant) {
-          // Macro: find nearest unclaimed ore deposit to HQ
-          const deposit = this.findNearestUnclaimedNode(this.oreDeposits);
-          if (!deposit) break;
-          buildX = deposit.x;
-          buildZ = deposit.z;
-        } else {
-          // Other buildings: use agent's target coordinates
-          buildX = action.targetX;
-          buildZ = action.targetZ;
-        }
-
-        // Find nearest worker to the build site (not sourceX/sourceZ)
-        const entity = this.findNearestWorker(buildX, buildZ);
-        if (entity === null) break;
-
-        buildStructure(this.buildCmdCtx(), this.rlTeam, buildingType, buildX, buildZ, entity);
-        break;
-      }
-    }
-  }
-
-  private findNearestUnit(x: number, z: number): number | null {
-    let best: number | null = null;
-    let bestDist = Infinity;
-    const entities = this.world.query(POSITION, TEAM, UNIT_TYPE, HEALTH);
-    for (const e of entities) {
-      const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
-      if (t.team !== this.rlTeam) continue;
-      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
-      if (health.dead) continue;
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      const dx = pos.x - x;
-      const dz = pos.z - z;
-      const dist = dx * dx + dz * dz;
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = e;
-      }
-    }
-    return best;
-  }
-
-  private findNearestProductionBuilding(x: number, z: number, unitCategory: UnitCategory): number | null {
-    let best: number | null = null;
-    let bestDist = Infinity;
-    const entities = this.world.query(POSITION, TEAM, BUILDING, HEALTH);
-    for (const e of entities) {
-      const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
-      if (t.team !== this.rlTeam) continue;
-      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
-      if (health.dead) continue;
-      // Skip buildings under construction
-      if (this.world.getComponent(e, CONSTRUCTION)) continue;
-      const bldg = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
-      // Only consider buildings that can produce the requested unit
-      const allowed = PRODUCTION_RULES.get(bldg.buildingType);
-      if (!allowed || !allowed.includes(unitCategory)) continue;
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      const dx = pos.x - x;
-      const dz = pos.z - z;
-      const dist = dx * dx + dz * dz;
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = e;
-      }
-    }
-    return best;
-  }
-
-  private findNearestWorker(x: number, z: number): number | null {
-    let best: number | null = null;
-    let bestDist = Infinity;
-    const entities = this.world.query(POSITION, TEAM, UNIT_TYPE, HEALTH);
-    for (const e of entities) {
-      const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
-      if (t.team !== this.rlTeam) continue;
-      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
-      if (health.dead) continue;
-      const ut = this.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
-      if (ut.category !== UnitCategory.WorkerDrone) continue;
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      const dx = pos.x - x;
-      const dz = pos.z - z;
-      const dist = dx * dx + dz * dz;
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = e;
-      }
-    }
-    return best;
-  }
-
-  private isUnclaimed(x: number, z: number): boolean {
-    const buildings = this.world.query(POSITION, BUILDING, HEALTH);
-    for (const e of buildings) {
-      const health = this.world.getComponent<HealthComponent>(e, HEALTH)!;
-      if (health.dead) continue;
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      const dx = pos.x - x;
-      const dz = pos.z - z;
-      if (dx * dx + dz * dz < BUILDING_MIN_SPACING_SQ) return false;
-    }
-    const constructions = this.world.query(POSITION, CONSTRUCTION);
-    for (const e of constructions) {
-      if (this.world.getComponent(e, BUILDING)) continue;
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      const dx = pos.x - x;
-      const dz = pos.z - z;
-      if (dx * dx + dz * dz < BUILDING_MIN_SPACING_SQ) return false;
-    }
-    return true;
-  }
-
-  private findNearestUnclaimedNode(nodes: Array<{ x: number; z: number }>): { x: number; z: number } | null {
-    // Find HQ position for distance sorting
-    let baseX = this.rlTeam === 0 ? 64 : 192;
-    let baseZ = this.rlTeam === 0 ? 64 : 192;
-    const buildings = this.world.query(BUILDING, TEAM, POSITION);
-    for (const e of buildings) {
-      const bldg = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (bldg.buildingType !== BuildingType.HQ) continue;
-      const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
-      if (t.team !== this.rlTeam) continue;
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      baseX = pos.x;
-      baseZ = pos.z;
-      break;
-    }
-
-    let best: { x: number; z: number } | null = null;
-    let bestDist = Infinity;
-    for (const node of nodes) {
-      if (!this.fogState.isExplored(this.rlTeam, node.x, node.z)) continue;
-      if (!this.isUnclaimed(node.x, node.z)) continue;
-      const dx = node.x - baseX;
-      const dz = node.z - baseZ;
-      const dist = dx * dx + dz * dz;
-      if (dist < bestDist) {
-        bestDist = dist;
-        best = node;
-      }
-    }
-    return best;
-  }
-
-  private buildAIContext(): AIContext {
-    let hqEntity = -1;
-    let baseX = this.rlTeam === 0 ? 64 : 192;
-    let baseZ = this.rlTeam === 0 ? 64 : 192;
-    const buildings = this.world.query(BUILDING, TEAM, POSITION);
-    for (const e of buildings) {
-      const bldg = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (bldg.buildingType !== BuildingType.HQ) continue;
-      const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
-      if (t.team !== this.rlTeam) continue;
-      const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;
-      hqEntity = e;
-      baseX = pos.x;
-      baseZ = pos.z;
-      break;
-    }
-
-    return {
-      world: this.world,
-      team: this.rlTeam,
-      resources: this.resourceState,
-      terrain: this.terrainData,
-      fog: this.fogState,
-      energyNodes: this.energyNodes,
-      oreDeposits: this.oreDeposits,
-      occupancy: this.buildingOccupancy,
-      baseX,
-      baseZ,
-      rallyX: baseX,
-      rallyZ: baseZ + 15,
-      hqEntity,
-      totalTicks: this.tickCount,
-    };
   }
 
   private spawnInitialEntities(): void {

@@ -58,7 +58,7 @@ export function retreatWounded(ctx: AIContext, squad: Squad): void {
     const health = ctx.world.getComponent<HealthComponent>(e, HEALTH)!;
     if (health.dead) continue;
     const bldg = ctx.world.getComponent<BuildingComponent>(e, BUILDING)!;
-    if (bldg.buildingType === BuildingType.SupplyDepot) {
+    if (bldg.buildingType === BuildingType.SupplyDepot || bldg.buildingType === BuildingType.HQ) {
       depotEntities.push(e);
     }
   }

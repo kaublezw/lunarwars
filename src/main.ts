@@ -37,7 +37,6 @@ import { EnergyPacketSystem } from '@sim/systems/EnergyPacketSystem';
 import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { AISystem } from '@sim/systems/AIBrain';
-import { RLAISystem } from '@sim/systems/RLAISystem';
 import { FogOfWarState } from '@sim/fog/FogOfWarState';
 import { ResourceState } from '@sim/economy/ResourceState';
 import { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
@@ -110,9 +109,6 @@ app.appendChild(renderer.domElement);
 const replaySeedParam = new URLSearchParams(window.location.search).get('replay');
 const replayMode = replaySeedParam !== null;
 
-// --- RL Model Mode (URL param: ?rl) — trained model vs built-in AI spectator ---
-const rlMode = new URLSearchParams(window.location.search).has('rl');
-
 // --- Multiplayer Mode ---
 const urlParams = new URLSearchParams(window.location.search);
 const multiplayerHost = urlParams.has('host');
@@ -121,7 +117,7 @@ const isMultiplayer = multiplayerHost || multiplayerJoinCode !== null;
 
 // --- Spectator Mode ---
 const SPECTATOR_KEY = 'lunarwars_spectator';
-const spectatorMode = replayMode || rlMode || sessionStorage.getItem(SPECTATOR_KEY) === 'true';
+const spectatorMode = replayMode || sessionStorage.getItem(SPECTATOR_KEY) === 'true';
 
 // --- Scenario Mode (URL param or sessionStorage) ---
 const SANDBOX_KEY = 'lunarwars_sandbox';
@@ -361,10 +357,6 @@ world.addSystem(new BuildSystem(eventBus));
 world.addSystem(new ProductionSystem(resourceState, terrainData));
 if (isMultiplayer) {
   // Multiplayer: no AI — both teams are human players
-} else if (rlMode) {
-  // RL mode: built-in AI for team 0 (PLAYER_TEAM), trained model for team 1 (AI_TEAM)
-  world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
-  world.addSystem(new RLAISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
 } else {
   world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
   if (spectatorMode) {
@@ -1307,7 +1299,7 @@ document.body.appendChild(seedLabel);
 
 // --- Tick Counter (replay mode only) ---
 let tickLabel: HTMLSpanElement | null = null;
-if (replayMode || rlMode) {
+if (replayMode) {
   tickLabel = document.createElement('span');
   tickLabel.style.cssText = 'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:1000;color:#fff;font-family:monospace;font-size:14px;';
   document.body.appendChild(tickLabel);

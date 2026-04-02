@@ -77,7 +77,8 @@ export function getDamagedBuildings(ctx: AIContext): { entity: number; hpFractio
 
 export function getCompletedDepots(ctx: AIContext, state: AIWorldState): number[] {
   const depots = state.myBuildings.get(BuildingType.SupplyDepot) ?? [];
-  return depots.filter(
+  const hqs = state.myBuildings.get(BuildingType.HQ) ?? [];
+  return [...depots, ...hqs].filter(
     d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
   );
 }
@@ -258,7 +259,10 @@ export function assessWorldState(
     }
   }
 
-  const depotEntities = (myBuildings.get(BuildingType.SupplyDepot) ?? []).filter(
+  const depotEntities = [
+    ...(myBuildings.get(BuildingType.SupplyDepot) ?? []),
+    ...(myBuildings.get(BuildingType.HQ) ?? []),
+  ].filter(
     d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
   );
   const totalMatter = ctx.resources.get(ctx.team).matter;
