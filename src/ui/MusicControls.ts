@@ -16,7 +16,7 @@ export class MusicControls {
     this.container.style.cssText = `
       position: fixed;
       bottom: 12px;
-      left: 12px;
+      right: 12px;
       background: rgba(0, 0, 0, 0.75);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: 6px;

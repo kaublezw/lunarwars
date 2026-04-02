@@ -37,7 +37,7 @@ export class DepotRangeRenderer {
     for (const e of depots) {
       if (world.hasComponent(e, CONSTRUCTION)) continue;
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (building.buildingType !== BuildingType.SupplyDepot) continue;
+      if (building.buildingType !== BuildingType.SupplyDepot && building.buildingType !== BuildingType.HQ) continue;
       const health = world.getComponent<HealthComponent>(e, HEALTH)!;
       if (health.dead) continue;
       const team = world.getComponent<TeamComponent>(e, TEAM)!;

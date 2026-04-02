@@ -8,7 +8,7 @@ export class FpsDisplay {
     this.el = document.createElement('div');
     this.el.style.cssText = `
       position: fixed;
-      bottom: 12px;
+      bottom: 48px;
       right: 12px;
       background: rgba(0, 0, 0, 0.5);
       border-radius: 3px;

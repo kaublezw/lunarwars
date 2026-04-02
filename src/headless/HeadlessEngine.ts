@@ -26,7 +26,7 @@ import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { FogOfWarSystem } from '@sim/systems/FogOfWarSystem';
 import { AISystem } from '@sim/systems/AIBrain';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, CONSTRUCTION, BUILD_COMMAND } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, CONSTRUCTION, BUILD_COMMAND, MATTER_STORAGE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
@@ -42,6 +42,8 @@ import type { VisionComponent } from '@sim/components/Vision';
 import type { BuildingComponent } from '@sim/components/Building';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import type { MatterStorageComponent } from '@sim/components/MatterStorage';
+import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 
 import type { AIContext } from '@sim/ai/AITypes';
 import { TEAM_COLORS } from '@sim/ai/AITypes';
@@ -574,6 +576,13 @@ export class HeadlessEngine {
           pendingScorch: [],
         });
       }
+
+      // HQ acts as resupply point (ammo + repair) like a Supply Depot
+      this.world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
+        stored: 0,
+        capacity: 100,
+      });
+      this.world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
     }
 
     // Workers

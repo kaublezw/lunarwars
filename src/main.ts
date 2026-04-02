@@ -575,6 +575,13 @@ if (saveData) {
         pendingScorch: [],
       });
     }
+
+    // HQ acts as resupply point (ammo + repair) like a Supply Depot
+    world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
+      stored: 0,
+      capacity: 100,
+    });
+    world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
   }
 
   // --- Worker Drone Spawning (1 per team, near HQ) ---
