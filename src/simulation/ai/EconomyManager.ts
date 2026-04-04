@@ -215,6 +215,9 @@ export class EconomyManager {
     const cmdCtx = this.buildCmdCtx(ctx);
 
     for (const depot of completedDepots) {
+      // HQ acts as a resupply point but should not train ferry drones
+      if (depot === ctx.hqEntity) continue;
+
       const depotPos = ctx.world.getComponent<PositionComponent>(depot, POSITION)!;
       const dx = depotPos.x - hqPos.x;
       const dz = depotPos.z - hqPos.z;

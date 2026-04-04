@@ -34,7 +34,7 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
   for (const zone of flatZones) {
     for (let attempt = 0; attempt < 20 && nodes.length < TARGET_COUNT; attempt++) {
       const angle = next() * Math.PI * 2;
-      const dist = 5 + next() * 10; // 5-15 units from center
+      const dist = 12 + next() * 10; // 12-22 units from center
       const x = zone.x + Math.cos(angle) * dist;
       const z = zone.z + Math.sin(angle) * dist;
 
@@ -91,7 +91,7 @@ export function generateOreDeposits(terrain: TerrainData, seed: number, energyNo
   for (const zone of flatZones) {
     for (let attempt = 0; attempt < 20 && deposits.length < TARGET_COUNT; attempt++) {
       const angle = next() * Math.PI * 2;
-      const dist = 5 + next() * 10;
+      const dist = 12 + next() * 10; // 12-22 units from center
       const x = zone.x + Math.cos(angle) * dist;
       const z = zone.z + Math.sin(angle) * dist;
 
