@@ -9,18 +9,20 @@ Free, zero-barrier, web-based RTS game set in a voxel arena. Competing factions 
 ### Core Differentiator: Explicit Logistics
 
 The defining mechanic is supply chain management:
-- **Global matter pool** per team — Matter Plants produce directly to the team's global pool
-- **Ferry drone system** — Ferry Drones (trained at Supply Depots) shuttle matter from HQ to depots automatically
+- **Train-based economy** — A physical train (1 engine + cargo cars) circuits between HQ and resource buildings, collecting and delivering resources in bursty deliveries
+- **PlantStorage accumulation** — Extractors and Matter Plants accumulate resources locally; the train picks them up on each pass
+- **Discrete grid track** — Train tracks are built from exactly 6 piece types: 2 straights (N-S, E-W) and 4 quarter-circle curves. All pieces snap to `MACRO_GRID_SIZE` (4 wu) grid. Tracks are visual-only (no collision)
+- **Vulnerable supply chain** — Destroying cargo cars denies resource delivery; destroying the engine halts the economy. Enemy units on the track are instakilled; friendly units are pushed aside
 - **Supply Depots** have local MATTER_STORAGE; combat units auto-resupply (ammo + repair) at depots
 - **No ammo = no firing** — units must return to depots when empty, creating natural front-line logistics
-- **Future (Phase 6)**: Player-drawn supply lines with visible, capacity-limited, attackable routes
 - This shifts gameplay from "biggest army wins" to "who controls terrain, logistics, and supply integrity"
 
 ### Economy
 
-- **Energy** — Mined from fixed energy nodes via Extractors (+5e/s each). Powers production and matter synthesis.
-- **Matter** — Manufactured by Matter Plants (+2m/s each, costs 2e/s). Global pool per team. Used for buildings, repairs, ammo, and unit training.
-- **Build anywhere** — No build radius restriction for building placement.
+- **Energy** — Mined from fixed energy nodes via Extractors (+5e/s each). Accumulates in local `PlantStorage`; collected by train.
+- **Matter** — Manufactured by Matter Plants (+2m/s each). Accumulates in local `PlantStorage`; collected by train.
+- **Bursty delivery** — Resources only enter the global pool when the train unloads at HQ. No continuous income.
+- **Build anywhere** — No build radius restriction. All buildings and resource nodes snap to `MACRO_GRID_SIZE` (4 wu) grid.
 - Building/training costs deducted from global matter pool.
 - Economy limits unit spam, encourages expansion and forward staging, makes logistics essential.
 
@@ -32,6 +34,8 @@ The defining mechanic is supply chain management:
 | Heavy Assault Platform | Tank-like | 300hp, speed 1.5, range 12, 22 ammo |
 | Aerial Drone | Flyer/scout | 60hp, speed 6, range 6, 30 ammo |
 | Ferry Drone | Supply carrier | 60hp, speed 2.4, trained at Supply Depot, auto-shuttles matter HQ→depot |
+| Train Engine | Locomotive | 500hp, speed 4, 1 per team (free at start), follows track circuit |
+| Cargo Car | Resource hauler | 150hp, speed 4, 200 capacity, trained at HQ (50e/75m), auto-links to train |
 
 - Units consume ammo — **no ammo = no firing** (suppression mechanic)
 - Units gain veterancy (3/7/15 kills): +10% damage, +10% fire rate, +5% speed per level
@@ -51,6 +55,7 @@ The defining mechanic is supply chain management:
 
 - 1 HQ (free, pre-placed at team spawn flat zone)
 - 1 Worker Drone (spawns near HQ)
+- 1 Train Engine + 2 Cargo Cars (free, at HQ)
 - 100 energy — enough for 1 Matter Plant
 - 100 matter — enough for 2 Energy Extractors
 
@@ -62,6 +67,48 @@ The defining mechanic is supply chain management:
 - Mountains create chokepoints and obstruct movement/line of sight
 - Terrain matters primarily because it affects logistics, not just combat
 - 2-4 flat zones for base building, 8-12 energy nodes at flat spots
+
+### Train Logistics System
+
+The train is the sole resource delivery mechanism. No packets or direct income — all energy and matter flow through the physical train.
+
+**Track Routing (TrackManagerSystem):**
+- A* state-space pathfinder on the `MACRO_GRID_SIZE` (4 wu) grid
+- State = (gridX, gridZ, facing direction 0-3)
+- 3 moves: Straight (cost 1.0), Curve Right (cost 2.5), Curve Left (cost 2.5)
+- Curve moves go forward 1 + sideways 1 grid cell (diagonal), changing direction by 90 degrees
+- Building center cells are blocked; arc collision check prevents curves from clipping building footprints
+- Track targets are adjacent grid cells (1 cell from building center)
+- Two-pass loop building: pass 1 discovers return momentum, pass 2 rebuilds with correct starting direction for seamless loop closure
+- Nearest-neighbor TSP determines stop order; momentum chains between segments
+
+**Track Pieces (6 types only):**
+- 2 straight pieces: N-S and E-W grid-aligned lines
+- 4 curve pieces: quarter-circle arcs (NE, NW, SE, SW quadrants)
+- Every junction is tangential — no discrete angle changes anywhere
+- `nodesToWaypoints()` emits grid centers for straights, 8-sample arcs for curves
+- Arc pivot: R perpendicular to incoming direction on the turn side
+- Arc sweep: right turn = CCW (+PI/2), left turn = CW (-PI/2) from pivot perspective
+
+**Train Movement (TrainMovementSystem):**
+- Engine follows TrackFollower.path waypoints at 4 wu/s
+- Rotation = atan2 toward next waypoint (smooth with dense arc samples)
+- Halts at stop waypoints (entityId or isHQ) for logistics
+- Cargo cars trail via TrainLink chain at CAR_SPACING (2.5 wu)
+- Enemy units on track instakilled; friendly units pushed sideways
+- Broken chain detection: engine reverses to reconnect orphaned cars
+
+**Resource Flow (TrainLogisticsSystem):**
+- At plant waypoints: transfers PlantStorage → CargoStorage (fills all compatible cars)
+- At HQ waypoints: dumps CargoStorage → ResourceState (addEnergy/addMatter)
+- Cars lock committedType ('energy' | 'matter') when loaded, cleared on unload
+
+**Unified Grid (MACRO_GRID_SIZE = 4.0 wu):**
+- Exported from `ComponentTypes.ts`, used by tracks, buildings, and resource nodes
+- Energy nodes and ore deposits snap to grid in `MapFeatures.ts`
+- Player placement snaps in `PlacementController.ts`
+- AI placement snaps in `PlacementValidator.ts`
+- Debug grid visible as yellow lines via `GridRenderer.ts`
 
 ### AI Philosophy
 
@@ -216,7 +263,12 @@ for (const e of entities) {
 | `src/rendering/SceneManager.ts` | Scene, directional + ambient lights |
 | `src/rendering/GhostBuildingRenderer.ts` | Semi-transparent placement preview mesh |
 | `src/simulation/systems/MovementSystem.ts` | Moves entities, bounces off 256x256 bounds |
-| `src/simulation/systems/EconomySystem.ts` | Ticks extractors (+5e/s); plants produce matter to global pool (+2m/s) |
+| `src/simulation/systems/EconomySystem.ts` | Ticks extractors/plants: accumulates PlantStorage (+5e/s, +2m/s); auto-fills HQ matter storage |
+| `src/simulation/systems/TrackManagerSystem.ts` | A* grid-based track routing: computes optimal circuit through buildings with discrete track pieces |
+| `src/simulation/systems/TrainMovementSystem.ts` | Moves train along TrackFollower path; drags cargo cars; handles blocking units and chain reconnection |
+| `src/simulation/systems/TrainLogisticsSystem.ts` | Load/unload state machine: PlantStorage → CargoStorage at plants, CargoStorage → ResourceState at HQ |
+| `src/simulation/logistics/TrackState.ts` | Per-team track circuit state: activeRoute, pendingRoute, waypoints with entityId/isHQ |
+| `src/simulation/logistics/TrainSpawner.ts` | Spawns train sets (engine + cars with TrainLink chain); appendCarToTrain, teamHasEngine helpers |
 | `src/simulation/systems/SupplySystem.ts` | Ferry system: units with SUPPLY_ROUTE shuttle matter from global pool to depot MATTER_STORAGE |
 | `src/simulation/systems/ResupplySystem.ts` | Auto-resupply: combat units with ammo=0 seek nearest depot for instant ammo refill + gradual repair (20 HP/s) |
 | `src/simulation/systems/GameOverSystem.ts` | Checks HQ health; fires onGameOver callback when an HQ is destroyed |
@@ -262,15 +314,18 @@ Fixed timestep simulation at 1/60s with accumulator pattern. Render callback rec
 - Worker building: placement mode with ghost preview, energy node snapping, build-over-time, no build radius restriction
 - HQ production: train workers via production queue
 - Resource system: global matter pool per team, energy with per-second rates, cost gating
-- Matter Plants produce directly to global pool (+2m/s, costs 2e/s)
-- Ferry drone system: Ferry Drones trained at Supply Depots auto-shuttle matter from HQ to depot MATTER_STORAGE (10 matter/trip, 2s load/unload)
+- Train logistics: physical train circuit collects from PlantStorage, delivers to HQ in bursts
+- Grid-based discrete track routing: A* pathfinder with 6 track piece types (2 straights + 4 quarter-circle curves)
+- Unified MACRO_GRID_SIZE (4 wu): tracks, buildings, energy nodes, ore deposits all snap to same grid
+- Single engine rule (1 per team), cargo cars trainable at HQ, auto-link on dock
+- Train instakills enemies on track, pushes friendly units aside
 - Auto-resupply: combat units with ammo=0 auto-seek nearest depot for instant ammo refill + gradual repair (20 HP/s), costs matter from depot
 - Game over detection: HQ destruction triggers win/loss
-- AI opponent: build orders, smart forward depot placement, army control, scouting, ferry drone training at depots, supply-aware economy
+- AI opponent: build orders, smart forward depot placement, army control, scouting, supply-aware economy
 
 ### System Execution Order
 
-Pathfinding -> CollisionAvoidance -> Movement -> FogOfWar -> Turret -> Resupply -> GameOver -> Health -> Economy -> Supply -> Build -> Production -> AI
+Pathfinding -> CollisionAvoidance -> Movement -> TrainMovement -> TrainLogistics -> FogOfWar -> Turret -> Projectile -> VoxelDamage -> Resupply -> Repair -> GameOver -> Health -> Economy -> Supply -> Build -> Production -> TrackManager -> AI
 
 ### Building Y-Position Convention
 
@@ -280,8 +335,9 @@ RenderSync tracks meshType per entity and recreates the Three.js object when mes
 
 ## Upcoming Phases
 
-- Phase 6: Supply lines (player-drawn routes, capacity limits, visibility)
 - Phase 9: UI/HUD + game flow
+- Train visuals: voxel models for engine/cars, track tie rendering
+- AI train awareness: economy manager needs to understand bursty train delivery
 
 ## Conventions
 
