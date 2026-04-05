@@ -3,7 +3,7 @@ import type { IsometricCamera } from '@render/IsometricCamera';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { World } from '@core/ECS';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
-import { BUILDING, POSITION, CONSTRUCTION, RENDERABLE } from '@sim/components/ComponentTypes';
+import { BUILDING, POSITION, CONSTRUCTION, RENDERABLE, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import { BuildingType, type BuildingComponent } from '@sim/components/Building';
@@ -189,6 +189,10 @@ export class PlacementController {
         wz = closest.deposit.z;
       }
     }
+
+    // Snap to macro grid for unified spatial alignment
+    wx = Math.round(wx / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
+    wz = Math.round(wz / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
     this.cursorX = wx;
     this.cursorZ = wz;

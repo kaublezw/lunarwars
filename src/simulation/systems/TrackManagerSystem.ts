@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, TRAIN_LINK, TRACK_FOLLOWER, PENDING_CAR_ATTACH, MOVE_COMMAND, UNIT_TYPE } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, TRAIN_LINK, TRACK_FOLLOWER, PENDING_CAR_ATTACH, MOVE_COMMAND, UNIT_TYPE, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -19,6 +19,23 @@ const DOCK_DIST_SQ = 25; // 5 wu (accounts for track running adjacent to HQ)
 const TRACK_CLEAR_RADIUS = 2.0;
 /** How far the track waypoint is offset from the building center. */
 const TRACK_ADJACENCY_OFFSET = 3.5;
+/** Number of arc samples for 90-degree turns. */
+const TURN_ARC_SAMPLES = 6;
+
+/** Direction deltas: 0=North(-Z), 1=East(+X), 2=South(+Z), 3=West(-X) */
+const DIR_DX = [0, 1, 0, -1];
+const DIR_DZ = [-1, 0, 1, 0];
+
+/** A* search node for grid-based track routing. */
+interface TrackStateNode {
+  x: number;
+  z: number;
+  /** 0=North, 1=East, 2=South, 3=West */
+  dir: number;
+  gCost: number;
+  hCost: number;
+  parent: TrackStateNode | null;
+}
 
 /**
  * TrackManagerSystem computes optimal track circuits (nearest-neighbor TSP)
@@ -225,22 +242,17 @@ export class TrackManagerSystem implements System {
     return Math.sqrt(ex * ex + ez * ez);
   }
 
-  /**
-   * Geometric corner filleting: straight lines with fixed-radius arcs at corners.
-   *
-   * 1. Nearest-neighbor TSP determines stop order.
-   * 2. Offset stops outward from centroid so track runs beside buildings.
-   * 3. For each corner, compute a circular fillet arc that smoothly connects
-   *    the incoming and outgoing straight segments.
-   * 4. Stitch arcs and sampled straights together into the final route.
-   */
+  // ───────────────────────────────────────────────────────────────────────
+  // Step 3: Momentum-Aware Circuit Generation
+  // ───────────────────────────────────────────────────────────────────────
+
   private computeCircuit(
     hqPos: PositionComponent,
     plants: { entity: number; x: number; z: number }[],
   ): TrackWaypoint[] {
     if (plants.length === 0) return [];
 
-    // 1. Nearest-neighbor TSP to determine stop order
+    // 3a. Nearest-neighbor TSP to determine stop order
     const stopOrder: { x: number; z: number; entity: number | null; isHQ: boolean }[] =
       [{ x: hqPos.x, z: hqPos.z, entity: null, isHQ: true }];
     const visited = new Array<boolean>(plants.length).fill(false);
@@ -258,172 +270,280 @@ export class TrackManagerSystem implements System {
       curX = plants[bestIdx].x; curZ = plants[bestIdx].z;
       stopOrder.push({ x: curX, z: curZ, entity: plants[bestIdx].entity, isHQ: false });
     }
-    // DO NOT push HQ again — modulo arithmetic closes the loop.
 
-    // Special case: with only 1 plant (2 stops), expand into a 4-point loop
-    // by adding two synthetic waypoints offset perpendicular to the HQ-plant line.
-    // This gives the fillet algorithm enough corners to work with.
-    if (stopOrder.length === 2) {
-      const hq = stopOrder[0];
-      const plant = stopOrder[1];
-      const dx = plant.x - hq.x;
-      const dz = plant.z - hq.z;
-      const len = Math.sqrt(dx * dx + dz * dz) || 1;
-      // Perpendicular direction
-      const perpX = -dz / len;
-      const perpZ = dx / len;
-      const offset = TRACK_ADJACENCY_OFFSET;
-      // Insert two synthetic points to form a rectangle: HQ -> side1 -> plant -> side2
-      stopOrder.length = 0;
-      stopOrder.push(
-        { x: hq.x + perpX * offset, z: hq.z + perpZ * offset, entity: null, isHQ: true },
-        { x: plant.x + perpX * offset, z: plant.z + perpZ * offset, entity: plant.entity, isHQ: false },
-        { x: plant.x - perpX * offset, z: plant.z - perpZ * offset, entity: null, isHQ: false },
-        { x: hq.x - perpX * offset, z: hq.z - perpZ * offset, entity: null, isHQ: false },
-      );
-    }
+    // 3b. Snap stops to grid + offset so track runs beside buildings
+    let centX = 0, centZ = 0;
+    for (const s of stopOrder) { centX += s.x; centZ += s.z; }
+    centX /= stopOrder.length; centZ /= stopOrder.length;
 
-    // 2. Outward offset calculation
-    let cx = 0, cz = 0;
-    for (const s of stopOrder) { cx += s.x; cz += s.z; }
-    cx /= stopOrder.length; cz /= stopOrder.length;
-
-    const rawPoints = stopOrder.map(stop => {
-      let outDx = stop.x - cx, outDz = stop.z - cz;
+    const gridStops = stopOrder.map(stop => {
+      let outDx = stop.x - centX, outDz = stop.z - centZ;
       const outLen = Math.sqrt(outDx * outDx + outDz * outDz);
       if (outLen > 0.5) { outDx /= outLen; outDz /= outLen; }
       else { outDx = 1; outDz = 0; }
+      const offX = stop.x + outDx * TRACK_ADJACENCY_OFFSET;
+      const offZ = stop.z + outDz * TRACK_ADJACENCY_OFFSET;
       return {
-        x: stop.x + outDx * TRACK_ADJACENCY_OFFSET,
-        z: stop.z + outDz * TRACK_ADJACENCY_OFFSET,
+        gx: Math.round(offX / MACRO_GRID_SIZE),
+        gz: Math.round(offZ / MACRO_GRID_SIZE),
         entity: stop.entity,
         isHQ: stop.isHQ,
+        origX: stop.x,
+        origZ: stop.z,
       };
     });
 
-    // 3. Fillet generation
-    const TURN_RADIUS = 4.0;
-    const SAMPLE_DIST = 2.0;
-    const route: TrackWaypoint[] = [];
+    // 3c. Chain findDiscretePath calls with momentum awareness.
+    // exitDir from each segment feeds as startDir into the next.
+    const masterPath: TrackStateNode[] = [];
+    let momentum = 0; // First segment leaving HQ starts at dir=0 (North)
 
-    interface CornerData {
-      t1: { x: number; z: number };
-      t2: { x: number; z: number };
-      cx: number; cz: number;
-      startAng: number; sweep: number; radius: number;
-      entity: number | null; isHQ: boolean;
+    for (let i = 0; i < gridStops.length; i++) {
+      const from = gridStops[i];
+      const to = gridStops[(i + 1) % gridStops.length];
+      const result = this.findDiscretePath(from.gx, from.gz, momentum, to.gx, to.gz);
+
+      // Skip first node if it duplicates the tail of the previous segment
+      const startIdx = (masterPath.length > 0 && result.path.length > 0) ? 1 : 0;
+      for (let j = startIdx; j < result.path.length; j++) {
+        masterPath.push(result.path[j]);
+      }
+      momentum = result.exitDir;
     }
-    const corners: CornerData[] = [];
 
-    // First pass: calculate geometry for all corners
-    for (let i = 0; i < rawPoints.length; i++) {
-      const p1 = rawPoints[(i - 1 + rawPoints.length) % rawPoints.length];
-      const p2 = rawPoints[i];
-      const p3 = rawPoints[(i + 1) % rawPoints.length];
+    if (masterPath.length < 2) return [];
 
-      const d1x = p1.x - p2.x, d1z = p1.z - p2.z;
-      const len1 = Math.sqrt(d1x * d1x + d1z * d1z);
-      const u1x = d1x / len1, u1z = d1z / len1;
+    // 3d. Convert master node path to world-space TrackWaypoints (Step 4)
+    const route = this.nodesToWaypoints(masterPath);
 
-      const d2x = p3.x - p2.x, d2z = p3.z - p2.z;
-      const len2 = Math.sqrt(d2x * d2x + d2z * d2z);
-      const u2x = d2x / len2, u2z = d2z / len2;
+    // 3e. Map entityIds — for each stop, find the closest generated waypoint
+    for (const gs of gridStops) {
+      let bestIdx = 0;
+      let bestDistSq = Infinity;
+      for (let i = 0; i < route.length; i++) {
+        const dx = route[i].x - gs.origX;
+        const dz = route[i].z - gs.origZ;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < bestDistSq) { bestDistSq = distSq; bestIdx = i; }
+      }
+      route[bestIdx].entityId = gs.entity;
+      route[bestIdx].isHQ = gs.isHQ;
+    }
 
-      const dot = u1x * u2x + u1z * u2z;
-      const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+    // Close the loop
+    if (route.length > 0) {
+      route.push({ ...route[0], entityId: null, isHQ: false });
+    }
 
-      // If the track is basically straight, no arc needed
-      if (angle > Math.PI - 0.05) {
-        corners.push({
-          t1: p2, t2: p2, cx: p2.x, cz: p2.z, startAng: 0, sweep: 0, radius: 0,
-          entity: p2.entity, isHQ: p2.isHQ,
+    return route;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Step 2: The A* Pathfinder
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * State-space A* on the track grid.
+   * State = (gridX, gridZ, facing direction).
+   *
+   * Three moves:
+   * - Straight: forward 1 grid unit in current dir. Cost = 1.0.
+   * - Curve Right: dir+1, position = forward 1 + right 1. Cost = 1.5.
+   * - Curve Left: dir-1, position = forward 1 + left 1. Cost = 1.5.
+   *
+   * Returns the path and the exit direction of the final node.
+   */
+  private findDiscretePath(
+    startGx: number, startGz: number, startDir: number,
+    goalGx: number, goalGz: number,
+  ): { path: TrackStateNode[]; exitDir: number } {
+    const key = (x: number, z: number, d: number) => `${x},${z},${d}`;
+    const heuristic = (x: number, z: number) =>
+      Math.abs(x - goalGx) + Math.abs(z - goalGz);
+
+    const open: TrackStateNode[] = [];
+    const bestG = new Map<string, number>();
+
+    // Seed with preferred starting direction (slight penalty for others)
+    for (let d = 0; d < 4; d++) {
+      const g = d === startDir ? 0 : 0.5;
+      const node: TrackStateNode = {
+        x: startGx, z: startGz, dir: d,
+        gCost: g, hCost: heuristic(startGx, startGz),
+        parent: null,
+      };
+      open.push(node);
+      bestG.set(key(startGx, startGz, d), g);
+    }
+
+    let found: TrackStateNode | null = null;
+    let iterations = 0;
+    const MAX_ITERATIONS = 10000;
+
+    while (open.length > 0 && iterations < MAX_ITERATIONS) {
+      iterations++;
+
+      // Pop lowest fCost
+      let bestI = 0;
+      for (let i = 1; i < open.length; i++) {
+        const fa = open[bestI].gCost + open[bestI].hCost;
+        const fb = open[i].gCost + open[i].hCost;
+        if (fb < fa || (fb === fa && open[i].hCost < open[bestI].hCost)) {
+          bestI = i;
+        }
+      }
+      const current = open[bestI];
+      open[bestI] = open[open.length - 1];
+      open.pop();
+
+      if (current.x === goalGx && current.z === goalGz) {
+        found = current;
+        break;
+      }
+
+      const ck = key(current.x, current.z, current.dir);
+      if ((bestG.get(ck) ?? Infinity) < current.gCost) continue;
+
+      const rightDir = (current.dir + 1) % 4;
+      const leftDir = (current.dir + 3) % 4;
+
+      const neighbors: { nx: number; nz: number; nd: number; cost: number }[] = [
+        // Straight
+        {
+          nx: current.x + DIR_DX[current.dir],
+          nz: current.z + DIR_DZ[current.dir],
+          nd: current.dir,
+          cost: 1.0,
+        },
+        // Curve Right: forward + right
+        {
+          nx: current.x + DIR_DX[current.dir] + DIR_DX[rightDir],
+          nz: current.z + DIR_DZ[current.dir] + DIR_DZ[rightDir],
+          nd: rightDir,
+          cost: 1.5,
+        },
+        // Curve Left: forward + left
+        {
+          nx: current.x + DIR_DX[current.dir] + DIR_DX[leftDir],
+          nz: current.z + DIR_DZ[current.dir] + DIR_DZ[leftDir],
+          nd: leftDir,
+          cost: 1.5,
+        },
+      ];
+
+      for (const n of neighbors) {
+        const wx = n.nx * MACRO_GRID_SIZE;
+        const wz = n.nz * MACRO_GRID_SIZE;
+        if (wx < 4 || wx > 252 || wz < 4 || wz > 252) continue;
+        if (!this.terrainData.isPassable(wx, wz)) continue;
+
+        const g = current.gCost + n.cost;
+        const nk = key(n.nx, n.nz, n.nd);
+        if (g >= (bestG.get(nk) ?? Infinity)) continue;
+        bestG.set(nk, g);
+
+        open.push({
+          x: n.nx, z: n.nz, dir: n.nd,
+          gCost: g, hCost: heuristic(n.nx, n.nz),
+          parent: current,
+        });
+      }
+    }
+
+    // Reconstruct
+    if (!found) {
+      const fallback: TrackStateNode[] = [
+        { x: startGx, z: startGz, dir: startDir, gCost: 0, hCost: 0, parent: null },
+        { x: goalGx, z: goalGz, dir: startDir, gCost: 0, hCost: 0, parent: null },
+      ];
+      return { path: fallback, exitDir: startDir };
+    }
+
+    const result: TrackStateNode[] = [];
+    let node: TrackStateNode | null = found;
+    while (node) {
+      result.push(node);
+      node = node.parent;
+    }
+    result.reverse();
+    return { path: result, exitDir: found.dir };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Step 4: Perfect Arc Generation
+  // ───────────────────────────────────────────────────────────────────────
+
+  /**
+   * Convert TrackStateNode[] to world-space TrackWaypoint[].
+   * Straights emit a single waypoint. Direction changes emit a rigid
+   * 90-degree arc using the exact pivot math.
+   */
+  private nodesToWaypoints(nodes: TrackStateNode[]): TrackWaypoint[] {
+    const route: TrackWaypoint[] = [];
+    const R = MACRO_GRID_SIZE / 2;
+
+    for (let i = 0; i < nodes.length; i++) {
+      const curr = nodes[i];
+      const prev = i > 0 ? nodes[i - 1] : null;
+
+      const wx = curr.x * MACRO_GRID_SIZE;
+      const wz = curr.z * MACRO_GRID_SIZE;
+
+      // Straight piece: same direction as previous (or first node)
+      if (!prev || prev.dir === curr.dir) {
+        route.push({
+          x: wx, y: this.terrainData.getHeight(wx, wz), z: wz,
+          entityId: null, isHQ: false,
         });
         continue;
       }
 
-      // Tangent distance (how far back from the corner the arc starts)
-      let tangentDist = TURN_RADIUS / Math.tan(angle / 2);
+      // Curve piece: direction changed — emit a 90-degree arc
+      const prevWx = prev.x * MACRO_GRID_SIZE;
+      const prevWz = prev.z * MACRO_GRID_SIZE;
 
-      // Clamp to prevent arcs from overlapping on short track segments
-      const maxDist = Math.min(len1 / 2.1, len2 / 2.1);
-      let actualRadius = TURN_RADIUS;
-      if (tangentDist > maxDist) {
-        tangentDist = maxDist;
-        actualRadius = tangentDist * Math.tan(angle / 2);
+      const turn = ((curr.dir - prev.dir + 4) % 4) === 1 ? 'RIGHT' : 'LEFT';
+
+      // Exact pivot point calculation
+      let pivotX = prevWx;
+      let pivotZ = prevWz;
+
+      if (prev.dir === 0) { // Facing North (-Z)
+        pivotX += turn === 'RIGHT' ? R : -R;
+      } else if (prev.dir === 1) { // Facing East (+X)
+        pivotZ += turn === 'RIGHT' ? R : -R;
+      } else if (prev.dir === 2) { // Facing South (+Z)
+        pivotX += turn === 'RIGHT' ? -R : R;
+      } else if (prev.dir === 3) { // Facing West (-X)
+        pivotZ += turn === 'RIGHT' ? -R : R;
       }
 
-      const t1 = { x: p2.x + u1x * tangentDist, z: p2.z + u1z * tangentDist };
-      const t2 = { x: p2.x + u2x * tangentDist, z: p2.z + u2z * tangentDist };
+      // Start angle: from pivot toward the previous node's position
+      const startAng = Math.atan2(prevWz - pivotZ, prevWx - pivotX);
+      // End angle: from pivot toward the current node's position
+      const endAng = Math.atan2(wz - pivotZ, wx - pivotX);
 
-      // Center of the circular arc
-      const bx = u1x + u2x, bz = u1z + u2z;
-      const bLen = Math.sqrt(bx * bx + bz * bz);
-      const hDist = actualRadius / Math.sin(angle / 2);
-      const arcCx = p2.x + (bx / bLen) * hDist;
-      const arcCz = p2.z + (bz / bLen) * hDist;
-
-      const startAng = Math.atan2(t1.z - arcCz, t1.x - arcCx);
-      const endAng = Math.atan2(t2.z - arcCz, t2.x - arcCx);
-
+      // Sweep: right turns go clockwise (negative), left turns counter-clockwise (positive)
       let sweep = endAng - startAng;
-      while (sweep > Math.PI) sweep -= 2 * Math.PI;
-      while (sweep < -Math.PI) sweep += 2 * Math.PI;
-
-      corners.push({
-        t1, t2, cx: arcCx, cz: arcCz, startAng, sweep, radius: actualRadius,
-        entity: p2.entity, isHQ: p2.isHQ,
-      });
-    }
-
-    // Second pass: stitch arcs and straights together
-    for (let i = 0; i < corners.length; i++) {
-      const c1 = corners[i];
-      const c2 = corners[(i + 1) % corners.length];
-
-      // A. Draw the arc for this corner
-      if (c1.radius > 0) {
-        const arcSamples = Math.max(6, Math.ceil(Math.abs(c1.sweep) * c1.radius));
-        for (let j = 0; j <= arcSamples; j++) {
-          const t = j / arcSamples;
-          const a = c1.startAng + c1.sweep * t;
-          const px = c1.cx + Math.cos(a) * c1.radius;
-          const pz = c1.cz + Math.sin(a) * c1.radius;
-
-          // Map the stop entity to the middle of the arc so the train docks smoothly
-          const isMid = j === Math.floor(arcSamples / 2);
-          route.push({
-            x: px, y: this.terrainData.getHeight(px, pz), z: pz,
-            entityId: isMid ? c1.entity : null,
-            isHQ: isMid ? c1.isHQ : false,
-          });
-        }
+      if (turn === 'RIGHT') {
+        while (sweep > 0) sweep -= 2 * Math.PI;
+        if (sweep < -Math.PI) sweep += 2 * Math.PI;
       } else {
-        route.push({
-          x: c1.t2.x, y: this.terrainData.getHeight(c1.t2.x, c1.t2.z), z: c1.t2.z,
-          entityId: c1.entity, isHQ: c1.isHQ,
-        });
+        while (sweep < 0) sweep += 2 * Math.PI;
+        if (sweep > Math.PI) sweep -= 2 * Math.PI;
       }
 
-      // B. Draw straight line to next corner (sampled for terrain height)
-      const dx = c2.t1.x - c1.t2.x;
-      const dz = c2.t1.z - c1.t2.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      const steps = Math.floor(dist / SAMPLE_DIST);
-
-      for (let j = 1; j < steps; j++) {
-        const t = j / steps;
-        const px = c1.t2.x + dx * t;
-        const pz = c1.t2.z + dz * t;
+      const ARC_SAMPLES = 8;
+      for (let j = 0; j <= ARC_SAMPLES; j++) {
+        const t = j / ARC_SAMPLES;
+        const ang = startAng + sweep * t;
+        const px = pivotX + Math.cos(ang) * R;
+        const pz = pivotZ + Math.sin(ang) * R;
         route.push({
           x: px, y: this.terrainData.getHeight(px, pz), z: pz,
           entityId: null, isHQ: false,
         });
       }
-    }
-
-    // Close the loop: append the first waypoint so the last segment connects back
-    if (route.length > 0) {
-      route.push({ ...route[0], entityId: null, isHQ: false });
     }
 
     return route;

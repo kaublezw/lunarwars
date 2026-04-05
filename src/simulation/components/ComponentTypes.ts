@@ -34,3 +34,6 @@ export const TRAIN_LINK = 'TrainLink';
 export const TRACK_FOLLOWER = 'TrackFollower';
 export const STATUS_EFFECT = 'StatusEffect';
 export const PENDING_CAR_ATTACH = 'PendingCarAttach';
+
+/** Unified grid scale for tracks, buildings, and resource nodes (world units). */
+export const MACRO_GRID_SIZE = 4.0;

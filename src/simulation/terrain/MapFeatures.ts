@@ -1,4 +1,5 @@
 import type { TerrainData } from './TerrainData';
+import { MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 
 export interface EnergyNode {
   x: number;
@@ -30,13 +31,15 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
 
   const flatZones = terrain.getFlatZones();
 
-  // Place nodes near flat zones first (offset 5-15 units from center)
+  // Place nodes near flat zones first (offset 12-22 units from center), snapped to macro grid
   for (const zone of flatZones) {
     for (let attempt = 0; attempt < 20 && nodes.length < TARGET_COUNT; attempt++) {
       const angle = next() * Math.PI * 2;
       const dist = 12 + next() * 10; // 12-22 units from center
-      const x = zone.x + Math.cos(angle) * dist;
-      const z = zone.z + Math.sin(angle) * dist;
+      const rawX = zone.x + Math.cos(angle) * dist;
+      const rawZ = zone.z + Math.sin(angle) * dist;
+      const x = Math.round(rawX / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
+      const z = Math.round(rawZ / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
       if (x < 2 || x > 254 || z < 2 || z > 254) continue;
       if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
@@ -47,13 +50,15 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
     }
   }
 
-  // Fill remaining with scattered positions (some on hilltops/crater rims)
+  // Fill remaining with scattered positions, snapped to macro grid
   let globalAttempts = 0;
   while (nodes.length < TARGET_COUNT && globalAttempts < 200) {
     globalAttempts++;
 
-    const x = 10 + next() * 236;
-    const z = 10 + next() * 236;
+    const rawX = 10 + next() * 236;
+    const rawZ = 10 + next() * 236;
+    const x = Math.round(rawX / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
+    const z = Math.round(rawZ / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
     if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
     if (!isFarEnough(nodes, x, z, MIN_DIST)) continue;
@@ -87,13 +92,15 @@ export function generateOreDeposits(terrain: TerrainData, seed: number, energyNo
     return true;
   };
 
-  // Place deposits near flat zones first
+  // Place deposits near flat zones first, snapped to macro grid
   for (const zone of flatZones) {
     for (let attempt = 0; attempt < 20 && deposits.length < TARGET_COUNT; attempt++) {
       const angle = next() * Math.PI * 2;
       const dist = 12 + next() * 10; // 12-22 units from center
-      const x = zone.x + Math.cos(angle) * dist;
-      const z = zone.z + Math.sin(angle) * dist;
+      const rawX = zone.x + Math.cos(angle) * dist;
+      const rawZ = zone.z + Math.sin(angle) * dist;
+      const x = Math.round(rawX / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
+      const z = Math.round(rawZ / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
       if (x < 2 || x > 254 || z < 2 || z > 254) continue;
       if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
@@ -105,12 +112,14 @@ export function generateOreDeposits(terrain: TerrainData, seed: number, energyNo
     }
   }
 
-  // Fill remaining with scattered positions
+  // Fill remaining with scattered positions, snapped to macro grid
   let globalAttempts = 0;
   while (deposits.length < TARGET_COUNT && globalAttempts < 200) {
     globalAttempts++;
-    const x = 10 + next() * 236;
-    const z = 10 + next() * 236;
+    const rawX = 10 + next() * 236;
+    const rawZ = 10 + next() * 236;
+    const x = Math.round(rawX / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
+    const z = Math.round(rawZ / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
     if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
     if (!isFarEnough(deposits, x, z, MIN_DIST)) continue;

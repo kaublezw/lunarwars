@@ -1,7 +1,7 @@
 import type { World } from '@core/ECS';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
-import { BUILDING, POSITION, CONSTRUCTION } from '@sim/components/ComponentTypes';
+import { BUILDING, POSITION, CONSTRUCTION, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import { BuildingType } from '@sim/components/Building';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
@@ -21,6 +21,10 @@ export function validateAndSnapPlacement(
 ): { valid: boolean; x: number; z: number } {
   const def = BUILDING_DEFS[buildingType];
   if (!def) return { valid: false, x, z };
+
+  // Snap to macro grid before validation
+  x = Math.round(x / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
+  z = Math.round(z / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
   // Build occupied set for node checks
   const occupiedSet = new Set<string>();
