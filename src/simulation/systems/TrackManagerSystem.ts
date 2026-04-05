@@ -14,7 +14,7 @@ import type { TerrainData } from '@sim/terrain/TerrainData';
 import { appendCarToTrain } from '@sim/logistics/TrainSpawner';
 
 /** How close (squared distance) an engine must be to HQ to count as "docked". */
-const DOCK_DIST_SQ = 25; // 5 wu (accounts for track running adjacent to HQ)
+const DOCK_DIST_SQ = 36; // 6 wu (track passes 1 grid cell from HQ center)
 /** How far from the track segment center-line a unit must be to need clearing. */
 const TRACK_CLEAR_RADIUS = 2.0;
 /** How far the track waypoint is offset from the building center (1 grid cell). */
@@ -271,7 +271,7 @@ export class TrackManagerSystem implements System {
       stopOrder.push({ x: curX, z: curZ, entity: plants[bestIdx].entity, isHQ: false });
     }
 
-    // 3b. Build a set of blocked grid cells (building centers — track must NOT pass through)
+    // 3b. Build a set of blocked grid cells (building centers only).
     const blockedCells = new Set<string>();
     for (const stop of stopOrder) {
       const bgx = Math.round(stop.x / MACRO_GRID_SIZE);
@@ -280,24 +280,31 @@ export class TrackManagerSystem implements System {
     }
 
     // 3c. For each building, pick the best adjacent grid cell as the track target.
-    // The track will pass through this adjacent cell (not the building cell).
     const gridStops = stopOrder.map(stop => {
       const bgx = Math.round(stop.x / MACRO_GRID_SIZE);
       const bgz = Math.round(stop.z / MACRO_GRID_SIZE);
 
-      // Try all 4 cardinal neighbors, pick the first passable unblocked cell
-      let bestGx = bgx + 1, bestGz = bgz; // fallback
+      // Pick the adjacent cell that is farthest from other blocked cells
+      // (to give the A* the most room to maneuver)
+      let bestGx = bgx + 1, bestGz = bgz;
+      let bestScore = -Infinity;
       for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
         const nx = bgx + dx;
         const nz = bgz + dz;
         const wx = nx * MACRO_GRID_SIZE;
         const wz = nz * MACRO_GRID_SIZE;
-        if (wx >= 4 && wx <= 252 && wz >= 4 && wz <= 252 &&
-            this.terrainData.isPassable(wx, wz) &&
-            !blockedCells.has(`${nx},${nz}`)) {
+        if (wx < 4 || wx > 252 || wz < 4 || wz > 252) continue;
+        if (!this.terrainData.isPassable(wx, wz)) continue;
+        if (blockedCells.has(`${nx},${nz}`)) continue;
+        // Score: count how many of this cell's cardinal neighbors are NOT blocked
+        let freeNeighbors = 0;
+        for (const [dx2, dz2] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          if (!blockedCells.has(`${nx + dx2},${nz + dz2}`)) freeNeighbors++;
+        }
+        if (freeNeighbors > bestScore) {
+          bestScore = freeNeighbors;
           bestGx = nx;
           bestGz = nz;
-          break;
         }
       }
       return {
@@ -316,12 +323,15 @@ export class TrackManagerSystem implements System {
     const buildLoop = (startMomentum: number): { path: TrackStateNode[]; finalDir: number } => {
       const path: TrackStateNode[] = [];
       let mom = startMomentum;
+      let fromGx = gridStops[0].gx;
+      let fromGz = gridStops[0].gz;
+
       for (let i = 0; i < gridStops.length; i++) {
-        const from = gridStops[i];
         const to = gridStops[(i + 1) % gridStops.length];
         const result = this.findDiscretePath(
-          from.gx, from.gz, mom, to.gx, to.gz, blockedCells,
+          fromGx, fromGz, mom, to.gx, to.gz, blockedCells,
         );
+        // Skip first node if it duplicates the tail of the path
         for (let j = 0; j < result.path.length; j++) {
           if (j === 0 && path.length > 0) {
             const last = path[path.length - 1];
@@ -333,6 +343,12 @@ export class TrackManagerSystem implements System {
           path.push(result.path[j]);
         }
         mom = result.exitDir;
+        // Next segment starts from where this one actually ended
+        if (result.path.length > 0) {
+          const end = result.path[result.path.length - 1];
+          fromGx = end.x;
+          fromGz = end.z;
+        }
       }
       return { path, finalDir: mom };
     };
@@ -344,6 +360,33 @@ export class TrackManagerSystem implements System {
     const masterPath = pass2.path;
 
     if (masterPath.length < 2) return [];
+
+    // VALIDATE: every consecutive pair must be same-dir (straight) or +-1 dir (90-degree turn)
+    const DIR_NAMES = ['N', 'E', 'S', 'W'];
+    for (let i = 0; i < masterPath.length - 1; i++) {
+      const a = masterPath[i];
+      const b = masterPath[i + 1];
+      const dd = ((b.dir - a.dir) + 4) % 4;
+      if (dd !== 0 && dd !== 1 && dd !== 3) {
+        console.error(`TRACK VIOLATION dir at [${i}]: ${DIR_NAMES[a.dir]}->${DIR_NAMES[b.dir]} pos (${a.x},${a.z})->(${b.x},${b.z})`);
+      }
+      if (a.dir === b.dir) {
+        const expectedX = a.x + DIR_DX[a.dir];
+        const expectedZ = a.z + DIR_DZ[a.dir];
+        if (b.x !== expectedX || b.z !== expectedZ) {
+          console.error(`TRACK VIOLATION straight at [${i}]: dir=${DIR_NAMES[a.dir]} (${a.x},${a.z})->(${b.x},${b.z}) expected (${expectedX},${expectedZ})`);
+        }
+      } else {
+        // Curve: check diagonal move is correct
+        const isRight = dd === 1;
+        const sideDir = isRight ? (a.dir + 1) % 4 : (a.dir + 3) % 4;
+        const expectedX = a.x + DIR_DX[a.dir] + DIR_DX[sideDir];
+        const expectedZ = a.z + DIR_DZ[a.dir] + DIR_DZ[sideDir];
+        if (b.x !== expectedX || b.z !== expectedZ) {
+          console.error(`TRACK VIOLATION curve at [${i}]: dir=${DIR_NAMES[a.dir]}->${DIR_NAMES[b.dir]} (${a.x},${a.z})->(${b.x},${b.z}) expected (${expectedX},${expectedZ})`);
+        }
+      }
+    }
 
     // 3e. Convert master node path to world-space TrackWaypoints
     const route = this.nodesToWaypoints(masterPath);
@@ -467,6 +510,20 @@ export class TrackManagerSystem implements System {
         if (!this.terrainData.isPassable(wx, wz)) continue;
         if (blockedCells && blockedCells.has(`${n.nx},${n.nz}`)) continue;
 
+        // For curve moves, check the diagonal cell the arc swings through.
+        // The pivot is perpendicular to current dir; the arc midpoint passes
+        // through the cell that is diagonally adjacent (forward + turn side).
+        if (blockedCells && n.nd !== current.dir) {
+          const isRight = n.nd === rightDir;
+          const perpD = isRight ? rightDir : leftDir;
+          // The diagonal cell the arc interior passes closest to
+          const diagGx = current.x + DIR_DX[perpD];
+          const diagGz = current.z + DIR_DZ[perpD];
+          if (blockedCells.has(`${diagGx},${diagGz}`)) {
+            continue; // Arc would clip a building
+          }
+        }
+
         const g = current.gCost + n.cost;
         const nk = key(n.nx, n.nz, n.nd);
         if (g >= (bestG.get(nk) ?? Infinity)) continue;
@@ -482,11 +539,9 @@ export class TrackManagerSystem implements System {
 
     // Reconstruct
     if (!found) {
-      const fallback: TrackStateNode[] = [
-        { x: startGx, z: startGz, dir: startDir, gCost: 0, hCost: 0, parent: null },
-        { x: goalGx, z: goalGz, dir: startDir, gCost: 0, hCost: 0, parent: null },
-      ];
-      return { path: fallback, exitDir: startDir };
+      console.warn(`A* FAILED: (${startGx},${startGz}) dir=${startDir} -> (${goalGx},${goalGz}), iterations=${iterations}, open=${open.length}`);
+      // Return empty path — do NOT emit an invalid straight line
+      return { path: [], exitDir: startDir };
     }
 
     const result: TrackStateNode[] = [];
