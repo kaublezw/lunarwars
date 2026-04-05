@@ -1,18 +1,14 @@
 import type { System, World } from '@core/ECS';
 import {
   POSITION, HEALTH, TEAM, UNIT_TYPE, TRAIN_LINK, TRACK_FOLLOWER,
-  BUILDING, DEATH_TIMER, VOXEL_STATE, MOVE_COMMAND,
+  BUILDING, MOVE_COMMAND,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { TeamComponent } from '@sim/components/Team';
-import type { UnitTypeComponent } from '@sim/components/UnitType';
-import { UnitCategory } from '@sim/components/UnitType';
 import type { TrainLinkComponent } from '@sim/components/TrainLink';
 import type { TrackFollowerComponent } from '@sim/components/TrackFollower';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
-import type { DeathTimerComponent } from '@sim/components/DeathTimer';
-import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import { SpatialHash } from '@sim/spatial/SpatialHash';
 
 /** Distance between linked train entities (world units). */
@@ -21,15 +17,12 @@ const CAR_SPACING = 2.5;
 const CRUSH_RADIUS = 1.2;
 
 /**
- * Moves train engines along their TrackFollower path and drags cargo cars behind.
+ * Moves train engines along their high-resolution spline waypoints.
  *
- * Key behaviors:
- * - Bypasses standard velocity/steering/collision systems entirely.
- * - Cargo cars follow the exact path of the entity ahead at a fixed spacing.
- * - If a cargo car is destroyed, the engine reverses along the track to reconnect
- *   with the first orphaned (disconnected) car.
- * - Any non-train unit within CRUSH_RADIUS of the train's current position is
- *   instantly killed (the "unstoppable force" rule).
+ * - Rotation locks to atan2 toward the next waypoint (smooth with dense splines).
+ * - Halts when arriving at a stop waypoint (entityId or isHQ) for logistics.
+ * - Friendly units are pushed off the track; enemy units are instakilled.
+ * - Cargo cars trail the entity ahead at CAR_SPACING distance.
  */
 export class TrainMovementSystem implements System {
   readonly name = 'TrainMovementSystem';
@@ -37,10 +30,8 @@ export class TrainMovementSystem implements System {
   private spatialHash = new SpatialHash(4, 276, 276);
 
   update(world: World, dt: number): void {
-    // Rebuild spatial hash with all non-train units for crush detection
     this.rebuildSpatialHash(world);
 
-    // Process each train engine
     const engines = world.query(TRACK_FOLLOWER, TRAIN_LINK, POSITION);
     for (const engine of engines) {
       const link = world.getComponent<TrainLinkComponent>(engine, TRAIN_LINK)!;
@@ -50,31 +41,34 @@ export class TrainMovementSystem implements System {
       if (health && health.dead) continue;
 
       const follower = world.getComponent<TrackFollowerComponent>(engine, TRACK_FOLLOWER)!;
-      if (follower.path.length < 2) continue; // No route yet
-      if (follower.halted) continue; // Stopped for loading/unloading
+      if (follower.path.length < 2) continue;
+      if (follower.halted) continue;
 
       const team = world.getComponent<TeamComponent>(engine, TEAM);
       const teamNum = team ? team.team : -1;
 
-      // Check for friendly units blocking the train — if so, push them and skip this tick
+      // Check for friendly units blocking before moving
       const enginePos = world.getComponent<PositionComponent>(engine, POSITION)!;
       if (this.handleBlockingUnits(world, enginePos.x, enginePos.z, engine, teamNum)) {
-        continue; // Friendly blocking — train waits
+        continue;
       }
 
       // Check for broken chain and handle reconnection
       this.checkChainIntegrity(world, engine, follower, link);
 
-      // Move the engine along the track
-      const speed = 4; // wu/s, matches UnitDef
+      // Advance along the spline
+      const speed = 4;
       this.advanceEngine(world, engine, follower, dt, speed, teamNum);
 
-      // Drag cargo cars behind the engine
+      // Drag cargo cars behind
       this.dragCars(world, engine, teamNum);
     }
   }
 
-  /** Move the engine forward (or backward if reconnecting) along the path. */
+  /**
+   * Step the engine forward (or backward) through dense spline waypoints.
+   * When a stop waypoint is reached (entityId or isHQ), halt for logistics.
+   */
   private advanceEngine(
     world: World,
     engine: number,
@@ -87,22 +81,28 @@ export class TrainMovementSystem implements System {
     let remaining = speed * dt;
 
     while (remaining > 0) {
-      const segIdx = follower.currentWaypointIndex;
+      const idx = follower.currentWaypointIndex;
 
       if (follower.direction === 1) {
         // Forward
-        if (segIdx >= path.length - 1) {
-          // Reached end of loop — wrap to start
+        if (idx >= path.length - 1) {
           follower.currentWaypointIndex = 0;
           follower.distanceAlongSegment = 0;
           continue;
         }
-        const a = path[segIdx];
-        const b = path[segIdx + 1];
-        const segLen = this.dist(a, b);
+
+        const a = path[idx];
+        const b = path[idx + 1];
+        const segLen = this.dist2D(a, b);
+
         if (segLen < 0.001) {
           follower.currentWaypointIndex++;
           follower.distanceAlongSegment = 0;
+          // Check if we just arrived at a stop
+          if (this.isStopWaypoint(path[follower.currentWaypointIndex])) {
+            follower.halted = true;
+            remaining = 0;
+          }
           continue;
         }
 
@@ -111,28 +111,30 @@ export class TrainMovementSystem implements System {
           remaining -= spaceLeft;
           follower.currentWaypointIndex++;
           follower.distanceAlongSegment = 0;
+          // Check if we just arrived at a stop
+          if (this.isStopWaypoint(path[follower.currentWaypointIndex])) {
+            follower.halted = true;
+            remaining = 0;
+          }
         } else {
           follower.distanceAlongSegment += remaining;
           remaining = 0;
         }
       } else {
         // Reverse (reconnecting)
-        if (segIdx <= 0 && follower.distanceAlongSegment <= 0) {
-          // Reached the start — wrap to end
+        if (idx <= 0 && follower.distanceAlongSegment <= 0) {
           follower.currentWaypointIndex = path.length - 2;
-          const a = path[path.length - 2];
-          const b = path[path.length - 1];
-          follower.distanceAlongSegment = this.dist(a, b);
+          follower.distanceAlongSegment = this.dist2D(path[path.length - 2], path[path.length - 1]);
           continue;
         }
 
         if (follower.distanceAlongSegment <= 0) {
-          // Move to previous segment
           follower.currentWaypointIndex--;
           if (follower.currentWaypointIndex >= 0 && follower.currentWaypointIndex < path.length - 1) {
-            const a = path[follower.currentWaypointIndex];
-            const b = path[follower.currentWaypointIndex + 1];
-            follower.distanceAlongSegment = this.dist(a, b);
+            follower.distanceAlongSegment = this.dist2D(
+              path[follower.currentWaypointIndex],
+              path[follower.currentWaypointIndex + 1],
+            );
           }
           continue;
         }
@@ -147,27 +149,16 @@ export class TrainMovementSystem implements System {
       }
     }
 
-    // Update engine position from path interpolation
-    this.setPositionFromPath(world, engine, follower, team);
-  }
-
-  /** Interpolate position along the current segment and apply to entity. */
-  private setPositionFromPath(
-    world: World,
-    entity: number,
-    follower: TrackFollowerComponent,
-    team: number,
-  ): void {
-    const path = follower.path;
+    // Update position from current segment interpolation
     const idx = Math.min(follower.currentWaypointIndex, path.length - 2);
     if (idx < 0) return;
 
     const a = path[idx];
     const b = path[idx + 1];
-    const segLen = this.dist(a, b);
+    const segLen = this.dist2D(a, b);
     const t = segLen > 0.001 ? follower.distanceAlongSegment / segLen : 0;
 
-    const pos = world.getComponent<PositionComponent>(entity, POSITION)!;
+    const pos = world.getComponent<PositionComponent>(engine, POSITION)!;
     pos.prevX = pos.x;
     pos.prevY = pos.y;
     pos.prevZ = pos.z;
@@ -175,24 +166,32 @@ export class TrainMovementSystem implements System {
     pos.y = a.y + (b.y - a.y) * t;
     pos.z = a.z + (b.z - a.z) * t;
 
-    // Face direction of travel
-    const dx = follower.direction === 1 ? b.x - a.x : a.x - b.x;
-    const dz = follower.direction === 1 ? b.z - a.z : a.z - b.z;
+    // Rotation: aim at the next waypoint (smooth with dense splines)
+    const lookIdx = Math.min(idx + 1, path.length - 1);
+    const target = path[lookIdx];
+    const dx = target.x - pos.x;
+    const dz = target.z - pos.z;
     if (dx !== 0 || dz !== 0) {
-      pos.rotation = Math.atan2(dx, dz);
+      pos.rotation = follower.direction === 1
+        ? Math.atan2(dx, dz)
+        : Math.atan2(-dx, -dz);
     }
 
-    // Handle any unit in the way (kill enemies, push friendlies)
-    this.handleBlockingUnits(world, pos.x, pos.z, entity, team);
+    this.handleBlockingUnits(world, pos.x, pos.z, engine, team);
+  }
+
+  /** Check if a waypoint is a stop (plant or HQ). */
+  private isStopWaypoint(wp: TrackFollowerComponent['path'][0] | undefined): boolean {
+    if (!wp) return false;
+    return wp.entityId != null || wp.isHQ;
   }
 
   /**
-   * Drag each cargo car to trail the entity ahead of it in the chain,
-   * maintaining CAR_SPACING along the path.
+   * Drag each cargo car to trail the entity ahead at CAR_SPACING.
+   * Rotation faces toward the leader — smooth with dense spline movement.
    */
   private dragCars(world: World, engine: number, team: number): void {
     const enginePos = world.getComponent<PositionComponent>(engine, POSITION)!;
-
     let prevX = enginePos.x;
     let prevY = enginePos.y;
     let prevZ = enginePos.z;
@@ -202,7 +201,6 @@ export class TrainMovementSystem implements System {
     while (current != null) {
       const carHealth = world.getComponent<HealthComponent>(current, HEALTH);
       if (carHealth && carHealth.dead) {
-        // Skip dead cars but continue to next
         const nextLink = world.getComponent<TrainLinkComponent>(current, TRAIN_LINK);
         current = nextLink ? nextLink.nextEntity : null;
         continue;
@@ -211,29 +209,20 @@ export class TrainMovementSystem implements System {
       const carPos = world.getComponent<PositionComponent>(current, POSITION);
       if (!carPos) break;
 
-      // Compute direction from car to leader
       const dx = prevX - carPos.x;
       const dy = prevY - carPos.y;
       const dz = prevZ - carPos.z;
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-      if (dist > CAR_SPACING) {
-        // Move toward leader, maintaining exactly CAR_SPACING gap
-        const overshoot = dist - CAR_SPACING;
-        const nx = dx / dist;
-        const ny = dy / dist;
-        const nz = dz / dist;
+      carPos.prevX = carPos.x;
+      carPos.prevY = carPos.y;
+      carPos.prevZ = carPos.z;
 
-        carPos.prevX = carPos.x;
-        carPos.prevY = carPos.y;
-        carPos.prevZ = carPos.z;
-        carPos.x += nx * overshoot;
-        carPos.y += ny * overshoot;
-        carPos.z += nz * overshoot;
-      } else {
-        carPos.prevX = carPos.x;
-        carPos.prevY = carPos.y;
-        carPos.prevZ = carPos.z;
+      if (dist > CAR_SPACING) {
+        const overshoot = dist - CAR_SPACING;
+        carPos.x += (dx / dist) * overshoot;
+        carPos.y += (dy / dist) * overshoot;
+        carPos.z += (dz / dist) * overshoot;
       }
 
       // Face toward leader
@@ -243,7 +232,6 @@ export class TrainMovementSystem implements System {
         carPos.rotation = Math.atan2(faceDx, faceDz);
       }
 
-      // Handle blocking units around this car too
       this.handleBlockingUnits(world, carPos.x, carPos.z, current, team);
 
       prevX = carPos.x;
@@ -255,40 +243,31 @@ export class TrainMovementSystem implements System {
     }
   }
 
-  /**
-   * Check if the train's linked list is broken (a car died).
-   * If so, trigger reverse reconnection to the first orphaned car.
-   */
+  /** Check for broken chain (dead car) and trigger reverse reconnection. */
   private checkChainIntegrity(
     world: World,
     engine: number,
     follower: TrackFollowerComponent,
     engineLink: TrainLinkComponent,
   ): void {
-    // If already reconnecting, check if we've reached the target
     if (follower.reconnectTarget >= 0) {
       const targetPos = world.getComponent<PositionComponent>(follower.reconnectTarget, POSITION);
       const enginePos = world.getComponent<PositionComponent>(engine, POSITION);
       if (!targetPos || !enginePos) {
-        // Target was destroyed — scan again
         follower.reconnectTarget = -1;
         follower.direction = 1;
         return;
       }
-
       const dx = enginePos.x - targetPos.x;
       const dz = enginePos.z - targetPos.z;
       if (dx * dx + dz * dz < CAR_SPACING * CAR_SPACING * 1.5) {
-        // Close enough — relink the chain
         this.relinkChain(world, engine);
         follower.direction = 1;
         follower.reconnectTarget = -1;
-        return;
       }
-      return; // Still reversing, don't re-scan
+      return;
     }
 
-    // Scan the chain for a broken link (dead car)
     let current: number | null = engineLink.nextEntity;
     while (current != null) {
       const carHealth = world.getComponent<HealthComponent>(current, HEALTH);
@@ -296,7 +275,6 @@ export class TrainMovementSystem implements System {
       if (!carLink) break;
 
       if (carHealth && carHealth.dead) {
-        // This car is dead — find the first living car after it (the orphan)
         let orphan: number | null = carLink.nextEntity;
         while (orphan != null) {
           const orphanHealth = world.getComponent<HealthComponent>(orphan, HEALTH);
@@ -306,11 +284,9 @@ export class TrainMovementSystem implements System {
         }
 
         if (orphan != null) {
-          // Begin reverse to reconnect
           follower.direction = -1;
           follower.reconnectTarget = orphan;
         } else {
-          // No surviving cars after the dead one — just remove dead links
           this.relinkChain(world, engine);
         }
         return;
@@ -320,27 +296,19 @@ export class TrainMovementSystem implements System {
     }
   }
 
-  /**
-   * Rebuild the linked list, skipping dead cars.
-   * Re-wires prevEntity/nextEntity so the chain is contiguous.
-   */
+  /** Rebuild linked list skipping dead cars. */
   private relinkChain(world: World, engine: number): void {
     const living: number[] = [engine];
     let current: number | null = world.getComponent<TrainLinkComponent>(engine, TRAIN_LINK)!.nextEntity;
 
-    // Collect all living entities in chain order
     while (current != null) {
       const health = world.getComponent<HealthComponent>(current, HEALTH);
       const link = world.getComponent<TrainLinkComponent>(current, TRAIN_LINK);
       if (!link) break;
-
-      if (!health || !health.dead) {
-        living.push(current);
-      }
+      if (!health || !health.dead) living.push(current);
       current = link.nextEntity;
     }
 
-    // Rewire links
     for (let i = 0; i < living.length; i++) {
       const link = world.getComponent<TrainLinkComponent>(living[i], TRAIN_LINK);
       if (!link) continue;
@@ -350,31 +318,21 @@ export class TrainMovementSystem implements System {
   }
 
   /**
-   * Handle units blocking the track. Enemy units are instakilled.
-   * Friendly units cause the train to halt and are pushed sideways off the track.
-   * Returns true if a friendly unit is blocking (train should stop).
+   * Handle blocking units. Enemies instakilled, friendlies pushed off track.
+   * Returns true if a friendly is blocking (train should wait).
    */
   private handleBlockingUnits(
-    world: World,
-    x: number,
-    z: number,
-    selfEntity: number,
-    selfTeam: number,
+    world: World, x: number, z: number, selfEntity: number, selfTeam: number,
   ): boolean {
     let friendlyBlocking = false;
     const nearby = this.spatialHash.query(x, z, CRUSH_RADIUS);
     for (const other of nearby) {
       if (other === selfEntity) continue;
-
-      // Don't affect other train entities
       if (world.hasComponent(other, TRAIN_LINK)) continue;
-
-      // Don't affect buildings
       if (world.hasComponent(other, BUILDING)) continue;
 
       const otherPos = world.getComponent<PositionComponent>(other, POSITION);
       if (!otherPos) continue;
-
       const dx = otherPos.x - x;
       const dz = otherPos.z - z;
       if (dx * dx + dz * dz > CRUSH_RADIUS * CRUSH_RADIUS) continue;
@@ -384,11 +342,9 @@ export class TrainMovementSystem implements System {
 
       const otherTeam = world.getComponent<TeamComponent>(other, TEAM);
       if (otherTeam && otherTeam.team === selfTeam) {
-        // Friendly unit — push it sideways off the track, halt the train
         friendlyBlocking = true;
         this.pushUnitOffTrack(world, other, otherPos, x, z);
       } else {
-        // Enemy unit — instakill
         otherHealth.current = 0;
         otherHealth.dead = true;
       }
@@ -396,43 +352,24 @@ export class TrainMovementSystem implements System {
     return friendlyBlocking;
   }
 
-  /** Push a friendly unit perpendicular to the track to get it out of the way. */
   private pushUnitOffTrack(
-    world: World,
-    entity: number,
-    pos: PositionComponent,
-    trackX: number,
-    trackZ: number,
+    world: World, entity: number, pos: PositionComponent, trackX: number, trackZ: number,
   ): void {
-    // Push perpendicular to the vector from track center to unit
     let dx = pos.x - trackX;
     let dz = pos.z - trackZ;
     const dist = Math.sqrt(dx * dx + dz * dz);
-    if (dist < 0.01) {
-      // Unit is exactly on track center — pick an arbitrary perpendicular
-      dx = 1;
-      dz = 0;
-    } else {
-      dx /= dist;
-      dz /= dist;
-    }
+    if (dist < 0.01) { dx = 1; dz = 0; } else { dx /= dist; dz /= dist; }
 
     const pushDist = CRUSH_RADIUS + 1.5;
     const destX = Math.max(4, Math.min(252, trackX + dx * pushDist));
     const destZ = Math.max(4, Math.min(252, trackZ + dz * pushDist));
 
-    if (world.hasComponent(entity, MOVE_COMMAND)) {
-      world.removeComponent(entity, MOVE_COMMAND);
-    }
+    if (world.hasComponent(entity, MOVE_COMMAND)) world.removeComponent(entity, MOVE_COMMAND);
     world.addComponent<MoveCommandComponent>(entity, MOVE_COMMAND, {
-      path: [],
-      currentWaypoint: 0,
-      destX,
-      destZ,
+      path: [], currentWaypoint: 0, destX, destZ,
     });
   }
 
-  /** Rebuild spatial hash with all non-train units for crush checks. */
   private rebuildSpatialHash(world: World): void {
     this.spatialHash.clear();
     const entities = world.query(POSITION, HEALTH);
@@ -446,10 +383,9 @@ export class TrainMovementSystem implements System {
     }
   }
 
-  private dist(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }): number {
+  private dist2D(a: { x: number; z: number }, b: { x: number; z: number }): number {
     const dx = b.x - a.x;
-    const dy = b.y - a.y;
     const dz = b.z - a.z;
-    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    return Math.sqrt(dx * dx + dz * dz);
   }
 }

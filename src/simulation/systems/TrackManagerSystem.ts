@@ -226,43 +226,13 @@ export class TrackManagerSystem implements System {
   }
 
   /**
-   * Compute grid-snapped intermediate waypoints between two points.
-   * Moves diagonally (45 degrees) first, then straight along the remaining axis.
-   * Returns only the corner point (if any), NOT including from or to.
-   */
-  private octilePath(
-    fromX: number, fromZ: number,
-    toX: number, toZ: number,
-  ): { x: number; z: number }[] {
-    const dx = toX - fromX;
-    const dz = toZ - fromZ;
-    const absDx = Math.abs(dx);
-    const absDz = Math.abs(dz);
-
-    // If already aligned on one axis or perfectly diagonal, no corner needed
-    if (absDx < 0.5 || absDz < 0.5 || Math.abs(absDx - absDz) < 0.5) {
-      return [];
-    }
-
-    const signX = dx > 0 ? 1 : -1;
-    const signZ = dz > 0 ? 1 : -1;
-
-    // Diagonal distance is the shorter axis
-    const diagDist = Math.min(absDx, absDz);
-
-    // Corner point: move diagonally first, then straight
-    const cornerX = fromX + signX * diagDist;
-    const cornerZ = fromZ + signZ * diagDist;
-
-    return [{ x: cornerX, z: cornerZ }];
-  }
-
-  /**
-   * 1. Compute the optimal route through building centers (nearest-neighbor TSP).
-   * 2. For each building, generate a circular arc at TRACK_ADJACENCY_OFFSET radius.
-   *    The arc connects where the incoming segment hits the circle to where
-   *    the outgoing segment leaves it, taking the short way around in 45-degree steps.
-   * 3. Connect arcs with octile straight segments.
+   * Compute a smooth spline circuit using Catmull-Rom interpolation.
+   *
+   * 1. Nearest-neighbor TSP determines stop order.
+   * 2. Offset stops by TRACK_ADJACENCY_OFFSET so the track runs beside buildings.
+   * 3. Generate a closed Catmull-Rom spline through the offset points.
+   * 4. Sample the spline at high resolution.
+   * 5. Map entityIds to the closest generated waypoint for each building.
    */
   private computeCircuit(
     hqPos: PositionComponent,
@@ -270,7 +240,7 @@ export class TrackManagerSystem implements System {
   ): TrackWaypoint[] {
     if (plants.length === 0) return [];
 
-    // Step 1: Optimal route through building centers (nearest-neighbor TSP)
+    // Step 1: Nearest-neighbor TSP to determine stop order
     interface Stop { x: number; z: number; entity: number | null }
     const hqStop: Stop = { x: hqPos.x, z: hqPos.z, entity: null };
     const visited = new Array<boolean>(plants.length).fill(false);
@@ -299,101 +269,126 @@ export class TrackManagerSystem implements System {
       curZ = p.z;
       stopOrder.push({ x: p.x, z: p.z, entity: p.entity });
     }
-    stopOrder.push(hqStop); // close the loop
+    // Note: do NOT push hqStop again — the spline is closed, it wraps automatically
 
-    // Step 2: For each stop, compute the arc around the building.
-    // Entry angle = direction from building toward previous stop (where the track arrives from)
-    // Exit angle = direction from building toward next stop (where the track departs to)
-    const r = TRACK_ADJACENCY_OFFSET;
-    const route: TrackWaypoint[] = [];
+    // Step 2: Compute circuit centroid for consistent outward offset
+    let cx = 0, cz = 0;
+    for (const s of stopOrder) { cx += s.x; cz += s.z; }
+    cx /= stopOrder.length;
+    cz /= stopOrder.length;
 
-    for (let i = 0; i < stopOrder.length - 1; i++) {
-      const stop = stopOrder[i];
-      const prev = i > 0 ? stopOrder[i - 1] : stopOrder[stopOrder.length - 2];
-      const next = stopOrder[i + 1];
-
-      const entryAngle = Math.atan2(prev.z - stop.z, prev.x - stop.x);
-      const exitAngle = Math.atan2(next.z - stop.z, next.x - stop.x);
-
-      // Generate arc points (entry -> exit, short way around)
-      const arc = this.generateArc(stop.x, stop.z, r, entryAngle, exitAngle);
-
-      // First arc point is the "stop" — gets entityId for loading/unloading
-      for (let j = 0; j < arc.length; j++) {
-        route.push({
-          x: arc[j].x,
-          y: this.terrainData.getHeight(arc[j].x, arc[j].z),
-          z: arc[j].z,
-          entityId: j === 0 ? stop.entity : null,
-          isHQ: j === 0 && stop.entity === null,
-        });
+    // Offset each stop outward from centroid so track runs beside buildings
+    const controlPoints: { x: number; z: number; entity: number | null }[] = [];
+    for (const stop of stopOrder) {
+      let outDx = stop.x - cx;
+      let outDz = stop.z - cz;
+      const outLen = Math.sqrt(outDx * outDx + outDz * outDz);
+      if (outLen > 0.5) {
+        outDx /= outLen;
+        outDz /= outLen;
+      } else {
+        outDx = 1; outDz = 0;
       }
-
-      // Step 3: Octile path from last arc point to the entry of the next stop's arc
-      const lastArc = arc[arc.length - 1];
-      const nextStop = stopOrder[i + 1];
-      const nextEntryAngle = Math.atan2(stop.z - nextStop.z, stop.x - nextStop.x);
-      const nextEntryX = nextStop.x + r * Math.cos(nextEntryAngle);
-      const nextEntryZ = nextStop.z + r * Math.sin(nextEntryAngle);
-
-      const midpoints = this.octilePath(lastArc.x, lastArc.z, nextEntryX, nextEntryZ);
-      for (const mp of midpoints) {
-        route.push({
-          x: mp.x,
-          y: this.terrainData.getHeight(mp.x, mp.z),
-          z: mp.z,
-          entityId: null,
-          isHQ: false,
-        });
-      }
+      controlPoints.push({
+        x: stop.x + outDx * TRACK_ADJACENCY_OFFSET,
+        z: stop.z + outDz * TRACK_ADJACENCY_OFFSET,
+        entity: stop.entity,
+      });
     }
 
-    // Close the loop: add the first waypoint again so the train can wrap
-    if (route.length > 0) {
-      route.push({ ...route[0] });
+    // Step 3: Sample the closed Catmull-Rom spline at high resolution
+    const totalLen = this.estimateLoopLength(controlPoints);
+    const numSamples = Math.max(60, Math.round(totalLen * 2));
+    const splinePoints = this.sampleClosedCatmullRom(controlPoints, numSamples);
+
+    // Step 4: Convert to TrackWaypoint[] with terrain height
+    const route: TrackWaypoint[] = splinePoints.map(p => ({
+      x: p.x,
+      y: this.terrainData.getHeight(p.x, p.z),
+      z: p.z,
+      entityId: null,
+      isHQ: false,
+    }));
+
+    // Step 5: Map entityIds — for each original stop, find the closest waypoint
+    for (const cp of controlPoints) {
+      let bestIdx = 0;
+      let bestDistSq = Infinity;
+      for (let i = 0; i < route.length; i++) {
+        const dx = route[i].x - cp.x;
+        const dz = route[i].z - cp.z;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < bestDistSq) {
+          bestDistSq = distSq;
+          bestIdx = i;
+        }
+      }
+      route[bestIdx].entityId = cp.entity;
+      route[bestIdx].isHQ = cp.entity === null;
     }
+
+    // Close the loop by appending the first point
+    route.push({ ...route[0] });
 
     return route;
   }
 
+  /** Estimate total perimeter of a closed polygon for dynamic sample count. */
+  private estimateLoopLength(points: { x: number; z: number }[]): number {
+    let len = 0;
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      len += Math.sqrt(dx * dx + dz * dz);
+    }
+    return len;
+  }
+
   /**
-   * Generate arc waypoints around (cx, cz) at radius r,
-   * from startAngle to endAngle stepping in 45-degree increments.
-   * Takes the shorter arc direction. Always includes start and end.
+   * Sample a closed Catmull-Rom spline (centripetal, alpha=0.5).
+   * Control points form a closed loop; the output smoothly wraps from last to first.
    */
-  private generateArc(
-    cx: number, cz: number, r: number,
-    startAngle: number, endAngle: number,
+  private sampleClosedCatmullRom(
+    points: { x: number; z: number }[],
+    numSamples: number,
   ): { x: number; z: number }[] {
-    const ARC_STEP = Math.PI / 18; // 10 degrees — smooth circular arcs
-    const points: { x: number; z: number }[] = [];
+    const n = points.length;
+    if (n < 2) return points.map(p => ({ x: p.x, z: p.z }));
 
-    // Normalize to [0, 2PI)
-    const a0 = ((startAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    const a1 = ((endAngle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const result: { x: number; z: number }[] = [];
+    for (let i = 0; i < numSamples; i++) {
+      const t = i / numSamples; // [0, 1) around the entire loop
+      const segment = t * n;
+      const segIdx = Math.floor(segment);
+      const segT = segment - segIdx;
 
-    // If entry and exit are the same angle, just return that single point
-    if (Math.abs(a0 - a1) < 0.01) {
-      return [{ x: cx + r * Math.cos(a0), z: cz + r * Math.sin(a0) }];
+      // 4 control points for this segment (wrap around for closed loop)
+      const p0 = points[((segIdx - 1) % n + n) % n];
+      const p1 = points[segIdx % n];
+      const p2 = points[(segIdx + 1) % n];
+      const p3 = points[(segIdx + 2) % n];
+
+      result.push(this.catmullRomPoint(p0, p1, p2, p3, segT));
     }
+    return result;
+  }
 
-    // Determine shorter arc direction
-    const cwDist = ((a0 - a1) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
-    const ccwDist = ((a1 - a0) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
-    const useCCW = ccwDist <= cwDist;
-    const totalDist = useCCW ? ccwDist : cwDist;
-    const steps = Math.max(2, Math.round(totalDist / ARC_STEP));
-    const stepSize = totalDist / steps;
-
-    for (let s = 0; s <= steps; s++) {
-      const angle = useCCW ? a0 + s * stepSize : a0 - s * stepSize;
-      points.push({
-        x: cx + r * Math.cos(angle),
-        z: cz + r * Math.sin(angle),
-      });
-    }
-
-    return points;
+  /** Evaluate a single point on a Catmull-Rom segment (uniform, tension 0.5). */
+  private catmullRomPoint(
+    p0: { x: number; z: number },
+    p1: { x: number; z: number },
+    p2: { x: number; z: number },
+    p3: { x: number; z: number },
+    t: number,
+  ): { x: number; z: number } {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return {
+      x: 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
+      z: 0.5 * ((2 * p1.z) + (-p0.z + p2.z) * t + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 + (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3),
+    };
   }
 
   /** Find completed, living extractors and matter plants for a team. */

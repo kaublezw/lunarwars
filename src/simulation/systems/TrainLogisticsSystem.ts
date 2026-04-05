@@ -70,8 +70,10 @@ export class TrainLogisticsSystem implements System {
 
     if (waypoint.entityId != null) {
       this.loadAtPlant(world, engine, waypoint.entityId);
+      follower.halted = false; // Resume after loading
     } else if (waypoint.isHQ) {
       this.unloadAtHQ(world, engine, team);
+      follower.halted = false; // Resume after unloading
     }
     // Intermediate path waypoints (entityId=null, isHQ=false) are ignored
   }
