@@ -17,8 +17,8 @@ import { appendCarToTrain } from '@sim/logistics/TrainSpawner';
 const DOCK_DIST_SQ = 25; // 5 wu (accounts for track running adjacent to HQ)
 /** How far from the track segment center-line a unit must be to need clearing. */
 const TRACK_CLEAR_RADIUS = 2.0;
-/** How far the track waypoint is offset from the building center. */
-const TRACK_ADJACENCY_OFFSET = 3.5;
+/** How far the track waypoint is offset from the building center (1 grid cell). */
+const TRACK_ADJACENCY_OFFSET = MACRO_GRID_SIZE;
 /** Number of arc samples for 90-degree turns. */
 const TURN_ARC_SAMPLES = 6;
 
@@ -271,21 +271,38 @@ export class TrackManagerSystem implements System {
       stopOrder.push({ x: curX, z: curZ, entity: plants[bestIdx].entity, isHQ: false });
     }
 
-    // 3b. Snap stops to grid + offset so track runs beside buildings
-    let centX = 0, centZ = 0;
-    for (const s of stopOrder) { centX += s.x; centZ += s.z; }
-    centX /= stopOrder.length; centZ /= stopOrder.length;
+    // 3b. Build a set of blocked grid cells (building centers — track must NOT pass through)
+    const blockedCells = new Set<string>();
+    for (const stop of stopOrder) {
+      const bgx = Math.round(stop.x / MACRO_GRID_SIZE);
+      const bgz = Math.round(stop.z / MACRO_GRID_SIZE);
+      blockedCells.add(`${bgx},${bgz}`);
+    }
 
+    // 3c. For each building, pick the best adjacent grid cell as the track target.
+    // The track will pass through this adjacent cell (not the building cell).
     const gridStops = stopOrder.map(stop => {
-      let outDx = stop.x - centX, outDz = stop.z - centZ;
-      const outLen = Math.sqrt(outDx * outDx + outDz * outDz);
-      if (outLen > 0.5) { outDx /= outLen; outDz /= outLen; }
-      else { outDx = 1; outDz = 0; }
-      const offX = stop.x + outDx * TRACK_ADJACENCY_OFFSET;
-      const offZ = stop.z + outDz * TRACK_ADJACENCY_OFFSET;
+      const bgx = Math.round(stop.x / MACRO_GRID_SIZE);
+      const bgz = Math.round(stop.z / MACRO_GRID_SIZE);
+
+      // Try all 4 cardinal neighbors, pick the first passable unblocked cell
+      let bestGx = bgx + 1, bestGz = bgz; // fallback
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = bgx + dx;
+        const nz = bgz + dz;
+        const wx = nx * MACRO_GRID_SIZE;
+        const wz = nz * MACRO_GRID_SIZE;
+        if (wx >= 4 && wx <= 252 && wz >= 4 && wz <= 252 &&
+            this.terrainData.isPassable(wx, wz) &&
+            !blockedCells.has(`${nx},${nz}`)) {
+          bestGx = nx;
+          bestGz = nz;
+          break;
+        }
+      }
       return {
-        gx: Math.round(offX / MACRO_GRID_SIZE),
-        gz: Math.round(offZ / MACRO_GRID_SIZE),
+        gx: bestGx,
+        gz: bestGz,
         entity: stop.entity,
         isHQ: stop.isHQ,
         origX: stop.x,
@@ -293,30 +310,46 @@ export class TrackManagerSystem implements System {
       };
     });
 
-    // 3c. Chain findDiscretePath calls with momentum awareness.
-    // exitDir from each segment feeds as startDir into the next.
-    const masterPath: TrackStateNode[] = [];
-    let momentum = 0; // First segment leaving HQ starts at dir=0 (North)
-
-    for (let i = 0; i < gridStops.length; i++) {
-      const from = gridStops[i];
-      const to = gridStops[(i + 1) % gridStops.length];
-      const result = this.findDiscretePath(from.gx, from.gz, momentum, to.gx, to.gz);
-
-      // Skip first node if it duplicates the tail of the previous segment
-      const startIdx = (masterPath.length > 0 && result.path.length > 0) ? 1 : 0;
-      for (let j = startIdx; j < result.path.length; j++) {
-        masterPath.push(result.path[j]);
+    // 3d. Chain findDiscretePath calls with momentum awareness.
+    // Two passes: first pass discovers the return direction, second pass
+    // rebuilds with correct starting momentum so the loop closes seamlessly.
+    const buildLoop = (startMomentum: number): { path: TrackStateNode[]; finalDir: number } => {
+      const path: TrackStateNode[] = [];
+      let mom = startMomentum;
+      for (let i = 0; i < gridStops.length; i++) {
+        const from = gridStops[i];
+        const to = gridStops[(i + 1) % gridStops.length];
+        const result = this.findDiscretePath(
+          from.gx, from.gz, mom, to.gx, to.gz, blockedCells,
+        );
+        for (let j = 0; j < result.path.length; j++) {
+          if (j === 0 && path.length > 0) {
+            const last = path[path.length - 1];
+            if (last.x === result.path[0].x && last.z === result.path[0].z &&
+                last.dir === result.path[0].dir) {
+              continue;
+            }
+          }
+          path.push(result.path[j]);
+        }
+        mom = result.exitDir;
       }
-      momentum = result.exitDir;
-    }
+      return { path, finalDir: mom };
+    };
+
+    // Pass 1: build with arbitrary start direction to discover return momentum
+    const pass1 = buildLoop(0);
+    // Pass 2: rebuild with the return direction as the start, so the loop is seamless
+    const pass2 = buildLoop(pass1.finalDir);
+    const masterPath = pass2.path;
 
     if (masterPath.length < 2) return [];
 
-    // 3d. Convert master node path to world-space TrackWaypoints (Step 4)
+    // 3e. Convert master node path to world-space TrackWaypoints
     const route = this.nodesToWaypoints(masterPath);
 
-    // 3e. Map entityIds — for each stop, find the closest generated waypoint
+    // 3f. Map entityIds — for each building, find the closest waypoint
+    // (which will be on an adjacent grid cell, close enough for load/unload)
     for (const gs of gridStops) {
       let bestIdx = 0;
       let bestDistSq = Infinity;
@@ -328,11 +361,6 @@ export class TrackManagerSystem implements System {
       }
       route[bestIdx].entityId = gs.entity;
       route[bestIdx].isHQ = gs.isHQ;
-    }
-
-    // Close the loop
-    if (route.length > 0) {
-      route.push({ ...route[0], entityId: null, isHQ: false });
     }
 
     return route;
@@ -356,6 +384,7 @@ export class TrackManagerSystem implements System {
   private findDiscretePath(
     startGx: number, startGz: number, startDir: number,
     goalGx: number, goalGz: number,
+    blockedCells?: Set<string>,
   ): { path: TrackStateNode[]; exitDir: number } {
     const key = (x: number, z: number, d: number) => `${x},${z},${d}`;
     const heuristic = (x: number, z: number) =>
@@ -364,16 +393,16 @@ export class TrackManagerSystem implements System {
     const open: TrackStateNode[] = [];
     const bestG = new Map<string, number>();
 
-    // Seed with preferred starting direction (slight penalty for others)
-    for (let d = 0; d < 4; d++) {
-      const g = d === startDir ? 0 : 0.5;
+    // Seed with ONLY the exact starting direction (strict momentum).
+    // The A* will use curve moves to change direction — no in-place turns.
+    {
       const node: TrackStateNode = {
-        x: startGx, z: startGz, dir: d,
-        gCost: g, hCost: heuristic(startGx, startGz),
+        x: startGx, z: startGz, dir: startDir,
+        gCost: 0, hCost: heuristic(startGx, startGz),
         parent: null,
       };
       open.push(node);
-      bestG.set(key(startGx, startGz, d), g);
+      bestG.set(key(startGx, startGz, startDir), 0);
     }
 
     let found: TrackStateNode | null = null;
@@ -436,6 +465,7 @@ export class TrackManagerSystem implements System {
         const wz = n.nz * MACRO_GRID_SIZE;
         if (wx < 4 || wx > 252 || wz < 4 || wz > 252) continue;
         if (!this.terrainData.isPassable(wx, wz)) continue;
+        if (blockedCells && blockedCells.has(`${n.nx},${n.nz}`)) continue;
 
         const g = current.gCost + n.cost;
         const nk = key(n.nx, n.nz, n.nd);
@@ -474,67 +504,100 @@ export class TrackManagerSystem implements System {
   // ───────────────────────────────────────────────────────────────────────
 
   /**
-   * Convert TrackStateNode[] to world-space TrackWaypoint[].
-   * Straights emit a single waypoint at the grid center.
-   * Curves emit a smooth 90-degree arc with radius = full MACRO_GRID_SIZE,
-   * using proper pivot alignment and standard angular normalization.
+   * Convert TrackStateNode[] to world-space waypoints using tangentially
+   * connected track pieces (straights + quarter-circle arcs).
+   *
+   * GEOMETRY (worked example: North then right-turn to East):
+   *
+   *   Node A at grid (3,5) facing North. Node B at grid (4,4) facing East.
+   *   World: A = (12, 20), B = (16, 16). G = 4, R = 4.
+   *
+   *   The STRAIGHT piece before A runs along -Z through A's grid center.
+   *   The STRAIGHT piece after B runs along +X through B's grid center.
+   *
+   *   The CURVE connects them. For a right turn from North:
+   *     - Pivot = A's center + R in the RIGHT direction (+X) = (16, 20)
+   *     - Arc entry (tangent to incoming -Z straight) = A center = (12, 20)
+   *       Tangent direction at entry = North = (0, -1) CHECK
+   *     - Arc exit = pivot + R in the outgoing-backward direction (-X from East)
+   *       = (16, 20) + (0, -4) = (16, 16) = B center
+   *       Tangent direction at exit = East = (1, 0) CHECK
+   *     - Arc sweeps CW from entry to exit: -PI/2
+   *
+   *   The entry/exit points coincide with grid centers A and B.
+   *   The tangent at entry matches the incoming straight direction.
+   *   The tangent at exit matches the outgoing straight direction.
+   *   No kink at any junction.
+   *
+   * APPROACH:
+   *   1. Walk the node list. For each consecutive pair:
+   *      - Same direction: this is part of a straight run. Collect the points.
+   *      - Direction change: emit a curve arc.
+   *   2. Between curves (or at start/end), emit the straight waypoints.
+   *   3. Curves emit sampled arc waypoints from entry to exit.
+   *      The first arc sample IS the entry point (= prev straight's last point).
+   *      The last arc sample IS the exit point (= next straight's first point).
+   *      So we skip the first sample of each arc to avoid duplicate waypoints.
    */
   private nodesToWaypoints(nodes: TrackStateNode[]): TrackWaypoint[] {
+    if (nodes.length < 2) return [];
+
     const route: TrackWaypoint[] = [];
-    const R = MACRO_GRID_SIZE; // Full grid size radius, not half
+    const G = MACRO_GRID_SIZE;
+    const R = G;
+    const ARC_SAMPLES = 8;
 
-    for (let i = 0; i < nodes.length; i++) {
-      const curr = nodes[i];
-      const prev = i > 0 ? nodes[i - 1] : null;
+    // Helper: push a world-space waypoint
+    const emit = (x: number, z: number) => {
+      route.push({
+        x, y: this.terrainData.getHeight(x, z), z,
+        entityId: null, isHQ: false,
+      });
+    };
 
-      const wx = curr.x * MACRO_GRID_SIZE;
-      const wz = curr.z * MACRO_GRID_SIZE;
+    // Emit the first node
+    emit(nodes[0].x * G, nodes[0].z * G);
 
-      // Straight piece
-      if (!prev || prev.dir === curr.dir) {
-        route.push({
-          x: wx, y: this.terrainData.getHeight(wx, wz), z: wz,
-          entityId: null, isHQ: false,
-        });
-        continue;
-      }
+    for (let i = 0; i < nodes.length - 1; i++) {
+      const prev = nodes[i];
+      const curr = nodes[i + 1];
 
-      // Curve piece
-      const prevWx = prev.x * MACRO_GRID_SIZE;
-      const prevWz = prev.z * MACRO_GRID_SIZE;
-      const turn = ((curr.dir - prev.dir + 4) % 4) === 1 ? 'RIGHT' : 'LEFT';
+      if (prev.dir === curr.dir) {
+        // Straight: emit the next grid center
+        emit(curr.x * G, curr.z * G);
+      } else {
+        // Curve: quarter-circle arc from prev's center to curr's center
+        const prevWx = prev.x * G;
+        const prevWz = prev.z * G;
+        const currWx = curr.x * G;
+        const currWz = curr.z * G;
 
-      let pivotX = prevWx;
-      let pivotZ = prevWz;
+        const isRight = ((curr.dir - prev.dir + 4) % 4) === 1;
 
-      if (prev.dir === 0) { // Facing North (-Z)
-        pivotX += turn === 'RIGHT' ? R : -R;
-      } else if (prev.dir === 1) { // Facing East (+X)
-        pivotZ += turn === 'RIGHT' ? R : -R;
-      } else if (prev.dir === 2) { // Facing South (+Z)
-        pivotX += turn === 'RIGHT' ? -R : R;
-      } else if (prev.dir === 3) { // Facing West (-X)
-        pivotZ += turn === 'RIGHT' ? -R : R;
-      }
+        // Pivot: R perpendicular to incoming direction, on the turn side
+        const perpDir = isRight ? (prev.dir + 1) % 4 : (prev.dir + 3) % 4;
+        const pivotX = prevWx + DIR_DX[perpDir] * R;
+        const pivotZ = prevWz + DIR_DZ[perpDir] * R;
 
-      const startAng = Math.atan2(prevWz - pivotZ, prevWx - pivotX);
-      const endAng = Math.atan2(wz - pivotZ, wx - pivotX);
+        // Start angle: from pivot toward prev center (the arc entry)
+        const startAng = Math.atan2(prevWz - pivotZ, prevWx - pivotX);
+        // Sweep: exactly 90 degrees.
+        // Right turn = CCW from pivot's perspective (+PI/2)
+        // Left turn = CW from pivot's perspective (-PI/2)
+        const sweep = isRight ? Math.PI / 2 : -Math.PI / 2;
 
-      // Clean angular normalization
-      let sweep = endAng - startAng;
-      while (sweep > Math.PI) sweep -= 2 * Math.PI;
-      while (sweep <= -Math.PI) sweep += 2 * Math.PI;
-
-      const ARC_SAMPLES = 8;
-      for (let j = 0; j <= ARC_SAMPLES; j++) {
-        const t = j / ARC_SAMPLES;
-        const ang = startAng + sweep * t;
-        const px = pivotX + Math.cos(ang) * R;
-        const pz = pivotZ + Math.sin(ang) * R;
-        route.push({
-          x: px, y: this.terrainData.getHeight(px, pz), z: pz,
-          entityId: null, isHQ: false,
-        });
+        // Emit arc samples (skip j=0 since it equals prevWx,prevWz which is already emitted)
+        for (let j = 1; j <= ARC_SAMPLES; j++) {
+          const t = j / ARC_SAMPLES;
+          const ang = startAng + sweep * t;
+          emit(pivotX + Math.cos(ang) * R, pivotZ + Math.sin(ang) * R);
+        }
+        // The last sample (j=ARC_SAMPLES) should land exactly at currWx, currWz.
+        // Due to floating point, force it exact:
+        const lastIdx = route.length - 1;
+        route[lastIdx].x = currWx;
+        route[lastIdx].z = currWz;
+        route[lastIdx].y = this.terrainData.getHeight(currWx, currWz);
       }
     }
 

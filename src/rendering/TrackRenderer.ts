@@ -59,19 +59,24 @@ export class TrackRenderer {
       this.materials.set(team, material);
     }
 
-    // Build points array
-    const positions = new Float32Array(route.length * 3);
+    // Build points array (append first point to close the visual loop)
+    const count = route.length + 1;
+    const positions = new Float32Array(count * 3);
     for (let i = 0; i < route.length; i++) {
       positions[i * 3] = route[i].x;
       positions[i * 3 + 1] = route[i].y + TRACK_Y_OFFSET;
       positions[i * 3 + 2] = route[i].z;
     }
+    // Close the visual loop back to the first point
+    positions[route.length * 3] = route[0].x;
+    positions[route.length * 3 + 1] = route[0].y + TRACK_Y_OFFSET;
+    positions[route.length * 3 + 2] = route[0].z;
 
     if (line) {
       // Update existing geometry in-place
       const geo = line.geometry;
       geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      geo.setDrawRange(0, route.length);
+      geo.setDrawRange(0, count);
       geo.computeBoundingSphere();
     } else {
       const geometry = new THREE.BufferGeometry();

@@ -131,7 +131,7 @@ const scenarioMode = new URLSearchParams(window.location.search).get('scenario')
 
 // --- Scene ---
 const sceneManager = new SceneManager();
-const gridRenderer = new GridRenderer(276, 276);
+const gridRenderer = new GridRenderer(256);
 gridRenderer.addTo(sceneManager.scene);
 const isoCamera = new IsometricCamera(window.innerWidth, window.innerHeight);
 isoCamera.setCanvas(renderer.domElement);
