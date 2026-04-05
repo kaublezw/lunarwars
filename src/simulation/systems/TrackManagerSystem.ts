@@ -415,19 +415,19 @@ export class TrackManagerSystem implements System {
           nd: current.dir,
           cost: 1.0,
         },
-        // Curve Right: forward + right
+        // Curve Right: forward + right (heavy penalty to prefer straightaways)
         {
           nx: current.x + DIR_DX[current.dir] + DIR_DX[rightDir],
           nz: current.z + DIR_DZ[current.dir] + DIR_DZ[rightDir],
           nd: rightDir,
-          cost: 1.5,
+          cost: 2.5,
         },
-        // Curve Left: forward + left
+        // Curve Left: forward + left (heavy penalty to prefer straightaways)
         {
           nx: current.x + DIR_DX[current.dir] + DIR_DX[leftDir],
           nz: current.z + DIR_DZ[current.dir] + DIR_DZ[leftDir],
           nd: leftDir,
-          cost: 1.5,
+          cost: 2.5,
         },
       ];
 
@@ -475,12 +475,13 @@ export class TrackManagerSystem implements System {
 
   /**
    * Convert TrackStateNode[] to world-space TrackWaypoint[].
-   * Straights emit a single waypoint. Direction changes emit a rigid
-   * 90-degree arc using the exact pivot math.
+   * Straights emit a single waypoint at the grid center.
+   * Curves emit a smooth 90-degree arc with radius = full MACRO_GRID_SIZE,
+   * using proper pivot alignment and standard angular normalization.
    */
   private nodesToWaypoints(nodes: TrackStateNode[]): TrackWaypoint[] {
     const route: TrackWaypoint[] = [];
-    const R = MACRO_GRID_SIZE / 2;
+    const R = MACRO_GRID_SIZE; // Full grid size radius, not half
 
     for (let i = 0; i < nodes.length; i++) {
       const curr = nodes[i];
@@ -489,7 +490,7 @@ export class TrackManagerSystem implements System {
       const wx = curr.x * MACRO_GRID_SIZE;
       const wz = curr.z * MACRO_GRID_SIZE;
 
-      // Straight piece: same direction as previous (or first node)
+      // Straight piece
       if (!prev || prev.dir === curr.dir) {
         route.push({
           x: wx, y: this.terrainData.getHeight(wx, wz), z: wz,
@@ -498,13 +499,11 @@ export class TrackManagerSystem implements System {
         continue;
       }
 
-      // Curve piece: direction changed — emit a 90-degree arc
+      // Curve piece
       const prevWx = prev.x * MACRO_GRID_SIZE;
       const prevWz = prev.z * MACRO_GRID_SIZE;
-
       const turn = ((curr.dir - prev.dir + 4) % 4) === 1 ? 'RIGHT' : 'LEFT';
 
-      // Exact pivot point calculation
       let pivotX = prevWx;
       let pivotZ = prevWz;
 
@@ -518,20 +517,13 @@ export class TrackManagerSystem implements System {
         pivotZ += turn === 'RIGHT' ? -R : R;
       }
 
-      // Start angle: from pivot toward the previous node's position
       const startAng = Math.atan2(prevWz - pivotZ, prevWx - pivotX);
-      // End angle: from pivot toward the current node's position
       const endAng = Math.atan2(wz - pivotZ, wx - pivotX);
 
-      // Sweep: right turns go clockwise (negative), left turns counter-clockwise (positive)
+      // Clean angular normalization
       let sweep = endAng - startAng;
-      if (turn === 'RIGHT') {
-        while (sweep > 0) sweep -= 2 * Math.PI;
-        if (sweep < -Math.PI) sweep += 2 * Math.PI;
-      } else {
-        while (sweep < 0) sweep += 2 * Math.PI;
-        if (sweep > Math.PI) sweep -= 2 * Math.PI;
-      }
+      while (sweep > Math.PI) sweep -= 2 * Math.PI;
+      while (sweep <= -Math.PI) sweep += 2 * Math.PI;
 
       const ARC_SAMPLES = 8;
       for (let j = 0; j <= ARC_SAMPLES; j++) {
