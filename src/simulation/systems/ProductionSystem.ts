@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT, ROOF_EXIT } from '@sim/components/ComponentTypes';
+import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT, ROOF_EXIT, TRAIN_LINK, CARGO_STORAGE, PENDING_CAR_ATTACH } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
@@ -18,6 +18,9 @@ import { BuildingType } from '@sim/components/Building';
 import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { GarageExitComponent } from '@sim/components/GarageExit';
 import type { RoofExitComponent } from '@sim/components/RoofExit';
+import type { TrainLinkComponent } from '@sim/components/TrainLink';
+import type { CargoStorageComponent } from '@sim/components/CargoStorage';
+import type { PendingCarAttachComponent } from '@sim/components/PendingCarAttach';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
@@ -122,6 +125,25 @@ export class ProductionSystem implements System {
             rotateBodyToTarget: false,
             turretRotation: 0,
             turretPitch: 0,
+          });
+        }
+
+        // Cargo cars produced at HQ: give them TrainLink + CargoStorage + PendingCarAttach
+        // They wait at HQ until the train docks, then get appended to the chain
+        const isCargoCarSpawn = def.category === UnitCategory.CargoCar && isHQ;
+        if (isCargoCarSpawn) {
+          world.addComponent<TrainLinkComponent>(unit, TRAIN_LINK, {
+            nextEntity: null,
+            prevEntity: null,
+            isEngine: false,
+          });
+          world.addComponent<CargoStorageComponent>(unit, CARGO_STORAGE, {
+            current: 0,
+            capacity: 200,
+            committedType: null,
+          });
+          world.addComponent<PendingCarAttachComponent>(unit, PENDING_CAR_ATTACH, {
+            team: team.team,
           });
         }
 

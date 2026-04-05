@@ -33,7 +33,6 @@ import { RepairSystem } from '@sim/systems/RepairSystem';
 import { GameOverSystem } from '@sim/systems/GameOverSystem';
 import { HealthSystem } from '@sim/systems/HealthSystem';
 import { EconomySystem } from '@sim/systems/EconomySystem';
-import { EnergyPacketSystem } from '@sim/systems/EnergyPacketSystem';
 import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { AISystem } from '@sim/systems/AIBrain';
@@ -44,7 +43,6 @@ import { TerrainData } from '@sim/terrain/TerrainData';
 import { generateEnergyNodes, generateOreDeposits } from '@sim/terrain/MapFeatures';
 import type { OreDeposit } from '@sim/terrain/MapFeatures';
 import { OreDepositRenderer } from '@render/OreDepositRenderer';
-import { MatterPacketSystem } from '@sim/systems/MatterPacketSystem';
 import { Minimap } from '@ui/Minimap';
 import { UnitInfoPanel } from '@ui/UnitInfoPanel';
 import { ActionBar } from '@ui/ActionBar';
@@ -95,6 +93,13 @@ import { LobbyOverlay } from '@ui/LobbyOverlay';
 import type { GameCommandPayload } from '@network/Protocol';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
+import { spawnTrainSet } from '@sim/logistics/TrainSpawner';
+import { TrainMovementSystem } from '@sim/systems/TrainMovementSystem';
+import { TrainLogisticsSystem } from '@sim/systems/TrainLogisticsSystem';
+import { TrackManagerSystem } from '@sim/systems/TrackManagerSystem';
+import { TrackState } from '@sim/logistics/TrackState';
+import { TrackRenderer } from '@render/TrackRenderer';
+import { CargoIndicatorRenderer } from '@render/CargoIndicatorRenderer';
 
 // --- Renderer ---
 const app = document.getElementById('app')!;
@@ -243,6 +248,7 @@ unitInfoPanel.mount(app);
 
 // --- UI: Action Bar & Resource Display ---
 const resourceState = new ResourceState(2);
+const trackState = new TrackState(2);
 let actionBar: ActionBar | null = null;
 let resourceDisplay: ResourceDisplay | null = null;
 let spectatorPanel: SpectatorPanel | null = null;
@@ -341,6 +347,8 @@ world.addSystem(new RoofExitSystem());
 world.addSystem(pathfindingSystem);
 world.addSystem(new CollisionAvoidanceSystem(simRng));
 world.addSystem(movementSystem);
+world.addSystem(new TrainMovementSystem());
+world.addSystem(new TrainLogisticsSystem(resourceState, trackState, 2));
 world.addSystem(new FogOfWarSystem(fogState));
 world.addSystem(new TurretSystem(simRng, eventBus));
 world.addSystem(new ProjectileSystem());
@@ -349,12 +357,11 @@ world.addSystem(new ResupplySystem());
 world.addSystem(new RepairSystem(resourceState, 2, eventBus));
 world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem(eventBus));
-world.addSystem(new EnergyPacketSystem(resourceState));
-world.addSystem(new MatterPacketSystem(resourceState));
 world.addSystem(new EconomySystem(resourceState, 2, terrainData));
 world.addSystem(new SupplySystem(terrainData, resourceState));
 world.addSystem(new BuildSystem(eventBus));
 world.addSystem(new ProductionSystem(resourceState, terrainData));
+world.addSystem(new TrackManagerSystem(trackState, terrainData, 2));
 if (isMultiplayer) {
   // Multiplayer: no AI — both teams are human players
 } else {
@@ -634,6 +641,12 @@ if (saveData) {
       });
     }
   }
+
+  // --- Train Spawning (1 engine + 2 cargo cars per team, free) ---
+  for (const hq of hqSpawns) {
+    const trainY = terrainData.getHeight(hq.x, hq.z) + 0.1;
+    spawnTrainSet(world, hq.team, hq.x, trainY, hq.z, 2);
+  }
 }
 
 // Extra starting resources (on top of constructor's 100e/100m)
@@ -700,6 +713,9 @@ selectionRenderer.setVoxelMeshManager(voxelMeshManager);
 xrayRenderer.setVoxelMeshManager(voxelMeshManager);
 const depotRangeRenderer = new DepotRangeRenderer(sceneManager.scene);
 depotRangeRenderer.setPlayerTeam(initialFogTeam);
+const trackRenderer = new TrackRenderer(sceneManager.scene);
+trackRenderer.setPlayerTeam(initialFogTeam);
+const cargoIndicatorRenderer = new CargoIndicatorRenderer(sceneManager.scene);
 
 // Wire box select callbacks (only if player input active)
 if (selectionController) {
@@ -772,7 +788,7 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
 
   ab.onTrainRequest((unitType) => {
     // Determine which building type trains this unit
-    const targetBuildingType = unitType === UnitCategory.WorkerDrone
+    const targetBuildingType = (unitType === UnitCategory.WorkerDrone || unitType === UnitCategory.CargoCar)
       ? BuildingType.HQ
       : unitType === UnitCategory.FerryDrone
         ? BuildingType.SupplyDepot
@@ -903,6 +919,7 @@ function setFogPerspective(team: number): void {
   buildingEffectsRenderer.setPlayerTeam(team);
   garageDoorRenderer.setPlayerTeam(team);
   depotRangeRenderer.setPlayerTeam(team);
+  trackRenderer.setPlayerTeam(team);
   if (team < 0) {
     fogRenderer.setVisible(false);
   } else {
@@ -946,6 +963,8 @@ const gameLoop = new GameLoop(
     buildingEffectsRenderer.update(world, 1 / 60);
     garageDoorRenderer.update(world, 1 / 60);
     depotRangeRenderer.sync(world);
+    trackRenderer.sync(trackState, 2);
+    cargoIndicatorRenderer.sync(world);
     fogRenderer.update();
     energyNodeRenderer.update(fogState, currentFogTeam);
     oreDepositRenderer.update(fogState, currentFogTeam);

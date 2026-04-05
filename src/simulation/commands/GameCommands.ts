@@ -28,6 +28,7 @@ import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import { validateAndSnapPlacement } from '@sim/ai/PlacementValidator';
+import { teamHasEngine, engineInProduction } from '@sim/logistics/TrainSpawner';
 
 import { TEAM_COLORS } from '@sim/ai/AITypes';
 
@@ -279,6 +280,13 @@ export function trainUnit(
 ): boolean {
   const def = UNIT_DEFS[unitType];
   if (!def) return false;
+
+  // Single engine rule: only 1 TrainEngine per team
+  if (unitType === UnitCategory.TrainEngine) {
+    if (teamHasEngine(ctx.world, team) || engineInProduction(ctx.world, team)) {
+      return false;
+    }
+  }
 
   // Affordability
   if (!ctx.resources.canAfford(team, def.energyCost)) return false;

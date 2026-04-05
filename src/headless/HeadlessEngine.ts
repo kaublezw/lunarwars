@@ -18,8 +18,6 @@ import { ResupplySystem } from '@sim/systems/ResupplySystem';
 import { RepairSystem } from '@sim/systems/RepairSystem';
 import { GameOverSystem } from '@sim/systems/GameOverSystem';
 import { HealthSystem } from '@sim/systems/HealthSystem';
-import { EnergyPacketSystem } from '@sim/systems/EnergyPacketSystem';
-import { MatterPacketSystem } from '@sim/systems/MatterPacketSystem';
 import { EconomySystem } from '@sim/systems/EconomySystem';
 import { SupplySystem } from '@sim/systems/SupplySystem';
 import { BuildSystem } from '@sim/systems/BuildSystem';
@@ -46,6 +44,11 @@ import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 
 import { TEAM_COLORS } from '@sim/ai/AITypes';
+import { spawnTrainSet } from '@sim/logistics/TrainSpawner';
+import { TrainMovementSystem } from '@sim/systems/TrainMovementSystem';
+import { TrainLogisticsSystem } from '@sim/systems/TrainLogisticsSystem';
+import { TrackManagerSystem } from '@sim/systems/TrackManagerSystem';
+import { TrackState } from '@sim/logistics/TrackState';
 
 import type { HeadlessConfig, GameResult } from './types';
 
@@ -81,6 +84,7 @@ export class HeadlessEngine {
 
     // Economy
     this.resourceState = new ResourceState(2);
+    const trackState = new TrackState(2);
 
     // Fog of war
     this.fogState = new FogOfWarState(276, 276, 2, 25);
@@ -111,6 +115,8 @@ export class HeadlessEngine {
     this.world.addSystem(pathfindingSystem);
     this.world.addSystem(new CollisionAvoidanceSystem(simRng));
     this.world.addSystem(movementSystem);
+    this.world.addSystem(new TrainMovementSystem());
+    this.world.addSystem(new TrainLogisticsSystem(this.resourceState, trackState, 2));
     this.world.addSystem(new FogOfWarSystem(this.fogState));
     this.world.addSystem(new TurretSystem(simRng));
     this.world.addSystem(new ProjectileSystem());
@@ -119,12 +125,11 @@ export class HeadlessEngine {
     this.world.addSystem(new RepairSystem(this.resourceState, 2));
     this.world.addSystem(gameOverSystem);
     this.world.addSystem(new HealthSystem());
-    this.world.addSystem(new EnergyPacketSystem(this.resourceState));
-    this.world.addSystem(new MatterPacketSystem(this.resourceState));
     this.world.addSystem(new EconomySystem(this.resourceState, 2, this.terrainData));
     this.world.addSystem(new SupplySystem(this.terrainData, this.resourceState));
     this.world.addSystem(new BuildSystem());
     this.world.addSystem(new ProductionSystem(this.resourceState, this.terrainData));
+    this.world.addSystem(new TrackManagerSystem(trackState, this.terrainData, 2));
 
     // Both teams controlled by AI
     this.world.addSystem(new AISystem(1, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy));
@@ -249,6 +254,12 @@ export class HeadlessEngine {
           pendingScorch: [],
         });
       }
+    }
+
+    // Train set (1 engine + 2 cargo cars per team, free)
+    for (const hq of hqSpawns) {
+      const trainY = this.terrainData.getHeight(hq.x, hq.z) + 0.1;
+      spawnTrainSet(this.world, hq.team, hq.x, trainY, hq.z, 2);
     }
   }
 }

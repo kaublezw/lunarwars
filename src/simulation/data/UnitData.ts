@@ -97,6 +97,28 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     visionRange: 8,
     meshType: 'ferry_drone',
   },
+  [UnitCategory.TrainEngine]: {
+    category: UnitCategory.TrainEngine,
+    energyCost: 0,
+    matterCost: 0,
+    trainTime: 0,
+    hp: 500,
+    speed: 4,
+    radius: 0.8,
+    visionRange: 10,
+    meshType: 'train_engine',
+  },
+  [UnitCategory.CargoCar]: {
+    category: UnitCategory.CargoCar,
+    energyCost: 50,
+    matterCost: 75,
+    trainTime: 15,
+    hp: 150,
+    speed: 4,
+    radius: 0.6,
+    visionRange: 4,
+    meshType: 'cargo_car',
+  },
 };
 
 // Damage multiplier: COUNTER_MULTIPLIERS[attacker][target]

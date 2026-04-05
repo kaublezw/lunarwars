@@ -1,12 +1,11 @@
 import * as THREE from 'three';
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, POSITION, ENERGY_PACKET, HEALTH, PRODUCTION_QUEUE, BUILD_COMMAND, REPAIR_COMMAND } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, PRODUCTION_QUEUE, BUILD_COMMAND, REPAIR_COMMAND } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
-import type { EnergyPacketComponent } from '@sim/components/EnergyPacket';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { RepairCommandComponent } from '@sim/components/RepairCommand';
@@ -20,7 +19,6 @@ const CHARGE_DURATION = 10; // seconds — matches PACKET_INTERVAL in EconomySys
 const FADE_DURATION = 2.0;  // seconds for HQ glow to fade after receiving
 const MAX_GLOW_INTENSITY = 50.0;
 const TOWER_GLOW_Y = 5.5;  // wu above building base (matches tower cap / PACKET_ELEVATION)
-const ARRIVAL_CHECK_SQ = 4; // 2 wu squared — proximity to consider a packet "arrived"
 const PRODUCTION_LIGHT_COLOR = 0xff8833;  // warm orange — welding sparks
 const PRODUCTION_LIGHT_INTENSITY = 15.0;
 const PRODUCTION_LIGHT_DISTANCE = 8.0;
@@ -44,11 +42,6 @@ interface GlowTracker {
   fadeTimer: number;   // counts down FADE_DURATION -> 0 (HQ fading)
 }
 
-interface PacketGlowTracker {
-  entity: number;
-  light: THREE.PointLight;
-}
-
 interface ProductionGlowTracker {
   entity: number;
   light: THREE.PointLight;
@@ -62,23 +55,12 @@ interface BuildSparkTracker {
   glowLight: THREE.PointLight;
 }
 
-interface TrackedPacket {
-  source: number;
-  target: number;
-  lastX: number;
-  lastY: number;
-  lastZ: number;
-}
-
 export class BuildingEffectsRenderer {
   private smokeTrackers = new Map<number, SmokeTracker>();
   private glowTrackers = new Map<number, GlowTracker>();
   private hqGlowTrackers = new Map<number, GlowTracker>();
-  private packetGlowTrackers = new Map<number, PacketGlowTracker>();
-  private matterPacketGlowTrackers = new Map<number, PacketGlowTracker>();
   private productionGlowTrackers = new Map<number, ProductionGlowTracker>();
   private buildSparkTrackers = new Map<number, BuildSparkTracker>();
-  private trackedPackets = new Map<number, TrackedPacket>();
   private particleRenderer: ParticleRenderer;
   private debrisRenderer: DebrisRenderer;
   private scene: THREE.Scene;
@@ -101,9 +83,6 @@ export class BuildingEffectsRenderer {
   }
 
   update(world: World, dt: number): void {
-    // Detect packet send/receive events before processing buildings
-    this.detectPacketEvents(world);
-
     const buildings = world.query(BUILDING, TEAM, POSITION);
     const activeEntities = new Set<number>();
 
@@ -167,79 +146,8 @@ export class BuildingEffectsRenderer {
       }
     }
 
-    // Energy packet glow lights
-    this.updatePacketGlows(world);
-
-    // Matter packets: no glow (dark ore cubes)
-    this.cleanupMatterPacketGlows();
-
     // Construction welding sparks
     this.updateBuildSparks(world, dt);
-  }
-
-  private detectPacketEvents(world: World): void {
-    const packets = world.query(ENERGY_PACKET, POSITION);
-    const currentPackets = new Set<number>();
-
-    for (const e of packets) {
-      const health = world.getComponent<HealthComponent>(e, HEALTH);
-      if (health && health.dead) continue;
-
-      currentPackets.add(e);
-      const packet = world.getComponent<EnergyPacketComponent>(e, ENERGY_PACKET)!;
-      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-
-      if (!this.trackedPackets.has(e)) {
-        // New packet spawned — reset extractor charge (instant cut to dark)
-        this.trackedPackets.set(e, {
-          source: packet.sourceEntity,
-          target: packet.targetEntity,
-          lastX: pos.x, lastY: pos.y, lastZ: pos.z,
-        });
-        const extTracker = this.glowTrackers.get(packet.sourceEntity);
-        if (extTracker) extTracker.chargeTimer = 0;
-
-        // Voxel spark burst at extractor tower top
-        const extPos = world.getComponent<PositionComponent>(packet.sourceEntity, POSITION);
-        if (extPos) {
-          const visible = !this.fogState || this.playerTeam < 0 || this.fogState.isVisible(this.playerTeam, extPos.x, extPos.z);
-          if (visible) {
-            const sx = extPos.x;
-            const sy = extPos.y + TOWER_GLOW_Y;
-            const sz = extPos.z;
-            for (let i = 0; i < 6; i++) {
-              const dx = (Math.random() - 0.5) * 3;
-              const dy = Math.random() * 3;
-              const dz = (Math.random() - 0.5) * 3;
-              this.debrisRenderer.spawn(sx, sy, sz, dx, dy, dz, 0x66ccff, 1.0, 0x66ccff, true);
-            }
-          }
-        }
-      } else {
-        // Update last known position
-        const info = this.trackedPackets.get(e)!;
-        info.lastX = pos.x;
-        info.lastY = pos.y;
-        info.lastZ = pos.z;
-      }
-    }
-
-    // Check for disappeared packets
-    for (const [packetId, info] of this.trackedPackets) {
-      if (!currentPackets.has(packetId)) {
-        // Packet gone — check if it was near its target HQ (arrived vs killed)
-        const hqPos = world.getComponent<PositionComponent>(info.target, POSITION);
-        if (hqPos) {
-          const dx = info.lastX - hqPos.x;
-          const dz = info.lastZ - hqPos.z;
-          if (dx * dx + dz * dz < ARRIVAL_CHECK_SQ) {
-            const hqTracker = this.hqGlowTrackers.get(info.target);
-            if (hqTracker) hqTracker.fadeTimer = FADE_DURATION;
-          }
-        }
-        this.trackedPackets.delete(packetId);
-      }
-    }
   }
 
   private updateSmoke(entity: number, pos: PositionComponent, dt: number, visible: boolean): void {
@@ -431,50 +339,6 @@ export class BuildingEffectsRenderer {
     }
   }
 
-  private updatePacketGlows(world: World): void {
-    const packets = world.query(ENERGY_PACKET, POSITION);
-    const activePackets = new Set<number>();
-
-    for (const e of packets) {
-      const health = world.getComponent<HealthComponent>(e, HEALTH);
-      if (health && health.dead) continue;
-
-      activePackets.add(e);
-      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-      const visible = !this.fogState || this.playerTeam < 0 || this.fogState.isVisible(this.playerTeam, pos.x, pos.z);
-
-      let tracker = this.packetGlowTrackers.get(e);
-      if (!tracker) {
-        const light = new THREE.PointLight(0x66ccff, MAX_GLOW_INTENSITY, 20);
-        light.position.set(pos.x, pos.y, pos.z);
-        this.scene.add(light);
-        tracker = { entity: e, light };
-        this.packetGlowTrackers.set(e, tracker);
-      }
-
-      tracker.light.intensity = visible ? MAX_GLOW_INTENSITY : 0;
-      tracker.light.position.set(pos.x, pos.y, pos.z);
-    }
-
-    // Clean up destroyed packets
-    for (const [entity, tracker] of this.packetGlowTrackers) {
-      if (!activePackets.has(entity)) {
-        this.scene.remove(tracker.light);
-        tracker.light.dispose();
-        this.packetGlowTrackers.delete(entity);
-      }
-    }
-  }
-
-  private cleanupMatterPacketGlows(): void {
-    // Remove any lingering matter packet lights (no new ones are created)
-    for (const [entity, tracker] of this.matterPacketGlowTrackers) {
-      this.scene.remove(tracker.light);
-      tracker.light.dispose();
-      this.matterPacketGlowTrackers.delete(entity);
-    }
-  }
-
   /** Remove all tracked effects but keep the renderer alive (for world revert). */
   clearAll(): void {
     for (const [, tracker] of this.glowTrackers) {
@@ -482,14 +346,6 @@ export class BuildingEffectsRenderer {
       tracker.light.dispose();
     }
     for (const [, tracker] of this.hqGlowTrackers) {
-      this.scene.remove(tracker.light);
-      tracker.light.dispose();
-    }
-    for (const [, tracker] of this.packetGlowTrackers) {
-      this.scene.remove(tracker.light);
-      tracker.light.dispose();
-    }
-    for (const [, tracker] of this.matterPacketGlowTrackers) {
       this.scene.remove(tracker.light);
       tracker.light.dispose();
     }
@@ -503,11 +359,8 @@ export class BuildingEffectsRenderer {
     }
     this.glowTrackers.clear();
     this.hqGlowTrackers.clear();
-    this.packetGlowTrackers.clear();
-    this.matterPacketGlowTrackers.clear();
     this.productionGlowTrackers.clear();
     this.buildSparkTrackers.clear();
-    this.trackedPackets.clear();
     this.smokeTrackers.clear();
   }
 

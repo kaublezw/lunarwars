@@ -204,6 +204,21 @@ export class ActionBar {
           this.buttonElements.set('train_worker', button);
           this.buttonAffordable.set('train_worker', affordable);
         }
+        // Train Cargo Car button
+        const carDef = UNIT_DEFS[UnitCategory.CargoCar];
+        if (carDef) {
+          const affordable = resources.canAfford(playerTeam, carDef.energyCost) && totalMatter >= carDef.matterCost;
+          const button = this.createButton(
+            'train_cargo_car',
+            'Train Cargo Car',
+            `${carDef.energyCost}e ${carDef.matterCost}m`,
+            affordable,
+            () => this.onTrain?.(UnitCategory.CargoCar),
+          );
+          this.buttonsDiv.appendChild(button);
+          this.buttonElements.set('train_cargo_car', button);
+          this.buttonAffordable.set('train_cargo_car', affordable);
+        }
       } else if (targetMode === 'factory') {
         for (const btn of FACTORY_TRAIN_BUTTONS) {
           const def = UNIT_DEFS[btn.unitType];
@@ -328,9 +343,21 @@ export class ActionBar {
           if (el) this.updateButtonStyle(el, 'train_worker', 'Train Worker', `${workerDef.energyCost}e ${workerDef.matterCost}m`, affordable);
         }
       }
+      const carDef = UNIT_DEFS[UnitCategory.CargoCar];
+      if (carDef) {
+        const affordable = resources.canAfford(playerTeam, carDef.energyCost) && totalMatter >= carDef.matterCost;
+        if (affordable !== this.buttonAffordable.get('train_cargo_car')) {
+          this.buttonAffordable.set('train_cargo_car', affordable);
+          const el = this.buttonElements.get('train_cargo_car');
+          if (el) this.updateButtonStyle(el, 'train_cargo_car', 'Train Cargo Car', `${carDef.energyCost}e ${carDef.matterCost}m`, affordable);
+        }
+      }
 
       const pq = world.getComponent<ProductionQueueComponent>(hqEntity, PRODUCTION_QUEUE);
-      this.updateQueueBadgesAndProgress(pq, [{ key: 'train_worker', unitType: UnitCategory.WorkerDrone }]);
+      this.updateQueueBadgesAndProgress(pq, [
+        { key: 'train_worker', unitType: UnitCategory.WorkerDrone },
+        { key: 'train_cargo_car', unitType: UnitCategory.CargoCar },
+      ]);
     } else if (targetMode === 'depot') {
       const ferryDef = UNIT_DEFS[UnitCategory.FerryDrone];
       if (ferryDef) {
