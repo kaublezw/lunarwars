@@ -39,8 +39,7 @@ export class EconomySystem implements System {
 
       if (building.buildingType === BuildingType.EnergyExtractor) {
         energyRates[team.team] += EXTRACTOR_RATE;
-        const storage = this.ensurePlantStorage(world, e, 'energy');
-        storage.amount += EXTRACTOR_RATE * dt;
+        this.resources.addEnergy(team.team, EXTRACTOR_RATE * dt);
       } else if (building.buildingType === BuildingType.MatterPlant) {
         matterRates[team.team] += PLANT_MATTER_RATE;
         const storage = this.ensurePlantStorage(world, e, 'matter');

@@ -137,11 +137,7 @@ export class TrainLogisticsSystem implements System {
 
       const cargo = world.getComponent<CargoStorageComponent>(current, CARGO_STORAGE);
       if (cargo && cargo.current > 0 && cargo.committedType) {
-        if (cargo.committedType === 'energy') {
-          this.resources.addEnergy(team, cargo.current);
-        } else {
-          this.resources.addMatter(team, cargo.current);
-        }
+        this.resources.addMatter(team, cargo.current);
         cargo.current = 0;
         cargo.committedType = null;
       }

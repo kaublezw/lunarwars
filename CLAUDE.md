@@ -9,8 +9,8 @@ Free, zero-barrier, web-based RTS game set in a voxel arena. Competing factions 
 ### Core Differentiator: Explicit Logistics
 
 The defining mechanic is supply chain management:
-- **Train-based economy** — A physical train (1 engine + cargo cars) circuits between HQ and resource buildings, collecting and delivering resources in bursty deliveries
-- **PlantStorage accumulation** — Extractors and Matter Plants accumulate resources locally; the train picks them up on each pass
+- **Train-based economy** — A physical train (1 engine + cargo cars) circuits between HQ and matter plants, collecting and delivering matter in bursty deliveries
+- **PlantStorage accumulation** — Matter Plants accumulate matter locally; the train picks it up on each pass. Energy Extractors add energy directly to the global pool each tick (continuous income)
 - **Discrete grid track** — Train tracks are built from exactly 6 piece types: 2 straights (N-S, E-W) and 4 quarter-circle curves. All pieces snap to `MACRO_GRID_SIZE` (4 wu) grid. Tracks are visual-only (no collision)
 - **Vulnerable supply chain** — Destroying cargo cars denies resource delivery; destroying the engine halts the economy. Enemy units on the track are instakilled; friendly units are pushed aside
 - **Supply Depots** have local MATTER_STORAGE; combat units auto-resupply (ammo + repair) at depots
@@ -19,9 +19,9 @@ The defining mechanic is supply chain management:
 
 ### Economy
 
-- **Energy** — Mined from fixed energy nodes via Extractors (+5e/s each). Accumulates in local `PlantStorage`; collected by train.
+- **Energy** — Mined from fixed energy nodes via Extractors (+5e/s each). Added directly to the global pool each tick (continuous, not bursty).
 - **Matter** — Manufactured by Matter Plants (+2m/s each). Accumulates in local `PlantStorage`; collected by train.
-- **Bursty delivery** — Resources only enter the global pool when the train unloads at HQ. No continuous income.
+- **Bursty delivery** — Matter only enters the global pool when the train unloads at HQ. Energy is continuous income from extractors.
 - **Build anywhere** — No build radius restriction. All buildings and resource nodes snap to `MACRO_GRID_SIZE` (4 wu) grid.
 - Building/training costs deducted from global matter pool.
 - Economy limits unit spam, encourages expansion and forward staging, makes logistics essential.
@@ -70,7 +70,7 @@ The defining mechanic is supply chain management:
 
 ### Train Logistics System
 
-The train is the sole resource delivery mechanism. No packets or direct income — all energy and matter flow through the physical train.
+The train is the matter delivery mechanism. Energy flows directly from extractors. Matter flows through the physical train.
 
 **Track Routing (TrackManagerSystem):**
 - A* state-space pathfinder on the `MACRO_GRID_SIZE` (4 wu) grid
@@ -100,8 +100,8 @@ The train is the sole resource delivery mechanism. No packets or direct income �
 
 **Resource Flow (TrainLogisticsSystem):**
 - At plant waypoints: transfers PlantStorage → CargoStorage (fills all compatible cars)
-- At HQ waypoints: dumps CargoStorage → ResourceState (addEnergy/addMatter)
-- Cars lock committedType ('energy' | 'matter') when loaded, cleared on unload
+- At HQ waypoints: dumps CargoStorage → ResourceState (addMatter)
+- Cars lock committedType ('matter') when loaded, cleared on unload
 
 **Unified Grid (MACRO_GRID_SIZE = 4.0 wu):**
 - Exported from `ComponentTypes.ts`, used by tracks, buildings, and resource nodes
@@ -263,7 +263,7 @@ for (const e of entities) {
 | `src/rendering/SceneManager.ts` | Scene, directional + ambient lights |
 | `src/rendering/GhostBuildingRenderer.ts` | Semi-transparent placement preview mesh |
 | `src/simulation/systems/MovementSystem.ts` | Moves entities, bounces off 256x256 bounds |
-| `src/simulation/systems/EconomySystem.ts` | Ticks extractors/plants: accumulates PlantStorage (+5e/s, +2m/s); auto-fills HQ matter storage |
+| `src/simulation/systems/EconomySystem.ts` | Ticks extractors (direct +5e/s to global pool) and plants (accumulates PlantStorage +2m/s); auto-fills HQ matter storage |
 | `src/simulation/systems/TrackManagerSystem.ts` | A* grid-based track routing: computes optimal circuit through buildings with discrete track pieces |
 | `src/simulation/systems/TrainMovementSystem.ts` | Moves train along TrackFollower path; drags cargo cars; handles blocking units and chain reconnection |
 | `src/simulation/systems/TrainLogisticsSystem.ts` | Load/unload state machine: PlantStorage → CargoStorage at plants, CargoStorage → ResourceState at HQ |

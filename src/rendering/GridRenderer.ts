@@ -29,9 +29,9 @@ export class GridRenderer {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
 
     const material = new THREE.LineBasicMaterial({
-      color: 0xffff00,
+      color: 0x333333,
       transparent: true,
-      opacity: 0.3,
+      opacity: 0.8,
       depthWrite: false,
     });
 

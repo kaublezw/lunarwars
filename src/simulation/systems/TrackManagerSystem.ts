@@ -659,7 +659,7 @@ export class TrackManagerSystem implements System {
     return route;
   }
 
-  /** Find completed, living extractors and matter plants for a team. */
+  /** Find completed, living matter plants for a team. */
   private collectPlants(world: World, team: number): { entity: number; x: number; z: number }[] {
     const result: { entity: number; x: number; z: number }[] = [];
     const entities = world.query(BUILDING, TEAM);
@@ -669,10 +669,7 @@ export class TrackManagerSystem implements System {
       const t = world.getComponent<TeamComponent>(e, TEAM)!;
       if (t.team !== team) continue;
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (
-        building.buildingType !== BuildingType.EnergyExtractor &&
-        building.buildingType !== BuildingType.MatterPlant
-      ) continue;
+      if (building.buildingType !== BuildingType.MatterPlant) continue;
       const health = world.getComponent<HealthComponent>(e, HEALTH);
       if (health && health.dead) continue;
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;

@@ -9,10 +9,12 @@ import type { TeamComponent } from '@sim/components/Team';
 import type { TrainLinkComponent } from '@sim/components/TrainLink';
 import type { TrackFollowerComponent } from '@sim/components/TrackFollower';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
+import type { UnitTypeComponent } from '@sim/components/UnitType';
+import { UnitCategory } from '@sim/components/UnitType';
 import { SpatialHash } from '@sim/spatial/SpatialHash';
 
 /** Distance between linked train entities (world units). */
-const CAR_SPACING = 2.5;
+const CAR_SPACING = 2.0;
 /** Radius around the train path to check for blocking units. */
 const CRUSH_RADIUS = 1.2;
 
@@ -187,15 +189,15 @@ export class TrainMovementSystem implements System {
   }
 
   /**
-   * Drag each cargo car to trail the entity ahead at CAR_SPACING.
-   * Rotation faces toward the leader — smooth with dense spline movement.
+   * Position each cargo car along the track path behind the engine.
+   * Cars follow the exact waypoint spline instead of cutting corners.
    */
   private dragCars(world: World, engine: number, team: number): void {
-    const enginePos = world.getComponent<PositionComponent>(engine, POSITION)!;
-    let prevX = enginePos.x;
-    let prevY = enginePos.y;
-    let prevZ = enginePos.z;
+    const follower = world.getComponent<TrackFollowerComponent>(engine, TRACK_FOLLOWER)!;
+    const path = follower.path;
+    if (path.length < 2) return;
 
+    let carNum = 0;
     let current: number | null = world.getComponent<TrainLinkComponent>(engine, TRAIN_LINK)!.nextEntity;
 
     while (current != null) {
@@ -206,41 +208,97 @@ export class TrainMovementSystem implements System {
         continue;
       }
 
+      carNum++;
       const carPos = world.getComponent<PositionComponent>(current, POSITION);
       if (!carPos) break;
 
-      const dx = prevX - carPos.x;
-      const dy = prevY - carPos.y;
-      const dz = prevZ - carPos.z;
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const target = this.walkBackAlongPath(
+        path, follower.currentWaypointIndex, follower.distanceAlongSegment,
+        carNum * CAR_SPACING,
+      );
 
       carPos.prevX = carPos.x;
       carPos.prevY = carPos.y;
       carPos.prevZ = carPos.z;
-
-      if (dist > CAR_SPACING) {
-        const overshoot = dist - CAR_SPACING;
-        carPos.x += (dx / dist) * overshoot;
-        carPos.y += (dy / dist) * overshoot;
-        carPos.z += (dz / dist) * overshoot;
-      }
-
-      // Face toward leader
-      const faceDx = prevX - carPos.x;
-      const faceDz = prevZ - carPos.z;
-      if (faceDx !== 0 || faceDz !== 0) {
-        carPos.rotation = Math.atan2(faceDx, faceDz);
-      }
+      carPos.x = target.x;
+      carPos.y = target.y;
+      carPos.z = target.z;
+      carPos.rotation = target.rotation;
 
       this.handleBlockingUnits(world, carPos.x, carPos.z, current, team);
-
-      prevX = carPos.x;
-      prevY = carPos.y;
-      prevZ = carPos.z;
 
       const link = world.getComponent<TrainLinkComponent>(current, TRAIN_LINK);
       current = link ? link.nextEntity : null;
     }
+  }
+
+  /**
+   * Walk backward along the waypoint path by `walkBack` world units
+   * from the given segment position. Wraps around for looping circuits.
+   */
+  private walkBackAlongPath(
+    path: TrackFollowerComponent['path'],
+    waypointIndex: number,
+    distAlongSeg: number,
+    walkBack: number,
+  ): { x: number; y: number; z: number; rotation: number } {
+    let remaining = walkBack;
+    let idx = waypointIndex;
+    let dist = distAlongSeg;
+
+    // Consume distance within current segment (backward)
+    if (remaining <= dist) {
+      dist -= remaining;
+      remaining = 0;
+    } else {
+      remaining -= dist;
+      idx--;
+
+      // Walk backward through previous segments
+      while (remaining > 0 && idx >= 0) {
+        const segLen = this.dist2D(path[idx], path[idx + 1]);
+        if (remaining <= segLen) {
+          dist = segLen - remaining;
+          remaining = 0;
+        } else {
+          remaining -= segLen;
+          idx--;
+        }
+      }
+
+      // Wrap around to end of path (looping circuit)
+      if (remaining > 0) {
+        idx = path.length - 2;
+        while (remaining > 0 && idx >= 0) {
+          const segLen = this.dist2D(path[idx], path[idx + 1]);
+          if (remaining <= segLen) {
+            dist = segLen - remaining;
+            remaining = 0;
+          } else {
+            remaining -= segLen;
+            idx--;
+          }
+        }
+      }
+    }
+
+    idx = Math.max(0, Math.min(idx, path.length - 2));
+    const a = path[idx];
+    const b = path[idx + 1];
+    const segLen = this.dist2D(a, b);
+    const t = segLen > 0.001 ? dist / segLen : 0;
+
+    // Rotation: face along segment direction (forward along track)
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const rotation = (dx !== 0 || dz !== 0) ? Math.atan2(dx, dz) : 0;
+
+    return {
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+      z: a.z + (b.z - a.z) * t,
+      rotation,
+    };
   }
 
   /** Check for broken chain (dead car) and trigger reverse reconnection. */
@@ -343,7 +401,10 @@ export class TrainMovementSystem implements System {
       const otherTeam = world.getComponent<TeamComponent>(other, TEAM);
       if (otherTeam && otherTeam.team === selfTeam) {
         friendlyBlocking = true;
-        this.pushUnitOffTrack(world, other, otherPos, x, z);
+        const unitType = world.getComponent<UnitTypeComponent>(other, UNIT_TYPE);
+        if (!unitType || unitType.category !== UnitCategory.WorkerDrone) {
+          this.pushUnitOffTrack(world, other, otherPos, x, z);
+        }
       } else {
         otherHealth.current = 0;
         otherHealth.dead = true;
