@@ -1,7 +1,7 @@
 import type { System, World } from '@core/ECS';
 import {
   TURRET, TEAM, POSITION, HEALTH, MOVE_COMMAND, RESUPPLY_SEEK, MATTER_STORAGE, UNIT_TYPE,
-  BUILDING, CONSTRUCTION, DEPOT_RADIUS, VOXEL_STATE,
+  BUILDING, CONSTRUCTION, DEPOT_RADIUS, VOXEL_STATE, POWER_NODE,
 } from '@sim/components/ComponentTypes';
 import type { TurretComponent } from '@sim/components/Turret';
 import type { TeamComponent } from '@sim/components/Team';
@@ -11,6 +11,7 @@ import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { ResupplySeekComponent } from '@sim/components/ResupplySeek';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import { findNearestDepot, RESUPPLY_RANGE, AMMO_MATTER_COST, REPAIR_MATTER_COST, REPAIR_RATE } from '@sim/economy/DepotUtils';
 
 const RESUPPLY_RANGE_SQ = RESUPPLY_RANGE * RESUPPLY_RANGE;
@@ -34,6 +35,8 @@ export class ResupplySystem implements System {
       if (world.hasComponent(d, CONSTRUCTION)) continue;
       const health = world.getComponent<HealthComponent>(d, HEALTH)!;
       if (health.dead) continue;
+      const power = world.getComponent<PowerNodeComponent>(d, POWER_NODE);
+      if (power && !power.powered) continue;
       const storage = world.getComponent<MatterStorageComponent>(d, MATTER_STORAGE)!;
       if (storage.stored <= 0) continue;
       const team = world.getComponent<TeamComponent>(d, TEAM)!;

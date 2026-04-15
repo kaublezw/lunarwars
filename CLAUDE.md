@@ -50,6 +50,7 @@ The defining mechanic is supply chain management:
 | Matter Plant | 100 energy | +2 matter/s |
 | Supply Depot | 50e + 50m | Stores matter locally (filled by ferry drones), auto-resupplies nearby combat units (ammo + repair), trains Ferry Drones |
 | Drone Factory | 150e + 100m | Trains units |
+| Power Pole | 5e + 5m | Auto-placed; connects buildings to power grid. 100 HP, destructible |
 
 ### Starting Loadout (Per Player)
 
@@ -67,6 +68,40 @@ The defining mechanic is supply chain management:
 - Mountains create chokepoints and obstruct movement/line of sight
 - Terrain matters primarily because it affects logistics, not just combat
 - 2-4 flat zones for base building, 8-12 energy nodes at flat spots
+
+### Power Grid System
+
+All non-wall buildings require a connected power line path back to HQ to function. Power poles are small destructible voxel entities (100 HP) placed automatically on the macro grid when buildings are constructed.
+
+**Power Nodes (POWER_NODE component):**
+- Attached to HQ, Energy Extractors, Matter Plants, Supply Depots, Drone Factories, and Power Poles
+- `powered` flag recomputed by PowerGridSystem via BFS from HQ whenever the graph changes
+- Unpowered buildings: extractors don't add energy, plants don't produce matter, factories/depots/HQ can't train units, depots can't resupply
+
+**Power Poles:**
+- Auto-generated (free, instant) when a building completes construction
+- Placed every 2 macro-grid cells (8 wu) along a Bresenham line from the new building to the nearest powered node
+- Reuse existing poles where possible (no duplicates at same grid position)
+- 100 HP, easily destroyed — severing a pole disconnects downstream buildings
+- When destroyed: ghost ruin entity (POWER_POLE_RUIN) left behind for rebuild
+
+**Pole Rebuilding:**
+- Select a worker, right-click on a pole ruin to rebuild (costs 5e + 5m, 2s build time)
+- AI automatically rebuilds pole ruins via EconomyManager.executePoleMaintenance()
+
+**Power Line Rendering (PowerLineRenderer):**
+- THREE.LineSegments with team-colored lines and slight catenary droop
+- Drawn between edge endpoints from PowerGridState
+- Respects fog of war (only visible when at least one endpoint is visible)
+
+**Key files:**
+- `src/simulation/economy/PowerGridState.ts` — Per-team graph: edges, powered nodes, dirty flag, BFS
+- `src/simulation/economy/PowerGridRouter.ts` — Auto-routing poles between buildings (Bresenham + pole spawning)
+- `src/simulation/systems/PowerGridSystem.ts` — Detects dead poles, severs edges, spawns ruins, recomputes connectivity
+- `src/simulation/components/PowerNode.ts` — PowerNodeComponent (powered flag, nodeId)
+- `src/simulation/components/PowerPole.ts` — PowerPoleComponent (gridX, gridZ)
+- `src/simulation/components/PowerPoleRuin.ts` — PowerPoleRuinComponent (gridX, gridZ)
+- `src/rendering/PowerLineRenderer.ts` — Three.js line rendering with catenary droop
 
 ### Train Logistics System
 
@@ -288,6 +323,10 @@ for (const e of entities) {
 | `src/ui/ResourceDisplay.ts` | Top-left HUD showing energy/matter with rates |
 | `src/main.ts` | Bootstraps everything, spawns HQs + workers, wires systems and UI |
 | `src/simulation/ai/PlacementValidator.ts` | Shared building placement validation |
+| `src/simulation/economy/PowerGridState.ts` | Per-team power graph state (edges, connectivity BFS) |
+| `src/simulation/economy/PowerGridRouter.ts` | Auto-routing poles between buildings |
+| `src/simulation/systems/PowerGridSystem.ts` | Evaluates power connectivity, handles pole death/ruins |
+| `src/rendering/PowerLineRenderer.ts` | Renders power lines between poles/buildings |
 
 ## World Coordinates
 
@@ -325,7 +364,7 @@ Fixed timestep simulation at 1/60s with accumulator pattern. Render callback rec
 
 ### System Execution Order
 
-Pathfinding -> CollisionAvoidance -> Movement -> TrainMovement -> TrainLogistics -> FogOfWar -> Turret -> Projectile -> VoxelDamage -> Resupply -> Repair -> GameOver -> Health -> Economy -> Supply -> Build -> Production -> TrackManager -> AI
+Pathfinding -> CollisionAvoidance -> Movement -> TrainMovement -> TrainLogistics -> FogOfWar -> Turret -> Projectile -> VoxelDamage -> Resupply -> Repair -> GameOver -> Health -> PowerGrid -> Economy -> Supply -> Build -> Production -> TrackManager -> AI
 
 ### Building Y-Position Convention
 

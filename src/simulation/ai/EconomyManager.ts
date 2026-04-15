@@ -23,7 +23,7 @@ import {
 } from '@sim/ai/AILocationFinder';
 import { issueMove, assignRepair } from '@sim/ai/AIActions';
 import {
-  buildStructure, buildWallSegments, trainUnit, issueWorkerBuild,
+  buildStructure, buildWallSegments, trainUnit, issueWorkerBuild, repairAllPoles, getPoleRepairCost,
   type GameCommandContext,
 } from '@sim/commands/GameCommands';
 
@@ -43,9 +43,18 @@ export class EconomyManager {
   update(ctx: AIContext, report: IntelligenceReport): void {
     const { state, phase, enemyMemory } = report;
 
+    this.executePoleMaintenance(ctx, state);
     this.executeBuildOrder(ctx, state, enemyMemory);
     this.executeWallBuilding(ctx, state, phase, enemyMemory);
     this.executeFerry(ctx, state);
+  }
+
+  private executePoleMaintenance(ctx: AIContext, _state: AIWorldState): void {
+    const { count } = getPoleRepairCost(ctx.world, ctx.team);
+    if (count === 0) return;
+
+    const cmdCtx = this.buildCmdCtx(ctx);
+    repairAllPoles(cmdCtx, ctx.team, ctx.powerGrid);
   }
 
   private executeBuildOrder(

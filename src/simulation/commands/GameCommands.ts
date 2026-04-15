@@ -7,7 +7,8 @@ import {
   POSITION, RENDERABLE, SELECTABLE, HEALTH, TEAM,
   BUILDING, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND,
   PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE,
-  REPAIR_COMMAND, WALL_BUILD_QUEUE,
+  REPAIR_COMMAND, WALL_BUILD_QUEUE, POWER_POLE_RUIN,
+  POWER_NODE, POWER_POLE, VISION, MACRO_GRID_SIZE,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
@@ -21,6 +22,10 @@ import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
+import type { PowerPoleRuinComponent } from '@sim/components/PowerPoleRuin';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
+import type { PowerPoleComponent } from '@sim/components/PowerPole';
+import type { VisionComponent } from '@sim/components/Vision';
 
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -29,6 +34,8 @@ import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import { validateAndSnapPlacement } from '@sim/ai/PlacementValidator';
 import { teamHasEngine, engineInProduction } from '@sim/logistics/TrainSpawner';
+import type { PowerGridState } from '@sim/economy/PowerGridState';
+import { routePowerConnection } from '@sim/economy/PowerGridRouter';
 
 import { TEAM_COLORS } from '@sim/ai/AITypes';
 
@@ -310,5 +317,118 @@ export function trainUnit(
   pq.rallyX = rallyX;
   pq.rallyZ = rallyZ;
 
+  return true;
+}
+
+/**
+ * Count pole ruins for a team and return the total repair cost.
+ */
+export function getPoleRepairCost(
+  world: World,
+  team: number,
+): { count: number; energyCost: number; matterCost: number } {
+  const def = BUILDING_DEFS[BuildingType.PowerPole];
+  if (!def) return { count: 0, energyCost: 0, matterCost: 0 };
+
+  const ruins = world.query(POWER_POLE_RUIN, TEAM, POSITION);
+  let count = 0;
+  for (const e of ruins) {
+    const t = world.getComponent<TeamComponent>(e, TEAM)!;
+    if (t.team === team) count++;
+  }
+
+  return {
+    count,
+    energyCost: count * def.energyCost,
+    matterCost: count * def.matterCost,
+  };
+}
+
+/**
+ * Instantly repair all destroyed power poles for a team.
+ * Spawns fully built poles at each ruin position, destroys ruins, reconnects grid.
+ * Requires PowerGridState for edge reconnection.
+ */
+export function repairAllPoles(
+  ctx: GameCommandContext,
+  team: number,
+  powerGrid: PowerGridState,
+): boolean {
+  const { count, energyCost, matterCost } = getPoleRepairCost(ctx.world, team);
+  if (count === 0) return false;
+
+  // Affordability
+  if (!ctx.resources.canAfford(team, energyCost)) return false;
+  if (!ctx.resources.canAffordMatter(team, matterCost)) return false;
+
+  // Deduct resources
+  ctx.resources.spend(team, energyCost);
+  if (matterCost > 0) ctx.resources.spendMatter(team, matterCost);
+
+  const def = BUILDING_DEFS[BuildingType.PowerPole]!;
+
+  // Collect all ruins for this team
+  const ruins = ctx.world.query(POWER_POLE_RUIN, TEAM, POSITION);
+  const toRepair: { entity: number; x: number; y: number; z: number; gridX: number; gridZ: number }[] = [];
+  for (const e of ruins) {
+    const t = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+    if (t.team !== team) continue;
+    const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
+    const ruin = ctx.world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
+    toRepair.push({ entity: e, x: pos.x, y: pos.y, z: pos.z, gridX: ruin.gridX, gridZ: ruin.gridZ });
+  }
+
+  // Spawn fully built poles and destroy ruins
+  for (const r of toRepair) {
+    // Create the pole entity
+    const pole = ctx.world.createEntity();
+    ctx.world.addComponent<PositionComponent>(pole, POSITION, {
+      x: r.x, y: r.y, z: r.z,
+      prevX: r.x, prevY: r.y, prevZ: r.z,
+      rotation: 0,
+    });
+    ctx.world.addComponent<RenderableComponent>(pole, RENDERABLE, {
+      meshType: 'power_pole',
+      color: TEAM_COLORS[team] ?? 0xffffff,
+      scale: 1.0,
+    });
+    ctx.world.addComponent<HealthComponent>(pole, HEALTH, {
+      current: def.hp, max: def.hp, dead: false,
+    });
+    ctx.world.addComponent<TeamComponent>(pole, TEAM, { team });
+    ctx.world.addComponent<BuildingComponent>(pole, BUILDING, { buildingType: BuildingType.PowerPole });
+    ctx.world.addComponent<SelectableComponent>(pole, SELECTABLE, { selected: false });
+    ctx.world.addComponent<VisionComponent>(pole, VISION, { range: def.visionRange });
+
+    const voxelModel = VOXEL_MODELS[def.meshType];
+    if (voxelModel) {
+      ctx.world.addComponent<VoxelStateComponent>(pole, VOXEL_STATE, {
+        modelId: def.meshType,
+        totalVoxels: voxelModel.totalSolid,
+        destroyedCount: 0,
+        destroyed: new Uint8Array(Math.ceil(voxelModel.totalSolid / 8)),
+        dirty: true,
+        pendingDebris: [],
+        pendingScorch: [],
+      });
+    }
+
+    ctx.world.addComponent<PowerNodeComponent>(pole, POWER_NODE, {
+      powered: false,
+      nodeId: powerGrid.allocateNodeId(),
+    });
+    ctx.world.addComponent<PowerPoleComponent>(pole, POWER_POLE, {
+      gridX: r.gridX,
+      gridZ: r.gridZ,
+    });
+
+    // Reconnect to nearest existing powered nodes
+    routePowerConnection(ctx.world, team, pole, powerGrid, ctx.terrain, null);
+
+    // Destroy the ruin
+    ctx.world.destroyEntity(r.entity);
+  }
+
+  powerGrid.markDirty(team);
   return true;
 }

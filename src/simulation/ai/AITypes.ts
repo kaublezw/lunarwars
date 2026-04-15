@@ -4,6 +4,7 @@ import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
+import type { PowerGridState } from '@sim/economy/PowerGridState';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 
@@ -183,6 +184,7 @@ export interface AIContext {
   rallyZ: number;
   hqEntity: number;
   totalTicks: number;
+  powerGrid: PowerGridState;
 }
 
 export interface IntelligenceReport {

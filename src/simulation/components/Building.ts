@@ -5,6 +5,7 @@ export enum BuildingType {
   SupplyDepot = 'supply_depot',
   DroneFactory = 'drone_factory',
   Wall = 'wall',
+  PowerPole = 'power_pole',
 }
 
 export interface BuildingComponent {

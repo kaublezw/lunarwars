@@ -10,6 +10,8 @@ const FOOTPRINT_RADIUS: Record<string, number> = {
   supply_depot: 1,
   drone_factory: 3,
   construction_site: 1,
+  power_pole: 0,
+  power_pole_ruin: 0,
 };
 
 // Rectangular footprints for axis-aligned structures (walls)

@@ -24,7 +24,7 @@ import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { FogOfWarSystem } from '@sim/systems/FogOfWarSystem';
 import { AISystem } from '@sim/systems/AIBrain';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, MATTER_STORAGE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, MATTER_STORAGE, DEPOT_RADIUS, POWER_NODE } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
@@ -42,6 +42,7 @@ import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 
 import { TEAM_COLORS } from '@sim/ai/AITypes';
 import { spawnTrainSet } from '@sim/logistics/TrainSpawner';
@@ -49,6 +50,8 @@ import { TrainMovementSystem } from '@sim/systems/TrainMovementSystem';
 import { TrainLogisticsSystem } from '@sim/systems/TrainLogisticsSystem';
 import { TrackManagerSystem } from '@sim/systems/TrackManagerSystem';
 import { TrackState } from '@sim/logistics/TrackState';
+import { PowerGridState } from '@sim/economy/PowerGridState';
+import { PowerGridSystem } from '@sim/systems/PowerGridSystem';
 
 import type { HeadlessConfig, GameResult } from './types';
 
@@ -60,6 +63,7 @@ export class HeadlessEngine {
   private buildingOccupancy!: BuildingOccupancy;
   private energyNodes!: EnergyNode[];
   private oreDeposits!: OreDeposit[];
+  private powerGridState!: PowerGridState;
   private gameOverTeam: number | null = null;
   private tickCount = 0;
 
@@ -85,6 +89,8 @@ export class HeadlessEngine {
     // Economy
     this.resourceState = new ResourceState(2);
     const trackState = new TrackState(2);
+    this.powerGridState = new PowerGridState(2);
+    const powerGridState = this.powerGridState;
 
     // Fog of war
     this.fogState = new FogOfWarState(276, 276, 2, 25);
@@ -125,15 +131,16 @@ export class HeadlessEngine {
     this.world.addSystem(new RepairSystem(this.resourceState, 2));
     this.world.addSystem(gameOverSystem);
     this.world.addSystem(new HealthSystem());
+    this.world.addSystem(new PowerGridSystem(powerGridState, 2));
     this.world.addSystem(new EconomySystem(this.resourceState, 2, this.terrainData));
     this.world.addSystem(new SupplySystem(this.terrainData, this.resourceState));
-    this.world.addSystem(new BuildSystem());
+    this.world.addSystem(new BuildSystem(undefined, powerGridState, this.terrainData, this.buildingOccupancy));
     this.world.addSystem(new ProductionSystem(this.resourceState, this.terrainData));
     this.world.addSystem(new TrackManagerSystem(trackState, this.terrainData, 2));
 
     // Both teams controlled by AI
-    this.world.addSystem(new AISystem(1, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy));
-    this.world.addSystem(new AISystem(0, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy));
+    this.world.addSystem(new AISystem(1, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy, this.powerGridState));
+    this.world.addSystem(new AISystem(0, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy, this.powerGridState));
 
     // Spawn HQs + workers
     this.spawnInitialEntities();
@@ -217,6 +224,12 @@ export class HeadlessEngine {
         capacity: 100,
       });
       this.world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
+
+      // HQ is the root of the power grid — always powered
+      this.world.addComponent<PowerNodeComponent>(e, POWER_NODE, {
+        powered: true,
+        nodeId: this.powerGridState.allocateNodeId(),
+      });
     }
 
     // Workers

@@ -397,6 +397,27 @@ export const FACTORY_ROOF_DOOR_MODEL = createModel(16, 1, 16, (g, sx, _sy, sz) =
   fillBox(g, sx, sz, 0, 0, 0, 15, 0, 15, PAL_TEAM_ACCENT);
 });
 
+// --- Power pole: 4x12x4 voxels (0.6 x 1.8 x 0.6 wu) ---
+const POWER_POLE_MODEL = createModel(4, 12, 4, (g, sx, _sy, sz) => {
+  // Base plate
+  fillBox(g, sx, sz, 0, 0, 0, 3, 0, 3, PAL_DARK_GREY);
+  // Central shaft (2x2)
+  fillBox(g, sx, sz, 1, 1, 1, 2, 9, 2, PAL_MED_GREY);
+  // Cross-arm at top
+  fillBox(g, sx, sz, 0, 10, 1, 3, 10, 2, PAL_LIGHT_GREY);
+  // Team-color accent tips
+  fillBox(g, sx, sz, 0, 11, 1, 0, 11, 2, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 3, 11, 1, 3, 11, 2, PAL_TEAM_ACCENT);
+});
+
+// --- Power pole ruin: 4x2x4 voxels (broken base stub) ---
+const POWER_POLE_RUIN_MODEL = createModel(4, 2, 4, (g, sx, _sy, sz) => {
+  // Broken base
+  fillBox(g, sx, sz, 0, 0, 0, 3, 0, 3, PAL_DARK_GREY);
+  // Stub remnants
+  fillBox(g, sx, sz, 1, 1, 1, 2, 1, 2, PAL_MED_GREY);
+});
+
 // Map meshType -> VoxelModel
 export const VOXEL_MODELS: Record<string, VoxelModel> = {
   combat_drone: COMBAT_DRONE_MODEL,
@@ -415,6 +436,8 @@ export const VOXEL_MODELS: Record<string, VoxelModel> = {
   wall_corner: WALL_CORNER_MODEL,
   energy_packet: ENERGY_PACKET_MODEL,
   matter_packet: MATTER_PACKET_MODEL,
+  power_pole: POWER_POLE_MODEL,
+  power_pole_ruin: POWER_POLE_RUIN_MODEL,
 };
 
 /** Get the world-space bounding box dimensions for a voxel model */

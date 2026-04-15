@@ -3,6 +3,7 @@ import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
+import { PowerGridState } from '@sim/economy/PowerGridState';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import type { AIContext, AISerializedState } from '@sim/ai/AITypes';
 import { TICK_INTERVAL, RALLY_OFFSET } from '@sim/ai/AITypes';
@@ -26,6 +27,7 @@ export class AISystem implements System {
   private energyNodes: EnergyNode[];
   private oreDeposits: OreDeposit[];
   private occupancy: BuildingOccupancy;
+  private powerGrid: PowerGridState;
 
   private intel: IntelligenceManager;
   private economy: EconomyManager;
@@ -42,6 +44,7 @@ export class AISystem implements System {
     energyNodes: EnergyNode[],
     oreDeposits: OreDeposit[],
     occupancy: BuildingOccupancy,
+    powerGrid?: PowerGridState,
   ) {
     this.team = team;
     this.resources = resources;
@@ -50,6 +53,7 @@ export class AISystem implements System {
     this.energyNodes = energyNodes;
     this.oreDeposits = oreDeposits;
     this.occupancy = occupancy;
+    this.powerGrid = powerGrid ?? new PowerGridState(2);
     // Stagger AI ticks so teams don't always act on the same frame
     this.tickCounter = team * Math.floor(TICK_INTERVAL / 2);
 
@@ -87,6 +91,7 @@ export class AISystem implements System {
       rallyZ: hqPos.z + RALLY_OFFSET * dir,
       hqEntity: hq,
       totalTicks: this.totalTicks,
+      powerGrid: this.powerGrid,
     };
 
     // Perceive -> Decide -> Act

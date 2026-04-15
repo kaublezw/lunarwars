@@ -68,4 +68,15 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     needsEnergyNode: false,
     needsOreDeposit: false,
   },
+  [BuildingType.PowerPole]: {
+    type: BuildingType.PowerPole,
+    energyCost: 5,
+    matterCost: 5,
+    buildTime: 2,
+    hp: 100,
+    visionRange: 2,
+    meshType: 'power_pole',
+    needsEnergyNode: false,
+    needsOreDeposit: false,
+  },
 };

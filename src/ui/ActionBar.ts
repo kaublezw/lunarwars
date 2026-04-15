@@ -1,5 +1,5 @@
 import type { World } from '@core/ECS';
-import { SELECTABLE, UNIT_TYPE, BUILDING, TEAM, PRODUCTION_QUEUE, CONSTRUCTION } from '@sim/components/ComponentTypes';
+import { SELECTABLE, UNIT_TYPE, BUILDING, TEAM, PRODUCTION_QUEUE, CONSTRUCTION, POWER_POLE_RUIN } from '@sim/components/ComponentTypes';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
 import type { BuildingComponent } from '@sim/components/Building';
@@ -37,6 +37,7 @@ export class ActionBar {
   private onBuild: ((type: BuildingType) => void) | null = null;
   private onTrain: ((unitType: string) => void) | null = null;
   private onDemolish: ((entity: number) => void) | null = null;
+  private onRepairPoles: (() => void) | null = null;
 
   // Cached state to avoid rebuilding DOM every frame
   private currentMode: BarMode = 'hidden';
@@ -88,6 +89,10 @@ export class ActionBar {
 
   onDemolishRequest(cb: (entity: number) => void): void {
     this.onDemolish = cb;
+  }
+
+  onRepairPolesRequest(cb: () => void): void {
+    this.onRepairPoles = cb;
   }
 
   update(world: World, resources: ResourceState, playerTeam: number): void {
@@ -218,6 +223,21 @@ export class ActionBar {
           this.buttonsDiv.appendChild(button);
           this.buttonElements.set('train_cargo_car', button);
           this.buttonAffordable.set('train_cargo_car', affordable);
+        }
+        // Repair Poles button (only shown when ruins exist)
+        const ruinCost = this.countPoleRuinCost(world, playerTeam);
+        if (ruinCost.count > 0) {
+          const affordable = resources.canAfford(playerTeam, ruinCost.energyCost) && totalMatter >= ruinCost.matterCost;
+          const button = this.createButton(
+            'repair_poles',
+            `Repair Poles (${ruinCost.count})`,
+            `${ruinCost.energyCost}e ${ruinCost.matterCost}m`,
+            affordable,
+            () => this.onRepairPoles?.(),
+          );
+          this.buttonsDiv.appendChild(button);
+          this.buttonElements.set('repair_poles', button);
+          this.buttonAffordable.set('repair_poles', affordable);
         }
       } else if (targetMode === 'factory') {
         for (const btn of FACTORY_TRAIN_BUTTONS) {
@@ -351,6 +371,31 @@ export class ActionBar {
           const el = this.buttonElements.get('train_cargo_car');
           if (el) this.updateButtonStyle(el, 'train_cargo_car', 'Train Cargo Car', `${carDef.energyCost}e ${carDef.matterCost}m`, affordable);
         }
+      }
+
+      // Dynamic repair poles button update
+      const ruinCost = this.countPoleRuinCost(world, playerTeam);
+      const repairEl = this.buttonElements.get('repair_poles');
+      if (ruinCost.count > 0) {
+        if (!repairEl) {
+          // Ruins appeared — need to rebuild mode to show button
+          this.currentMode = 'hidden'; // force rebuild on next frame
+          return;
+        }
+        const affordable = resources.canAfford(playerTeam, ruinCost.energyCost) && totalMatter >= ruinCost.matterCost;
+        const newLabel = `Repair Poles (${ruinCost.count})`;
+        const newCost = `${ruinCost.energyCost}e ${ruinCost.matterCost}m`;
+        if (affordable !== this.buttonAffordable.get('repair_poles')) {
+          this.buttonAffordable.set('repair_poles', affordable);
+          this.updateButtonStyle(repairEl, 'repair_poles', newLabel, newCost, affordable);
+        } else {
+          // Always update label (count may change)
+          this.updateButtonStyle(repairEl, 'repair_poles', newLabel, newCost, affordable);
+        }
+      } else if (repairEl) {
+        // No more ruins — force rebuild to remove button
+        this.currentMode = 'hidden';
+        return;
       }
 
       const pq = world.getComponent<ProductionQueueComponent>(hqEntity, PRODUCTION_QUEUE);
@@ -507,5 +552,17 @@ export class ActionBar {
   private barHtml(pct: number, color: string): string {
     return `<div style="background:rgba(255,255,255,0.1);border-radius:2px;height:6px;width:120px;overflow:hidden">` +
       `<div style="width:${pct}%;height:100%;background:${color};border-radius:2px"></div></div>`;
+  }
+
+  private countPoleRuinCost(world: World, team: number): { count: number; energyCost: number; matterCost: number } {
+    const def = BUILDING_DEFS[BuildingType.PowerPole];
+    if (!def) return { count: 0, energyCost: 0, matterCost: 0 };
+    const ruins = world.query(POWER_POLE_RUIN, TEAM);
+    let count = 0;
+    for (const e of ruins) {
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team === team) count++;
+    }
+    return { count, energyCost: count * def.energyCost, matterCost: count * def.matterCost };
   }
 }

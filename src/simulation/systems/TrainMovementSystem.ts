@@ -1,16 +1,13 @@
 import type { System, World } from '@core/ECS';
 import {
-  POSITION, HEALTH, TEAM, UNIT_TYPE, TRAIN_LINK, TRACK_FOLLOWER,
-  BUILDING, MOVE_COMMAND,
+  POSITION, HEALTH, TEAM, TRAIN_LINK, TRACK_FOLLOWER,
+  BUILDING,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { TeamComponent } from '@sim/components/Team';
 import type { TrainLinkComponent } from '@sim/components/TrainLink';
 import type { TrackFollowerComponent } from '@sim/components/TrackFollower';
-import type { MoveCommandComponent } from '@sim/components/MoveCommand';
-import type { UnitTypeComponent } from '@sim/components/UnitType';
-import { UnitCategory } from '@sim/components/UnitType';
 import { SpatialHash } from '@sim/spatial/SpatialHash';
 
 /** Distance between linked train entities (world units). */
@@ -49,11 +46,9 @@ export class TrainMovementSystem implements System {
       const team = world.getComponent<TeamComponent>(engine, TEAM);
       const teamNum = team ? team.team : -1;
 
-      // Check for friendly units blocking before moving
+      // Push any nearby friendly units off the track (train never halts for friendlies)
       const enginePos = world.getComponent<PositionComponent>(engine, POSITION)!;
-      if (this.handleBlockingUnits(world, enginePos.x, enginePos.z, engine, teamNum)) {
-        continue;
-      }
+      this.handleBlockingUnits(world, enginePos.x, enginePos.z, engine, teamNum);
 
       // Check for broken chain and handle reconnection
       this.checkChainIntegrity(world, engine, follower, link);
@@ -377,12 +372,11 @@ export class TrainMovementSystem implements System {
 
   /**
    * Handle blocking units. Enemies instakilled, friendlies pushed off track.
-   * Returns true if a friendly is blocking (train should wait).
+   * Train never halts — it pushes friendlies aside and keeps moving.
    */
   private handleBlockingUnits(
     world: World, x: number, z: number, selfEntity: number, selfTeam: number,
-  ): boolean {
-    let friendlyBlocking = false;
+  ): void {
     const nearby = this.spatialHash.query(x, z, CRUSH_RADIUS);
     for (const other of nearby) {
       if (other === selfEntity) continue;
@@ -400,35 +394,26 @@ export class TrainMovementSystem implements System {
 
       const otherTeam = world.getComponent<TeamComponent>(other, TEAM);
       if (otherTeam && otherTeam.team === selfTeam) {
-        friendlyBlocking = true;
-        const unitType = world.getComponent<UnitTypeComponent>(other, UNIT_TYPE);
-        if (!unitType || unitType.category !== UnitCategory.WorkerDrone) {
-          this.pushUnitOffTrack(world, other, otherPos, x, z);
-        }
+        this.pushUnitOffTrack(world, other, otherPos, x, z);
       } else {
         otherHealth.current = 0;
         otherHealth.dead = true;
       }
     }
-    return friendlyBlocking;
   }
 
   private pushUnitOffTrack(
-    world: World, entity: number, pos: PositionComponent, trackX: number, trackZ: number,
+    _world: World, _entity: number, pos: PositionComponent, trackX: number, trackZ: number,
   ): void {
     let dx = pos.x - trackX;
     let dz = pos.z - trackZ;
     const dist = Math.sqrt(dx * dx + dz * dz);
     if (dist < 0.01) { dx = 1; dz = 0; } else { dx /= dist; dz /= dist; }
 
-    const pushDist = CRUSH_RADIUS + 1.5;
-    const destX = Math.max(4, Math.min(252, trackX + dx * pushDist));
-    const destZ = Math.max(4, Math.min(252, trackZ + dz * pushDist));
-
-    if (world.hasComponent(entity, MOVE_COMMAND)) world.removeComponent(entity, MOVE_COMMAND);
-    world.addComponent<MoveCommandComponent>(entity, MOVE_COMMAND, {
-      path: [], currentWaypoint: 0, destX, destZ,
-    });
+    // Immediately teleport the unit out of the crush radius
+    const pushDist = CRUSH_RADIUS + 0.5;
+    pos.x = Math.max(4, Math.min(252, trackX + dx * pushDist));
+    pos.z = Math.max(4, Math.min(252, trackZ + dz * pushDist));
   }
 
   private rebuildSpatialHash(world: World): void {

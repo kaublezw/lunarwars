@@ -1,11 +1,12 @@
 import type { System, World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, MATTER_STORAGE, PLANT_STORAGE } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, MATTER_STORAGE, PLANT_STORAGE, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
 import type { HealthComponent } from '@sim/components/Health';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { PlantStorageComponent } from '@sim/components/PlantStorage';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 
@@ -33,6 +34,8 @@ export class EconomySystem implements System {
       if (world.hasComponent(e, CONSTRUCTION)) continue;
       const health = world.getComponent<HealthComponent>(e, HEALTH);
       if (health && health.dead) continue;
+      const powerNode = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+      if (powerNode && !powerNode.powered) continue;
 
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
       const team = world.getComponent<TeamComponent>(e, TEAM)!;
@@ -54,6 +57,8 @@ export class EconomySystem implements System {
       if (building.buildingType !== BuildingType.HQ) continue;
       const health = world.getComponent<HealthComponent>(e, HEALTH);
       if (health && health.dead) continue;
+      const hqPower = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+      if (hqPower && !hqPower.powered) continue;
       const storage = world.getComponent<MatterStorageComponent>(e, MATTER_STORAGE);
       if (!storage) continue;
       const team = world.getComponent<TeamComponent>(e, TEAM)!;

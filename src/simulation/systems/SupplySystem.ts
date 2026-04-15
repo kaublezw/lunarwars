@@ -1,7 +1,7 @@
 import type { System, World } from '@core/ECS';
 import {
   BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, MATTER_STORAGE,
-  SUPPLY_ROUTE, MOVE_COMMAND,
+  SUPPLY_ROUTE, MOVE_COMMAND, POWER_NODE,
 } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
@@ -10,6 +10,7 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
@@ -57,6 +58,16 @@ export class SupplySystem implements System {
       const destHealth = world.getComponent<HealthComponent>(route.destEntity, HEALTH);
       if (!sourceHealth || sourceHealth.dead || !destHealth || destHealth.dead) {
         world.removeComponent(ferry, SUPPLY_ROUTE);
+        if (world.hasComponent(ferry, MOVE_COMMAND)) {
+          world.removeComponent(ferry, MOVE_COMMAND);
+        }
+        continue;
+      }
+
+      // Pause ferry if either endpoint is unpowered
+      const srcPower = world.getComponent<PowerNodeComponent>(route.sourceEntity, POWER_NODE);
+      const dstPower = world.getComponent<PowerNodeComponent>(route.destEntity, POWER_NODE);
+      if ((srcPower && !srcPower.powered) || (dstPower && !dstPower.powered)) {
         if (world.hasComponent(ferry, MOVE_COMMAND)) {
           world.removeComponent(ferry, MOVE_COMMAND);
         }

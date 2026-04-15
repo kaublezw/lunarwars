@@ -1,9 +1,10 @@
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, POSITION, HEALTH, CONSTRUCTION, MATTER_STORAGE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, POSITION, HEALTH, CONSTRUCTION, MATTER_STORAGE, DEPOT_RADIUS, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 
 export const RESUPPLY_RANGE = 5;
 export const AMMO_MATTER_COST = 0.2;   // 1 matter per 5 ammo
@@ -22,6 +23,8 @@ export function findNearestDepot(world: World, team: number, x: number, z: numbe
     if (t.team !== team) continue;
     const health = world.getComponent<HealthComponent>(e, HEALTH)!;
     if (health.dead) continue;
+    const power = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+    if (power && !power.powered) continue;
     const storage = world.getComponent<MatterStorageComponent>(e, MATTER_STORAGE)!;
     if (storage.stored <= 0) continue;
 

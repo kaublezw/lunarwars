@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT, ROOF_EXIT, TRAIN_LINK, CARGO_STORAGE, PENDING_CAR_ATTACH } from '@sim/components/ComponentTypes';
+import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT, ROOF_EXIT, TRAIN_LINK, CARGO_STORAGE, PENDING_CAR_ATTACH, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
@@ -24,6 +24,7 @@ import type { PendingCarAttachComponent } from '@sim/components/PendingCarAttach
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 
@@ -38,6 +39,10 @@ export class ProductionSystem implements System {
     const producers = world.query(PRODUCTION_QUEUE, TEAM, POSITION);
 
     for (const e of producers) {
+      // Skip unpowered producers
+      const powerNode = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+      if (powerNode && !powerNode.powered) continue;
+
       const queue = world.getComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE)!;
       if (queue.queue.length === 0) continue;
 

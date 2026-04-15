@@ -38,6 +38,9 @@ import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { AISystem } from '@sim/systems/AIBrain';
 import { FogOfWarState } from '@sim/fog/FogOfWarState';
 import { ResourceState } from '@sim/economy/ResourceState';
+import { PowerGridState } from '@sim/economy/PowerGridState';
+import { PowerGridSystem } from '@sim/systems/PowerGridSystem';
+import { PowerLineRenderer } from '@render/PowerLineRenderer';
 import { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import { TerrainData } from '@sim/terrain/TerrainData';
 import { generateEnergyNodes, generateOreDeposits } from '@sim/terrain/MapFeatures';
@@ -64,7 +67,7 @@ import { VoxelMeshManager } from '@render/VoxelMeshManager';
 import { DepotRangeRenderer } from '@render/DepotRangeRenderer';
 import { SupplySystem } from '@sim/systems/SupplySystem';
 import { SeededRandom } from '@sim/utils/SeededRandom';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, VOXEL_STATE, TURRET, MATTER_STORAGE, DEPOT_RADIUS } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, VOXEL_STATE, TURRET, MATTER_STORAGE, DEPOT_RADIUS, POWER_NODE } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import type { BuildingComponent } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -93,6 +96,7 @@ import { LobbyOverlay } from '@ui/LobbyOverlay';
 import type { GameCommandPayload } from '@network/Protocol';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import { spawnTrainSet } from '@sim/logistics/TrainSpawner';
 import { TrainMovementSystem } from '@sim/systems/TrainMovementSystem';
 import { TrainLogisticsSystem } from '@sim/systems/TrainLogisticsSystem';
@@ -249,6 +253,7 @@ unitInfoPanel.mount(app);
 // --- UI: Action Bar & Resource Display ---
 const resourceState = new ResourceState(2);
 const trackState = new TrackState(2);
+const powerGridState = new PowerGridState(2);
 let actionBar: ActionBar | null = null;
 let resourceDisplay: ResourceDisplay | null = null;
 let spectatorPanel: SpectatorPanel | null = null;
@@ -357,17 +362,18 @@ world.addSystem(new ResupplySystem());
 world.addSystem(new RepairSystem(resourceState, 2, eventBus));
 world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem(eventBus));
+world.addSystem(new PowerGridSystem(powerGridState, 2));
 world.addSystem(new EconomySystem(resourceState, 2, terrainData));
 world.addSystem(new SupplySystem(terrainData, resourceState));
-world.addSystem(new BuildSystem(eventBus));
+world.addSystem(new BuildSystem(eventBus, powerGridState, terrainData, buildingOccupancy));
 world.addSystem(new ProductionSystem(resourceState, terrainData));
 world.addSystem(new TrackManagerSystem(trackState, terrainData, 2));
 if (isMultiplayer) {
   // Multiplayer: no AI — both teams are human players
 } else {
-  world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
+  world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState));
   if (spectatorMode) {
-    world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy));
+    world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState));
   }
 }
 
@@ -491,6 +497,14 @@ function spawnBuilding(x: number, z: number, team: number, type: BuildingType): 
     });
   }
 
+  // Power grid node for non-wall buildings
+  if (type !== BuildingType.Wall) {
+    world.addComponent<PowerNodeComponent>(e, POWER_NODE, {
+      powered: type === BuildingType.HQ, // HQ always powered; others determined by BFS
+      nodeId: powerGridState.allocateNodeId(),
+    });
+  }
+
   return e;
 }
 
@@ -581,6 +595,12 @@ if (saveData) {
       capacity: 100,
     });
     world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
+
+    // HQ is the root of the power grid — always powered
+    world.addComponent<PowerNodeComponent>(e, POWER_NODE, {
+      powered: true,
+      nodeId: powerGridState.allocateNodeId(),
+    });
   }
 
   // --- Worker Drone Spawning (1 per team, near HQ) ---
@@ -715,6 +735,9 @@ const depotRangeRenderer = new DepotRangeRenderer(sceneManager.scene);
 depotRangeRenderer.setPlayerTeam(initialFogTeam);
 const trackRenderer = new TrackRenderer(sceneManager.scene);
 trackRenderer.setPlayerTeam(initialFogTeam);
+const powerLineRenderer = new PowerLineRenderer(sceneManager.scene);
+powerLineRenderer.setPlayerTeam(initialFogTeam);
+powerLineRenderer.setFogState(fogState);
 const cargoIndicatorRenderer = new CargoIndicatorRenderer(sceneManager.scene);
 
 // Wire box select callbacks (only if player input active)
@@ -828,6 +851,10 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     issueCommand({ type: 'demolish', entityId: entity, team: PLAYER_TEAM });
   });
 
+  ab.onRepairPolesRequest(() => {
+    GameCommands.repairAllPoles(cmdCtx, PLAYER_TEAM, powerGridState);
+  });
+
   pc.onPlacementConfirmed((type, x, z) => {
     // Find a selected idle worker for this team
     const selectables = world.query(SELECTABLE, UNIT_TYPE, TEAM);
@@ -920,6 +947,7 @@ function setFogPerspective(team: number): void {
   garageDoorRenderer.setPlayerTeam(team);
   depotRangeRenderer.setPlayerTeam(team);
   trackRenderer.setPlayerTeam(team);
+  powerLineRenderer.setPlayerTeam(team);
   if (team < 0) {
     fogRenderer.setVisible(false);
   } else {
@@ -964,6 +992,7 @@ const gameLoop = new GameLoop(
     garageDoorRenderer.update(world, 1 / 60);
     depotRangeRenderer.sync(world);
     trackRenderer.sync(trackState, 2);
+    powerLineRenderer.sync(world, powerGridState, 2);
     cargoIndicatorRenderer.sync(world);
     fogRenderer.update();
     energyNodeRenderer.update(fogState, currentFogTeam);

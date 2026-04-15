@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, MATTER_STORAGE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE, WALL_BUILD_QUEUE } from '@sim/components/ComponentTypes';
+import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, MATTER_STORAGE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE, WALL_BUILD_QUEUE, POWER_NODE, POWER_POLE, TEAM, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
@@ -17,7 +17,14 @@ import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import type { TeamComponent } from '@sim/components/Team';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
+import type { PowerPoleComponent } from '@sim/components/PowerPole';
 import type { EventBus } from '@core/EventBus';
+import type { PowerGridState } from '@sim/economy/PowerGridState';
+import type { TerrainData } from '@sim/terrain/TerrainData';
+import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
+import { routePowerConnection } from '@sim/economy/PowerGridRouter';
 const DEPOT_VISUAL_RADIUS = 38;
 
 const BUILD_RANGE = 6; // max distance worker can be from site to build (must exceed largest footprint radius + pathfinding margin)
@@ -25,9 +32,20 @@ const BUILD_RANGE = 6; // max distance worker can be from site to build (must ex
 export class BuildSystem implements System {
   readonly name = 'BuildSystem';
   private eventBus?: EventBus;
+  private powerGrid?: PowerGridState;
+  private terrainData?: TerrainData;
+  private occupancy?: BuildingOccupancy;
 
-  constructor(eventBus?: EventBus) {
+  constructor(
+    eventBus?: EventBus,
+    powerGrid?: PowerGridState,
+    terrainData?: TerrainData,
+    occupancy?: BuildingOccupancy,
+  ) {
     this.eventBus = eventBus;
+    this.powerGrid = powerGrid;
+    this.terrainData = terrainData;
+    this.occupancy = occupancy;
   }
 
   update(world: World, dt: number): void {
@@ -178,6 +196,33 @@ export class BuildSystem implements System {
               world.addComponent<DepotRadiusComponent>(site, DEPOT_RADIUS, {
                 radius: DEPOT_VISUAL_RADIUS,
               });
+            }
+          }
+        }
+
+        // Add power grid node for non-wall buildings and route connection
+        if (construction.buildingType !== BuildingType.Wall && this.powerGrid) {
+          const teamComp = world.getComponent<TeamComponent>(site, TEAM);
+          if (teamComp) {
+            world.addComponent<PowerNodeComponent>(site, POWER_NODE, {
+              powered: false,
+              nodeId: this.powerGrid.allocateNodeId(),
+            });
+
+            // PowerPoles get the POWER_POLE marker
+            if (construction.buildingType === BuildingType.PowerPole) {
+              const polePos = world.getComponent<PositionComponent>(site, POSITION)!;
+              world.addComponent<PowerPoleComponent>(site, POWER_POLE, {
+                gridX: Math.round(polePos.x / MACRO_GRID_SIZE),
+                gridZ: Math.round(polePos.z / MACRO_GRID_SIZE),
+              });
+            }
+
+            if (this.terrainData && this.occupancy) {
+              routePowerConnection(
+                world, teamComp.team, site,
+                this.powerGrid, this.terrainData, this.occupancy,
+              );
             }
           }
         }
