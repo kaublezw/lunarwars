@@ -35,7 +35,7 @@ import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import { validateAndSnapPlacement } from '@sim/ai/PlacementValidator';
 import { teamHasEngine, engineInProduction } from '@sim/logistics/TrainSpawner';
 import type { PowerGridState } from '@sim/economy/PowerGridState';
-import { routePowerConnection } from '@sim/economy/PowerGridRouter';
+import { routePowerConnection, findNodeAtGrid } from '@sim/economy/PowerGridRouter';
 
 import { TEAM_COLORS } from '@sim/ai/AITypes';
 
@@ -369,18 +369,24 @@ export function repairAllPoles(
 
   // Collect all ruins for this team
   const ruins = ctx.world.query(POWER_POLE_RUIN, TEAM, POSITION);
-  const toRepair: { entity: number; x: number; y: number; z: number; gridX: number; gridZ: number }[] = [];
+  const toRepair: { entity: number; x: number; y: number; z: number; gridX: number; gridZ: number; neighborGridPositions: [number, number][] }[] = [];
   for (const e of ruins) {
     const t = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
     if (t.team !== team) continue;
     const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
     const ruin = ctx.world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
-    toRepair.push({ entity: e, x: pos.x, y: pos.y, z: pos.z, gridX: ruin.gridX, gridZ: ruin.gridZ });
+    toRepair.push({
+      entity: e, x: pos.x, y: pos.y, z: pos.z,
+      gridX: ruin.gridX, gridZ: ruin.gridZ,
+      neighborGridPositions: ruin.neighborGridPositions ?? [],
+    });
   }
 
-  // Spawn fully built poles and destroy ruins
+  // Phase 1: Spawn all poles WITHOUT routing — build grid position lookup
+  const gridKeyToEntity = new Map<string, number>();
+  const poleNeighborMap = new Map<number, [number, number][]>();
+
   for (const r of toRepair) {
-    // Create the pole entity
     const pole = ctx.world.createEntity();
     ctx.world.addComponent<PositionComponent>(pole, POSITION, {
       x: r.x, y: r.y, z: r.z,
@@ -422,11 +428,32 @@ export function repairAllPoles(
       gridZ: r.gridZ,
     });
 
-    // Reconnect to nearest existing powered nodes
-    routePowerConnection(ctx.world, team, pole, powerGrid, ctx.terrain, null);
+    gridKeyToEntity.set(`${r.gridX},${r.gridZ}`, pole);
+    poleNeighborMap.set(pole, r.neighborGridPositions);
 
-    // Destroy the ruin
     ctx.world.destroyEntity(r.entity);
+  }
+
+  // Phase 2: Restore edges from stored neighbor topology
+  for (const [pole, neighborPositions] of poleNeighborMap) {
+    for (const [ngx, ngz] of neighborPositions) {
+      const nKey = `${ngx},${ngz}`;
+      let neighbor = gridKeyToEntity.get(nKey) ?? null;
+      if (neighbor === null) {
+        neighbor = findNodeAtGrid(ctx.world, team, ngx, ngz);
+      }
+      if (neighbor !== null && neighbor !== pole) {
+        powerGrid.addEdge(team, pole, neighbor);
+      }
+    }
+  }
+
+  // Phase 3: Fallback — any pole with zero restored edges gets fresh routing
+  for (const [pole] of poleNeighborMap) {
+    const neighbors = powerGrid.getNeighbors(team, pole);
+    if (neighbors.length === 0) {
+      routePowerConnection(ctx.world, team, pole, powerGrid, ctx.terrain, null);
+    }
   }
 
   powerGrid.markDirty(team);

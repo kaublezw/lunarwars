@@ -141,7 +141,7 @@ function findNearestPoweredNode(
   return bestEntity;
 }
 
-function findNodeAtGrid(
+export function findNodeAtGrid(
   world: World,
   team: number,
   gridX: number,

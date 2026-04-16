@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { POWER_NODE, POWER_POLE, HEALTH, TEAM, POSITION, BUILDING, RENDERABLE, SELECTABLE, POWER_POLE_RUIN, VOXEL_STATE } from '@sim/components/ComponentTypes';
+import { POWER_NODE, POWER_POLE, HEALTH, TEAM, POSITION, BUILDING, RENDERABLE, SELECTABLE, POWER_POLE_RUIN, VOXEL_STATE, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { PowerPoleComponent } from '@sim/components/PowerPole';
 import type { PowerPoleRuinComponent } from '@sim/components/PowerPoleRuin';
@@ -25,26 +25,50 @@ export class PowerGridSystem implements System {
   ) {}
 
   update(world: World, _dt: number): void {
-    // Detect destroyed power nodes and sever their edges
+    // Two-pass dead pole processing: capture neighbors BEFORE removing any edges
     const powerNodes = world.query(POWER_NODE, HEALTH, TEAM);
+
+    // Pass 1: Collect dead nodes and capture neighbor grid positions
+    const deadNodes: { entity: number; team: number; isPole: boolean }[] = [];
+    const neighborInfoMap = new Map<number, [number, number][]>();
+
     for (const e of powerNodes) {
       const health = world.getComponent<HealthComponent>(e, HEALTH)!;
       if (!health.dead) continue;
 
       const teamComp = world.getComponent<TeamComponent>(e, TEAM)!;
       const team = teamComp.team;
+      const isPole = world.hasComponent(e, POWER_POLE);
 
-      // Sever all edges touching this node
+      deadNodes.push({ entity: e, team, isPole });
+
+      if (isPole) {
+        const neighbors = this.gridState.getNeighbors(team, e);
+        const gridPositions: [number, number][] = [];
+        for (const n of neighbors) {
+          const nPos = world.getComponent<PositionComponent>(n, POSITION);
+          if (nPos) {
+            gridPositions.push([
+              Math.round(nPos.x / MACRO_GRID_SIZE),
+              Math.round(nPos.z / MACRO_GRID_SIZE),
+            ]);
+          }
+        }
+        neighborInfoMap.set(e, gridPositions);
+      }
+    }
+
+    // Pass 2: Remove edges, spawn ruins with topology info, clean up
+    for (const { entity: e, team, isPole } of deadNodes) {
       this.gridState.removeEdgesForNode(team, e);
 
-      // Spawn a ruin ghost if this was a power pole (not a building)
-      if (world.hasComponent(e, POWER_POLE)) {
+      if (isPole) {
         const pole = world.getComponent<PowerPoleComponent>(e, POWER_POLE)!;
         const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-        this.spawnRuin(world, team, pos.x, pos.y, pos.z, pole.gridX, pole.gridZ);
+        const neighborGridPositions = neighborInfoMap.get(e) ?? [];
+        this.spawnRuin(world, team, pos.x, pos.y, pos.z, pole.gridX, pole.gridZ, neighborGridPositions);
       }
 
-      // Remove power node component from dead entity
       world.removeComponent(e, POWER_NODE);
     }
 
@@ -108,6 +132,7 @@ export class PowerGridSystem implements System {
     team: number,
     x: number, y: number, z: number,
     gridX: number, gridZ: number,
+    neighborGridPositions: [number, number][],
   ): void {
     const ruin = world.createEntity();
     world.addComponent<PositionComponent>(ruin, POSITION, {
@@ -125,6 +150,7 @@ export class PowerGridSystem implements System {
     world.addComponent<PowerPoleRuinComponent>(ruin, POWER_POLE_RUIN, {
       gridX,
       gridZ,
+      neighborGridPositions,
     });
 
     // Voxel state for ruin model
