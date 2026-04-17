@@ -1,16 +1,18 @@
 import type { World } from '@core/ECS';
-import { SELECTABLE, UNIT_TYPE, BUILDING, TEAM, PRODUCTION_QUEUE, CONSTRUCTION, POWER_POLE_RUIN } from '@sim/components/ComponentTypes';
+import { SELECTABLE, UNIT_TYPE, BUILDING, TEAM, PRODUCTION_QUEUE, CONSTRUCTION, POWER_POLE_RUIN, PLANT_STORAGE } from '@sim/components/ComponentTypes';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
 import type { BuildingComponent } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { ConstructionComponent } from '@sim/components/Construction';
+import type { PlantStorageComponent } from '@sim/components/PlantStorage';
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UNIT_DEFS } from '@sim/data/UnitData';
 import type { ResourceState } from '@sim/economy/ResourceState';
+import { teamHasEngine, engineInProduction } from '@sim/logistics/TrainSpawner';
 
 const BUILD_BUTTONS: { type: BuildingType; label: string }[] = [
   { type: BuildingType.EnergyExtractor, label: 'Energy Extractor' },
@@ -224,6 +226,23 @@ export class ActionBar {
           this.buttonElements.set('train_cargo_car', button);
           this.buttonAffordable.set('train_cargo_car', affordable);
         }
+        // Train Engine button (only when team has no engine and none in production)
+        if (!teamHasEngine(world, playerTeam) && !engineInProduction(world, playerTeam)) {
+          const engineDef = UNIT_DEFS[UnitCategory.TrainEngine];
+          if (engineDef) {
+            const affordable = resources.canAfford(playerTeam, engineDef.energyCost) && totalMatter >= engineDef.matterCost;
+            const button = this.createButton(
+              'train_engine',
+              'Train Engine',
+              `${engineDef.energyCost}e ${engineDef.matterCost}m`,
+              affordable,
+              () => this.onTrain?.(UnitCategory.TrainEngine),
+            );
+            this.buttonsDiv.appendChild(button);
+            this.buttonElements.set('train_engine', button);
+            this.buttonAffordable.set('train_engine', affordable);
+          }
+        }
         // Repair Poles button (only shown when ruins exist)
         const ruinCost = this.countPoleRuinCost(world, playerTeam);
         if (ruinCost.count > 0) {
@@ -373,6 +392,17 @@ export class ActionBar {
         }
       }
 
+      // Dynamic train engine button: show/hide based on engine state
+      const engineEl = this.buttonElements.get('train_engine');
+      const needsEngine = !teamHasEngine(world, playerTeam) && !engineInProduction(world, playerTeam);
+      if (needsEngine && !engineEl) {
+        this.currentMode = 'hidden'; // force rebuild to show button
+        return;
+      } else if (!needsEngine && engineEl) {
+        this.currentMode = 'hidden'; // force rebuild to hide button
+        return;
+      }
+
       // Dynamic repair poles button update
       const ruinCost = this.countPoleRuinCost(world, playerTeam);
       const repairEl = this.buttonElements.get('repair_poles');
@@ -402,6 +432,7 @@ export class ActionBar {
       this.updateQueueBadgesAndProgress(pq, [
         { key: 'train_worker', unitType: UnitCategory.WorkerDrone },
         { key: 'train_cargo_car', unitType: UnitCategory.CargoCar },
+        { key: 'train_engine', unitType: UnitCategory.TrainEngine },
       ]);
     } else if (targetMode === 'depot') {
       const ferryDef = UNIT_DEFS[UnitCategory.FerryDrone];
@@ -433,6 +464,12 @@ export class ActionBar {
 
       const pq = world.getComponent<ProductionQueueComponent>(factoryEntity, PRODUCTION_QUEUE);
       this.updateQueueBadgesAndProgress(pq, trainButtons);
+    } else if (targetMode === 'building' && buildingType === BuildingType.MatterPlant) {
+      // Show queued matter amount for selected Matter Plant
+      const ps = world.getComponent<PlantStorageComponent>(buildingEntity, PLANT_STORAGE);
+      if (ps) {
+        this.progressDiv.innerHTML = `Stored: ${Math.floor(ps.amount)}m`;
+      }
     }
   }
 

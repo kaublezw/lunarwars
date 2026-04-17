@@ -3,4 +3,6 @@ export interface ConstructionComponent {
   progress: number; // 0..1
   buildTime: number; // seconds total
   builderEntity: number;
+  autoConstruct?: boolean;
+  poleNeighbors?: [number, number][];
 }

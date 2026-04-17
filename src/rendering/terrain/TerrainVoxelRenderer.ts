@@ -7,16 +7,19 @@ const PAL_FLOOR = 1;
 const PAL_MOUNTAIN = 2;
 const PAL_BORDER = 3;
 
+const FLOOR_COLOR = 0x45404d;
+const FLOOR_TOP_COLOR = 0x55505e;
+
 const PALETTE_COLORS: Record<number, number> = {
-  [PAL_FLOOR]: 0x45404d,    // Deep mauve-gray
-  [PAL_MOUNTAIN]: 0x555060, // Mid mauve-gray
+  [PAL_FLOOR]: FLOOR_COLOR,
+  [PAL_MOUNTAIN]: FLOOR_COLOR,
   [PAL_BORDER]: 0x25202b,   // Very dark purple-gray
 };
 
 // Top faces get a lighter shade
 const PALETTE_TOP_COLORS: Record<number, number> = {
-  [PAL_FLOOR]: 0x55505e,    // Lighter mauve-gray
-  [PAL_MOUNTAIN]: 0x656070, // Highlighted mauve-gray
+  [PAL_FLOOR]: FLOOR_TOP_COLOR,
+  [PAL_MOUNTAIN]: 0x65606e, // Brighter than floor to compensate for shadow acne on elevated geometry
   [PAL_BORDER]: 0x302a38,   // Dark purple-gray
 };
 

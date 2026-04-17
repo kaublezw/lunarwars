@@ -97,7 +97,7 @@ import type { GameCommandPayload } from '@network/Protocol';
 import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
-import { spawnTrainSet } from '@sim/logistics/TrainSpawner';
+import { spawnTrainSet, teamHasEngine } from '@sim/logistics/TrainSpawner';
 import { TrainMovementSystem } from '@sim/systems/TrainMovementSystem';
 import { TrainLogisticsSystem } from '@sim/systems/TrainLogisticsSystem';
 import { TrackManagerSystem } from '@sim/systems/TrackManagerSystem';
@@ -150,6 +150,7 @@ let saveData: {
   world: ReturnType<World['serialize']>;
   resources: ReturnType<ResourceState['serialize']>;
   fogExplored: number[][];
+  powerGrid?: ReturnType<PowerGridState['serialize']>;
   spectator?: boolean;
 } | null = null;
 
@@ -316,7 +317,9 @@ const buildingOccupancy = new BuildingOccupancy(276, 276);
 const TEAM_COLORS = [0x4488ff, 0xff4444];
 const PLAYER_TEAM = isMultiplayer ? mpTeam : 0;
 const AI_TEAM = isMultiplayer ? -1 : 1; // -1 = no AI in multiplayer
-audioManager.setFogState(fogState, PLAYER_TEAM);
+if (scenarioMode !== 'sandbox') {
+  audioManager.setFogState(fogState, PLAYER_TEAM);
+}
 
 // --- Seeded RNG for deterministic simulation ---
 const simRng = new SeededRandom(seed * 9973);
@@ -514,6 +517,7 @@ if (saveData) {
     world.deserialize(saveData.world);
     resourceState.deserialize(saveData.resources);
     fogState.deserializeExplored(saveData.fogExplored);
+    if (saveData.powerGrid) powerGridState.deserialize(saveData.powerGrid);
   } catch (err) {
     console.error('Save restore failed, starting fresh:', err);
     sessionStorage.removeItem(SAVE_KEY);
@@ -811,7 +815,7 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
 
   ab.onTrainRequest((unitType) => {
     // Determine which building type trains this unit
-    const targetBuildingType = (unitType === UnitCategory.WorkerDrone || unitType === UnitCategory.CargoCar)
+    const targetBuildingType = (unitType === UnitCategory.WorkerDrone || unitType === UnitCategory.CargoCar || unitType === UnitCategory.TrainEngine)
       ? BuildingType.HQ
       : unitType === UnitCategory.FerryDrone
         ? BuildingType.SupplyDepot
@@ -1202,6 +1206,18 @@ if (scenarioMode === 'sandbox') {
       spawnCombatUnit(128, 128, PLAYER_TEAM, UnitCategory.WorkerDrone);
     }
 
+    // Auto-spawn train sets for each team that has an HQ but no engine
+    const hqEntities = world.query(BUILDING, TEAM, POSITION);
+    for (const e of hqEntities) {
+      if (world.hasComponent(e, CONSTRUCTION)) continue;
+      const bldg = world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (bldg.buildingType !== BuildingType.HQ) continue;
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (teamHasEngine(world, t.team)) continue;
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      spawnTrainSet(world, t.team, pos.x, pos.y + 0.1, pos.z, 2);
+    }
+
     // Wire all action bar + placement callbacks (shared with normal game mode)
     wireActionBarAndPlacement(actionBar, placementController);
 
@@ -1364,6 +1380,7 @@ if (scenarioMode !== 'sandbox' && !isMultiplayer) {
         world: world.serialize(),
         resources: resourceState.serialize(),
         fogExplored: fogState.serializeExplored(),
+        powerGrid: powerGridState.serialize(),
       };
       sessionStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch {

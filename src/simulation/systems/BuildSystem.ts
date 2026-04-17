@@ -24,7 +24,7 @@ import type { EventBus } from '@core/EventBus';
 import type { PowerGridState } from '@sim/economy/PowerGridState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
-import { routePowerConnection } from '@sim/economy/PowerGridRouter';
+import { routePowerConnection, findNodeAtGrid } from '@sim/economy/PowerGridRouter';
 const DEPOT_VISUAL_RADIUS = 38;
 
 const BUILD_RANGE = 6; // max distance worker can be from site to build (must exceed largest footprint radius + pathfinding margin)
@@ -263,6 +263,116 @@ export class BuildSystem implements System {
             world.removeComponent(e, WALL_BUILD_QUEUE);
           }
         }
+      }
+    }
+
+    // Auto-construct: advance construction for entities that build without a worker
+    const autoSites = world.query(CONSTRUCTION, POSITION);
+    const completedPoles: { entity: number; team: number; poleNeighbors: [number, number][] }[] = [];
+
+    for (const site of autoSites) {
+      const construction = world.getComponent<ConstructionComponent>(site, CONSTRUCTION)!;
+      if (!construction.autoConstruct) continue;
+
+      construction.progress += dt / construction.buildTime;
+
+      // Progressive voxel reveal
+      const voxelState = world.getComponent<VoxelStateComponent>(site, VOXEL_STATE);
+      if (voxelState) {
+        const model = VOXEL_MODELS[voxelState.modelId];
+        if (model && model.buildOrder) {
+          const clampedProgress = Math.min(construction.progress, 1);
+          const targetRevealed = Math.floor(model.totalSolid * clampedProgress);
+          const currentRevealed = model.totalSolid - voxelState.destroyedCount;
+          if (targetRevealed > currentRevealed) {
+            for (let i = currentRevealed; i < targetRevealed; i++) {
+              const solidIdx = model.buildOrder[i];
+              const byteIdx = solidIdx >> 3;
+              const bitIdx = solidIdx & 7;
+              voxelState.destroyed[byteIdx] &= ~(1 << bitIdx);
+              voxelState.destroyedCount--;
+            }
+            voxelState.dirty = true;
+          }
+        }
+      }
+
+      if (construction.progress >= 1) {
+        const def = BUILDING_DEFS[construction.buildingType];
+        if (def) {
+          const health = world.getComponent<HealthComponent>(site, HEALTH);
+          if (health) {
+            health.current = def.hp;
+            health.max = def.hp;
+          }
+
+          if (!world.hasComponent(site, VISION)) {
+            world.addComponent<VisionComponent>(site, VISION, { range: def.visionRange });
+          }
+
+          const finalVoxelModel = VOXEL_MODELS[def.meshType];
+          if (finalVoxelModel) {
+            world.addComponent<VoxelStateComponent>(site, VOXEL_STATE, {
+              modelId: def.meshType,
+              totalVoxels: finalVoxelModel.totalSolid,
+              destroyedCount: 0,
+              destroyed: new Uint8Array(Math.ceil(finalVoxelModel.totalSolid / 8)),
+              dirty: true,
+              pendingDebris: [],
+              pendingScorch: [],
+            });
+          }
+
+          // Pass 1: Add POWER_NODE + POWER_POLE to all completing poles before any edge restoration
+          if (this.powerGrid && construction.buildingType === BuildingType.PowerPole) {
+            const teamComp = world.getComponent<TeamComponent>(site, TEAM);
+            if (teamComp) {
+              world.addComponent<PowerNodeComponent>(site, POWER_NODE, {
+                powered: false,
+                nodeId: this.powerGrid.allocateNodeId(),
+              });
+              const polePos = world.getComponent<PositionComponent>(site, POSITION)!;
+              world.addComponent<PowerPoleComponent>(site, POWER_POLE, {
+                gridX: Math.round(polePos.x / MACRO_GRID_SIZE),
+                gridZ: Math.round(polePos.z / MACRO_GRID_SIZE),
+              });
+
+              completedPoles.push({
+                entity: site,
+                team: teamComp.team,
+                poleNeighbors: construction.poleNeighbors ?? [],
+              });
+            }
+          }
+        }
+
+        world.removeComponent(site, CONSTRUCTION);
+      }
+    }
+
+    // Pass 2: Restore edges now that all completing poles have POWER_NODE
+    if (completedPoles.length > 0 && this.powerGrid) {
+      const dirtyTeams = new Set<number>();
+
+      for (const cp of completedPoles) {
+        let edgesRestored = 0;
+        for (const [ngx, ngz] of cp.poleNeighbors) {
+          const neighbor = findNodeAtGrid(world, cp.team, ngx, ngz);
+          if (neighbor !== null && neighbor !== cp.entity) {
+            this.powerGrid.addEdge(cp.team, cp.entity, neighbor);
+            edgesRestored++;
+          }
+        }
+
+        if (edgesRestored === 0 && this.terrainData && this.occupancy) {
+          routePowerConnection(world, cp.team, cp.entity, this.powerGrid, this.terrainData, this.occupancy);
+        }
+
+        dirtyTeams.add(cp.team);
+      }
+
+      for (const team of dirtyTeams) {
+        this.powerGrid.markDirty(team);
       }
     }
   }

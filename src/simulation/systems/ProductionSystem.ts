@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT, ROOF_EXIT, TRAIN_LINK, CARGO_STORAGE, PENDING_CAR_ATTACH, POWER_NODE } from '@sim/components/ComponentTypes';
+import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT, ROOF_EXIT, TRAIN_LINK, TRACK_FOLLOWER, CARGO_STORAGE, PENDING_CAR_ATTACH, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
@@ -19,6 +19,7 @@ import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { GarageExitComponent } from '@sim/components/GarageExit';
 import type { RoofExitComponent } from '@sim/components/RoofExit';
 import type { TrainLinkComponent } from '@sim/components/TrainLink';
+import type { TrackFollowerComponent } from '@sim/components/TrackFollower';
 import type { CargoStorageComponent } from '@sim/components/CargoStorage';
 import type { PendingCarAttachComponent } from '@sim/components/PendingCarAttach';
 import { UNIT_DEFS } from '@sim/data/UnitData';
@@ -133,6 +134,31 @@ export class ProductionSystem implements System {
           });
         }
 
+        // Train engine produced at HQ: give it TrainLink + TrackFollower, spawn at HQ center for immediate docking
+        const isEngineSpawn = def.category === UnitCategory.TrainEngine && isHQ;
+        if (isEngineSpawn) {
+          // Reposition to HQ center so TrackManagerSystem docks it immediately
+          const ePos = world.getComponent<PositionComponent>(unit, POSITION)!;
+          ePos.x = bldgPos.x;
+          ePos.z = bldgPos.z;
+          ePos.prevX = bldgPos.x;
+          ePos.prevZ = bldgPos.z;
+
+          world.addComponent<TrainLinkComponent>(unit, TRAIN_LINK, {
+            nextEntity: null,
+            prevEntity: null,
+            isEngine: true,
+          });
+          world.addComponent<TrackFollowerComponent>(unit, TRACK_FOLLOWER, {
+            path: [],
+            currentWaypointIndex: 0,
+            distanceAlongSegment: 0,
+            direction: 1,
+            reconnectTarget: -1,
+            halted: false,
+          });
+        }
+
         // Cargo cars produced at HQ: give them TrainLink + CargoStorage + PendingCarAttach
         // They wait at HQ until the train docks, then get appended to the chain
         const isCargoCarSpawn = def.category === UnitCategory.CargoCar && isHQ;
@@ -175,8 +201,8 @@ export class ProductionSystem implements System {
               destX: hqPos.x, destZ: hqPos.z,
             });
           }
-        } else if (isHQ) {
-          // HQ spawns: predetermined straight-line exit through garage door
+        } else if (isHQ && !isEngineSpawn) {
+          // HQ spawns (except train engines): predetermined straight-line exit through garage door
           world.addComponent<GarageExitComponent>(unit, GARAGE_EXIT, {
             exitZ: bldgPos.z + 2.5,
             rallyX: queue.rallyX,

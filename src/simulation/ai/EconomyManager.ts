@@ -77,7 +77,7 @@ export class EconomyManager {
 
     // Repair critically damaged buildings before building new ones
     const damaged = getDamagedBuildings(ctx);
-    if (damaged.length > 0 && damaged[0].hpFraction < 0.5) {
+    if (damaged.length > 0 && damaged[0].hpFraction < 0.9) {
       const bldgPos = ctx.world.getComponent<PositionComponent>(damaged[0].entity, POSITION);
       const repairWorker = bldgPos
         ? this.findClosestWorker(ctx, idleWorkers, bldgPos.x, bldgPos.z)

@@ -138,6 +138,17 @@ export class TrackManagerSystem implements System {
         follower.halted = false;
       }
       this.clearFriendlyUnitsFromTrack(world, team, ts.activeRoute);
+    } else if (ts.activeRoute.length > 0) {
+      // Fill follower from existing active route if path is empty (newly spawned engine)
+      const follower = world.getComponent<TrackFollowerComponent>(engine, TRACK_FOLLOWER);
+      if (follower && follower.path.length === 0) {
+        follower.path = ts.activeRoute.map(w => ({ x: w.x, y: w.y, z: w.z, entityId: w.entityId, isHQ: w.isHQ }));
+        follower.currentWaypointIndex = 0;
+        follower.distanceAlongSegment = 0;
+        follower.direction = 1;
+        follower.reconnectTarget = -1;
+        follower.halted = false;
+      }
     }
 
     // Attach any pending cargo cars to the train chain

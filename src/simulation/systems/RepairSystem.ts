@@ -1,14 +1,13 @@
 import type { System, World } from '@core/ECS';
 import {
-  REPAIR_COMMAND, POSITION, HEALTH, TEAM, BUILDING,
-  CONSTRUCTION, DEPOT_RADIUS, MATTER_STORAGE, MOVE_COMMAND,
+  REPAIR_COMMAND, POSITION, HEALTH, TEAM,
+  CONSTRUCTION, MOVE_COMMAND,
   VOXEL_STATE,
 } from '@sim/components/ComponentTypes';
 import type { RepairCommandComponent } from '@sim/components/RepairCommand';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { TeamComponent } from '@sim/components/Team';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import { REPAIR_RATE, REPAIR_MATTER_COST } from '@sim/economy/DepotUtils';
@@ -31,35 +30,7 @@ export class RepairSystem implements System {
   }
 
   update(world: World, dt: number): void {
-    this.depotSelfRepair(world, dt);
     this.workerRepair(world, dt);
-  }
-
-  /** Completed depots with local matter auto-repair themselves. */
-  private depotSelfRepair(world: World, dt: number): void {
-    const depots = world.query(DEPOT_RADIUS, HEALTH, MATTER_STORAGE, BUILDING);
-
-    for (const d of depots) {
-      if (world.hasComponent(d, CONSTRUCTION)) continue;
-      const health = world.getComponent<HealthComponent>(d, HEALTH)!;
-      if (health.dead) continue;
-      if (health.current >= health.max) continue;
-
-      const storage = world.getComponent<MatterStorageComponent>(d, MATTER_STORAGE)!;
-      if (storage.stored <= 0) continue;
-
-      const hpToRepair = Math.min(REPAIR_RATE * dt, health.max - health.current);
-      const repairCost = hpToRepair * REPAIR_MATTER_COST;
-      const affordable = Math.min(repairCost, storage.stored);
-      const actualRepair = affordable / REPAIR_MATTER_COST;
-
-      if (actualRepair > 0) {
-        health.current = Math.min(health.current + actualRepair, health.max);
-        storage.stored -= affordable;
-      }
-
-      this.restoreVoxels(world, d, health, actualRepair);
-    }
   }
 
   /** Workers with REPAIR_COMMAND move to building and gradually restore HP. */

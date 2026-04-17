@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { HEALTH, VOXEL_STATE, DEATH_TIMER, BUILDING, POSITION } from '@sim/components/ComponentTypes';
+import { HEALTH, VOXEL_STATE, DEATH_TIMER, BUILDING, POSITION, POWER_POLE } from '@sim/components/ComponentTypes';
 import type { HealthComponent } from '@sim/components/Health';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
 import type { PositionComponent } from '@sim/components/Position';
@@ -25,7 +25,8 @@ export class HealthSystem implements System {
       if (timer.timeRemaining <= 0 && timer.timeRemaining + dt > 0 && this.eventBus) {
         const pos = world.getComponent<PositionComponent>(e, POSITION);
         if (pos) {
-          const event = world.hasComponent(e, BUILDING) ? 'explosion:building' : 'explosion:unit';
+          const isBuilding = world.hasComponent(e, BUILDING) && !world.hasComponent(e, POWER_POLE);
+          const event = isBuilding ? 'explosion:building' : 'explosion:unit';
           this.eventBus.emit(event, pos.x, pos.z);
         }
       }

@@ -99,9 +99,9 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
   },
   [UnitCategory.TrainEngine]: {
     category: UnitCategory.TrainEngine,
-    energyCost: 0,
-    matterCost: 0,
-    trainTime: 0,
+    energyCost: 100,
+    matterCost: 150,
+    trainTime: 20,
     hp: 500,
     speed: 4,
     radius: 0.8,
