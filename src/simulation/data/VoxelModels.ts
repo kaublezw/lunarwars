@@ -410,6 +410,57 @@ const POWER_POLE_MODEL = createModel(4, 12, 4, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 3, 11, 1, 3, 11, 2, PAL_TEAM_ACCENT);
 });
 
+// --- Train Models ---
+
+// Train engine: 8x5x12 — compact hover locomotive with reactor glow
+export const TRAIN_ENGINE_MODEL = createModel(8, 5, 12, (g, sx, _sy, sz) => {
+  // Hover skids (side runners)
+  fillBox(g, sx, sz, 0, 0, 0, 0, 0, 11, PAL_DARK_GREY);
+  fillBox(g, sx, sz, 7, 0, 0, 7, 0, 11, PAL_DARK_GREY);
+  // Undercarriage between skids
+  fillBox(g, sx, sz, 1, 0, 1, 6, 0, 10, PAL_MED_GREY);
+  // Main hull
+  fillBox(g, sx, sz, 0, 1, 0, 7, 3, 11, PAL_TEAM_PRIMARY);
+  // Side accent stripes
+  fillBox(g, sx, sz, 0, 3, 1, 0, 3, 10, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 7, 3, 1, 7, 3, 10, PAL_TEAM_ACCENT);
+  // Side vents (dark grey cutouts)
+  fillBox(g, sx, sz, 0, 2, 3, 0, 2, 5, PAL_DARK_GREY);
+  fillBox(g, sx, sz, 7, 2, 3, 7, 2, 5, PAL_DARK_GREY);
+  // Cockpit cabin (raised front)
+  fillBox(g, sx, sz, 1, 4, 6, 6, 4, 10, PAL_TEAM_ACCENT);
+  // Windshield (front face)
+  fillBox(g, sx, sz, 2, 3, 11, 5, 4, 11, PAL_BLUE_GLOW);
+  // Engine housing (rear top)
+  fillBox(g, sx, sz, 2, 4, 1, 5, 4, 4, PAL_DARK_GREY);
+  // Reactor exhaust glow (rear face)
+  fillBox(g, sx, sz, 2, 1, 0, 5, 2, 0, PAL_BLUE_GLOW);
+});
+
+// Cargo car: 8x5x12 — open-top hovering freight container
+// Interior PAL_ORANGE voxels represent matter cargo (shown/hidden by cargo fill system)
+export const CARGO_CAR_MODEL = createModel(8, 5, 12, (g, sx, _sy, sz) => {
+  // Hover skids
+  fillBox(g, sx, sz, 0, 0, 0, 0, 0, 11, PAL_DARK_GREY);
+  fillBox(g, sx, sz, 7, 0, 0, 7, 0, 11, PAL_DARK_GREY);
+  // Flatbed platform between skids
+  fillBox(g, sx, sz, 1, 0, 0, 6, 0, 11, PAL_MED_GREY);
+  // Container walls (open top)
+  fillBox(g, sx, sz, 0, 1, 0, 0, 4, 11, PAL_TEAM_PRIMARY); // left
+  fillBox(g, sx, sz, 7, 1, 0, 7, 4, 11, PAL_TEAM_PRIMARY); // right
+  fillBox(g, sx, sz, 1, 1, 0, 6, 4, 0, PAL_TEAM_PRIMARY);  // back
+  fillBox(g, sx, sz, 1, 1, 11, 6, 4, 11, PAL_TEAM_PRIMARY); // front
+  // Container floor
+  fillBox(g, sx, sz, 1, 1, 1, 6, 1, 10, PAL_DARK_GREY);
+  // Top edge accent trim
+  fillBox(g, sx, sz, 0, 4, 0, 0, 4, 11, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 7, 4, 0, 7, 4, 11, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 1, 4, 0, 6, 4, 0, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 1, 4, 11, 6, 4, 11, PAL_TEAM_ACCENT);
+  // Cargo matter — interior fill (hidden when empty, revealed as cargo loads)
+  fillBox(g, sx, sz, 1, 2, 1, 6, 3, 10, PAL_ORANGE);
+});
+
 // --- Power pole ruin: 4x2x4 voxels (broken base stub) ---
 const POWER_POLE_RUIN_MODEL = createModel(4, 2, 4, (g, sx, _sy, sz) => {
   // Broken base
@@ -436,6 +487,8 @@ export const VOXEL_MODELS: Record<string, VoxelModel> = {
   wall_corner: WALL_CORNER_MODEL,
   energy_packet: ENERGY_PACKET_MODEL,
   matter_packet: MATTER_PACKET_MODEL,
+  train_engine: TRAIN_ENGINE_MODEL,
+  cargo_car: CARGO_CAR_MODEL,
   power_pole: POWER_POLE_MODEL,
   power_pole_ruin: POWER_POLE_RUIN_MODEL,
 };

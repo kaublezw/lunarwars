@@ -600,7 +600,7 @@ export class TrackManagerSystem implements System {
     const route: TrackWaypoint[] = [];
     const G = MACRO_GRID_SIZE;
     const R = G;
-    const ARC_SAMPLES = 8;
+    const ARC_SAMPLES = 16;
 
     // Helper: push a world-space waypoint
     const emit = (x: number, z: number) => {
