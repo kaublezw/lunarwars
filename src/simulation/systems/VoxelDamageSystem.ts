@@ -1,9 +1,11 @@
 import type { System, World } from '@core/ECS';
-import { VOXEL_STATE, IMPACT_EVENT, POSITION, BUILDING, TURRET } from '@sim/components/ComponentTypes';
+import { VOXEL_STATE, IMPACT_EVENT, POSITION, BUILDING, TURRET, RENDERABLE, PROJECTILE } from '@sim/components/ComponentTypes';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { ImpactEventComponent } from '@sim/components/ImpactEvent';
 import type { PositionComponent } from '@sim/components/Position';
 import type { TurretComponent } from '@sim/components/Turret';
+import type { ProjectileComponent } from '@sim/components/Projectile';
+import type { RenderableComponent } from '@sim/components/Renderable';
 import { VOXEL_MODELS, VOXEL_SIZE } from '@sim/data/VoxelModels';
 import type { VoxelModel } from '@sim/data/VoxelModels';
 import type { SeededRandom } from '@sim/utils/SeededRandom';
@@ -49,6 +51,83 @@ export class VoxelDamageSystem implements System {
         this.blastPass(voxelState, impact, pos, model, isBuilding, turret.turretRotation, model.turretMinY!, model.sizeY - 1);
       } else {
         this.blastPass(voxelState, impact, pos, model, isBuilding, pos.rotation, 0, model.sizeY - 1);
+      }
+
+      // Exit blast for buildings: shell occasionally penetrates and damages opposite face
+      if (isBuilding && this.rng.next() < 0.3) {
+        // Ray-cast bullet trajectory through building AABB to find true exit point
+        const halfX = (model.sizeX * VOXEL_SIZE) / 2;
+        const halfZ = (model.sizeZ * VOXEL_SIZE) / 2;
+        const dx = impact.dirX;
+        const dy = impact.dirY;
+        const dz = impact.dirZ;
+
+        const tFarX = dx !== 0 ? ((dx > 0 ? pos.x + halfX : pos.x - halfX) - impact.impactX) / dx : Infinity;
+        const tFarY = dy !== 0 ? ((dy > 0 ? pos.y + model.sizeY * VOXEL_SIZE : pos.y) - impact.impactY) / dy : Infinity;
+        const tFarZ = dz !== 0 ? ((dz > 0 ? pos.z + halfZ : pos.z - halfZ) - impact.impactZ) / dz : Infinity;
+        const tSurface = Math.max(0.01, Math.min(tFarX, tFarY, tFarZ));
+
+        // Exit projectile spawns at the surface
+        const exitX = impact.impactX + dx * tSurface;
+        const exitY = impact.impactY + dy * tSurface;
+        const exitZ = impact.impactZ + dz * tSurface;
+
+        // Blast center inset 2 voxels so it hits solid interior voxels
+        const tBlast = Math.max(0.01, tSurface - VOXEL_SIZE * 2);
+        const blastX = impact.impactX + dx * tBlast;
+        const blastY = impact.impactY + dy * tBlast;
+        const blastZ = impact.impactZ + dz * tBlast;
+
+        // Convert inset blast point to grid coords
+        const { gridX: exitGridX, gridY: exitGridY, gridZ: exitGridZ } = worldToModelGrid(
+          blastX, blastY, blastZ, pos.x, pos.y, pos.z, model, 0,
+        );
+
+        const exitDestroyed = applyBlastDamage(model, voxelState.destroyed, exitGridX, exitGridY, exitGridZ, impact.blastRadius);
+        voxelState.destroyedCount += exitDestroyed.length;
+
+        if (!this.headless) {
+          const scatter = 0.4;
+          for (const v of exitDestroyed) {
+            voxelState.pendingDebris.push({
+              solidIndex: v.solidIndex,
+              dirX: dx + (this.rng.next() - 0.5) * scatter,
+              dirY: this.rng.next() * 0.5,
+              dirZ: dz + (this.rng.next() - 0.5) * scatter,
+            });
+          }
+
+          const exitScorch = findSurvivorsInRadius(model, voxelState.destroyed, exitGridX, exitGridY, exitGridZ, impact.blastRadius + 1);
+          voxelState.pendingScorch.push(...exitScorch);
+        }
+
+        // Spawn visible exit projectile on the same trajectory line
+        const exitSpeed = impact.blastRadius >= 2 ? 70 : 55;
+        const ep = world.createEntity();
+        world.addComponent<PositionComponent>(ep, POSITION, {
+          x: exitX, y: exitY, z: exitZ,
+          prevX: exitX - dx * 0.1,
+          prevY: exitY - dy * 0.1,
+          prevZ: exitZ - dz * 0.1,
+          rotation: Math.atan2(dx, dz),
+        });
+        world.addComponent<RenderableComponent>(ep, RENDERABLE, {
+          meshType: 'projectile',
+          color: 0xffffff,
+          scale: impact.blastRadius >= 2 ? 1.5 : 1.0,
+        });
+        world.addComponent<ProjectileComponent>(ep, PROJECTILE, {
+          ownerEntity: -1,
+          targetEntity: -1,
+          targetX: exitX + dx * 50,
+          targetY: exitY + dy * 50,
+          targetZ: exitZ + dz * 50,
+          speed: exitSpeed,
+          damage: 0,
+          team: -1,
+          color: 0xffffff,
+          blastRadius: 0,
+        });
       }
 
       if (voxelState.destroyedCount > countBefore || voxelState.pendingScorch.length > 0) {

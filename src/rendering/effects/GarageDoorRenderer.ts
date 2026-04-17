@@ -12,7 +12,7 @@ import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import { VOXEL_SIZE, GARAGE_DOOR_MODEL, FACTORY_DOOR_MODEL, FACTORY_ROOF_DOOR_MODEL, indexToCoords, type VoxelModel } from '@sim/data/VoxelModels';
 import { UnitCategory } from '@sim/components/UnitType';
 import {
-  worldToModelGrid, applyBlastDamage, findSurvivorsInRadius,
+  applyBlastDamage, findSurvivorsInRadius,
   syncDamageToRatio, buildDamageOrder, decayScorchHeat,
 } from '@sim/utils/VoxelDamageUtils';
 import { buildVoxelGeometry } from '@render/VoxelGeometryBuilder';
@@ -290,24 +290,27 @@ export class GarageDoorRenderer {
   private applyDoorImpact(door: DoorMesh, impact: BufferedImpact, team: number): void {
     const model = door.model;
     const doorPos = door.mesh.position;
+    const halfX = (model.sizeX * VOXEL_SIZE) / 2;
+    const halfZ = (model.sizeZ * VOXEL_SIZE) / 2;
 
-    const { gridX, gridY, gridZ } = worldToModelGrid(
-      impact.impactX, impact.impactY, impact.impactZ,
-      doorPos.x, doorPos.y, doorPos.z, model,
-    );
+    // Compute UNCLAMPED grid coordinates for bounds checking
+    const rawGridX = Math.floor((impact.impactX - doorPos.x + halfX) / VOXEL_SIZE);
+    const rawGridY = Math.floor((impact.impactY - doorPos.y) / VOXEL_SIZE);
+    const rawGridZ = Math.floor((impact.impactZ - doorPos.z + halfZ) / VOXEL_SIZE);
 
     // Early out if impact is far from door grid
     const blastR = impact.blastRadius;
-    if (gridX < -blastR || gridX >= model.sizeX + blastR) return;
-    if (gridY < -blastR || gridY >= model.sizeY + blastR) return;
-    if (gridZ < -blastR || gridZ >= model.sizeZ + blastR) return;
+    if (rawGridX < -blastR || rawGridX >= model.sizeX + blastR) return;
+    if (rawGridY < -blastR || rawGridY >= model.sizeY + blastR) return;
+    if (rawGridZ < -blastR || rawGridZ >= model.sizeZ + blastR) return;
+
+    // Clamp for blast application
+    const gridX = Math.max(0, Math.min(model.sizeX - 1, rawGridX));
+    const gridY = Math.max(0, Math.min(model.sizeY - 1, rawGridY));
+    const gridZ = Math.max(0, Math.min(model.sizeZ - 1, rawGridZ));
 
     // Apply blast damage
     const destroyed = applyBlastDamage(model, door.destroyed, gridX, gridY, gridZ, blastR);
-
-    // Spawn debris for each destroyed voxel
-    const halfX = (model.sizeX * VOXEL_SIZE) / 2;
-    const halfZ = (model.sizeZ * VOXEL_SIZE) / 2;
     for (const v of destroyed) {
       const [gx, gy, gz] = indexToCoords(v.gridIndex, model.sizeX, model.sizeZ);
       const wx = doorPos.x - halfX + gx * VOXEL_SIZE + VOXEL_SIZE * 0.5;

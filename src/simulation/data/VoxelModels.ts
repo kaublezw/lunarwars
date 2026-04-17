@@ -289,15 +289,32 @@ export const MATTER_PLANT_MODEL = createModel(20, 14, 20, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 19, 3, 0, 19, 7, 19, PAL_TEAM_ACCENT);
 });
 
-export const SUPPLY_DEPOT_MODEL = createModel(24, 6, 24, (g, sx, _sy, sz) => {
-  // Landing platform
+export const SUPPLY_DEPOT_MODEL = createModel(24, 14, 24, (g, sx, _sy, sz) => {
+  // Foundation slab
   fillBox(g, sx, sz, 0, 0, 0, 23, 1, 23, PAL_DARK_GREY);
-  // Crate stacks
-  fillBox(g, sx, sz, 2, 2, 2, 6, 5, 6, PAL_TEAM_ACCENT);
-  fillBox(g, sx, sz, 17, 2, 17, 21, 5, 21, PAL_TEAM_ACCENT);
-  fillBox(g, sx, sz, 2, 2, 17, 6, 4, 21, PAL_BROWN);
-  fillBox(g, sx, sz, 17, 2, 2, 21, 4, 6, PAL_BROWN);
-  // Center marker
+  // Warehouse walls (outer shell)
+  fillBox(g, sx, sz, 2, 2, 2, 21, 8, 21, PAL_MED_GREY);
+  // Hollow interior
+  fillBox(g, sx, sz, 4, 2, 4, 19, 8, 19, 0);
+  // Flat roof
+  fillBox(g, sx, sz, 1, 9, 1, 22, 9, 22, PAL_TEAM_PRIMARY);
+  // Roof edge accent trim
+  fillBox(g, sx, sz, 1, 9, 1, 22, 9, 1, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 1, 9, 22, 22, 9, 22, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 1, 9, 2, 1, 9, 21, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 22, 9, 2, 22, 9, 21, PAL_TEAM_ACCENT);
+  // Loading bay opening (+Z face)
+  fillBox(g, sx, sz, 7, 2, 21, 16, 7, 21, 0);
+  // Interior crate stacks (visible through loading bay)
+  fillBox(g, sx, sz, 5, 2, 5, 8, 6, 9, PAL_BROWN);
+  fillBox(g, sx, sz, 15, 2, 5, 18, 5, 9, PAL_TEAM_ACCENT);
+  fillBox(g, sx, sz, 5, 2, 14, 9, 4, 18, PAL_BROWN);
+  // Corner crane tower
+  fillBox(g, sx, sz, 20, 2, 0, 23, 13, 3, PAL_LIGHT_GREY);
+  fillBox(g, sx, sz, 20, 12, 0, 23, 13, 3, PAL_TEAM_ACCENT);
+  // Crane arm extending over roof
+  fillBox(g, sx, sz, 12, 12, 1, 19, 12, 2, PAL_LIGHT_GREY);
+  // Center marker on platform
   fillBox(g, sx, sz, 10, 1, 10, 13, 1, 13, PAL_TEAM_PRIMARY);
 });
 
