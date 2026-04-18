@@ -108,10 +108,9 @@ export class EconomyManager {
       { condition: depots === 0, type: BuildingType.SupplyDepot, save: false },
       { condition: netEnergy <= 2, type: BuildingType.EnergyExtractor, save: false },
       { condition: matterIncome < targetMatter && netEnergy >= 3 && hasUnclaimedDeposit, type: BuildingType.MatterPlant, save: false },
-      { condition: state.totalMatter > 300 && factories < 8, type: BuildingType.DroneFactory, save: false },
+      { condition: state.totalMatter > 300 && factories < 2, type: BuildingType.DroneFactory, save: false },
       { condition: extractors < Math.ceil((plants * 2 + factories) / 5) + 1, type: BuildingType.EnergyExtractor, save: false },
       { condition: matterIncome < factories * 1.5 && netEnergy >= 4 && hasUnclaimedDeposit, type: BuildingType.MatterPlant, save: false },
-      { condition: state.totalMatter > 450 && factories < 8, type: BuildingType.DroneFactory, save: false },
       { condition: hasUnclaimedNode, type: BuildingType.EnergyExtractor, save: false },
       { condition: plants < extractors && netEnergy >= 4 && hasUnclaimedDeposit, type: BuildingType.MatterPlant, save: false },
     ];
