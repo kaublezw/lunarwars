@@ -4,6 +4,7 @@ import {
   BUILD_COMMAND, CONSTRUCTION, SUPPLY_ROUTE,
   MATTER_STORAGE, RESUPPLY_SEEK, PRODUCTION_QUEUE,
   REPAIR_COMMAND, GARAGE_EXIT, ROOF_EXIT,
+  TRAIN_LINK,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
@@ -13,6 +14,7 @@ import type { BuildingComponent } from '@sim/components/Building';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
+import type { TrainLinkComponent } from '@sim/components/TrainLink';
 
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
@@ -104,6 +106,35 @@ export function getFerryCountByDepot(ctx: AIContext): Map<number, number> {
     ferryCountByDepot.set(route.destEntity, count + 1);
   }
   return ferryCountByDepot;
+}
+
+export function getTeamCargoCarCount(ctx: AIContext): number {
+  const entities = ctx.world.query(TRAIN_LINK, TEAM, HEALTH);
+  let count = 0;
+  for (const e of entities) {
+    const link = ctx.world.getComponent<TrainLinkComponent>(e, TRAIN_LINK)!;
+    if (link.isEngine) continue;
+    const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+    if (team.team !== ctx.team) continue;
+    const health = ctx.world.getComponent<HealthComponent>(e, HEALTH)!;
+    if (health.dead) continue;
+    count++;
+  }
+  return count;
+}
+
+export function getCargoCarsInProduction(ctx: AIContext): number {
+  const producers = ctx.world.query(PRODUCTION_QUEUE, TEAM);
+  let count = 0;
+  for (const e of producers) {
+    const t = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+    if (t.team !== ctx.team) continue;
+    const pq = ctx.world.getComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE)!;
+    for (const item of pq.queue) {
+      if (item.unitType === UnitCategory.CargoCar) count++;
+    }
+  }
+  return count;
 }
 
 export function isUnderAttack(state: AIWorldState): boolean {

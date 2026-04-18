@@ -16,6 +16,7 @@ import { MAX_AI_WALLS } from '@sim/ai/AITypes';
 import {
   getBuildingCount, getIdleWorkers, getCompletedDepots,
   getFerryCountByDepot, getDamagedBuildings,
+  getTeamCargoCarCount, getCargoCarsInProduction,
 } from '@sim/ai/AIQueries';
 import {
   findBuildLocation, findEnergyNodeLocation, findOreDepositLocation,
@@ -26,6 +27,7 @@ import {
   buildStructure, buildWallSegments, trainUnit, issueWorkerBuild, repairAllPoles, getPoleRepairCost,
   type GameCommandContext,
 } from '@sim/commands/GameCommands';
+import { teamHasEngine, engineInProduction } from '@sim/logistics/TrainSpawner';
 
 import type { EnemyMemoryEntry } from '@sim/ai/AITypes';
 
@@ -44,6 +46,7 @@ export class EconomyManager {
     const { state, phase, enemyMemory } = report;
 
     this.executePoleMaintenance(ctx, state);
+    this.executeTrainMaintenance(ctx, state);
     this.executeBuildOrder(ctx, state, enemyMemory);
     this.executeWallBuilding(ctx, state, phase, enemyMemory);
     this.executeFerry(ctx, state);
@@ -55,6 +58,26 @@ export class EconomyManager {
 
     const cmdCtx = this.buildCmdCtx(ctx);
     repairAllPoles(cmdCtx, ctx.team, ctx.powerGrid);
+  }
+
+  private executeTrainMaintenance(ctx: AIContext, state: AIWorldState): void {
+    const cmdCtx = this.buildCmdCtx(ctx);
+    const hqPos = ctx.world.getComponent<PositionComponent>(ctx.hqEntity, POSITION)!;
+    const plants = getBuildingCount(state, BuildingType.MatterPlant);
+
+    // Rebuild engine if destroyed
+    if (!teamHasEngine(ctx.world, ctx.team) && !engineInProduction(ctx.world, ctx.team)) {
+      trainUnit(cmdCtx, ctx.team, ctx.hqEntity, UnitCategory.TrainEngine, hqPos.x, hqPos.z);
+    }
+
+    // Build cargo cars proportional to matter plants (1 per plant, min 2)
+    const targetCars = Math.max(2, plants);
+    const currentCars = getTeamCargoCarCount(ctx);
+    const carsInProduction = getCargoCarsInProduction(ctx);
+
+    if (currentCars + carsInProduction < targetCars) {
+      trainUnit(cmdCtx, ctx.team, ctx.hqEntity, UnitCategory.CargoCar, hqPos.x, hqPos.z);
+    }
   }
 
   private executeBuildOrder(
