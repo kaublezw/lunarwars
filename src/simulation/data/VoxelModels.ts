@@ -47,6 +47,7 @@ export const PAL_BLUE_GLOW = 4;
 export const PAL_ORANGE = 5;
 export const PAL_BROWN = 6;
 export const PAL_CHIMNEY = 7;
+export const PAL_WINDOW_GLOW = 8;
 export const PAL_WHITE = 11;
 
 // Shared palette for all models
@@ -58,6 +59,7 @@ SHARED_PALETTE[PAL_BLUE_GLOW] = 0x66ccff;
 SHARED_PALETTE[PAL_ORANGE] = 0xff8833;
 SHARED_PALETTE[PAL_BROWN] = 0x554433;
 SHARED_PALETTE[PAL_CHIMNEY] = 0x777777;
+SHARED_PALETTE[PAL_WINDOW_GLOW] = 0x66ccff;
 SHARED_PALETTE[PAL_WHITE] = 0xffffff;
 SHARED_PALETTE[PAL_TEAM_PRIMARY] = 0xffffff; // placeholder, resolved at render
 SHARED_PALETTE[PAL_TEAM_ACCENT] = 0xffffff; // placeholder, resolved at render
@@ -277,6 +279,13 @@ export const MATTER_PLANT_MODEL = createModel(20, 14, 20, (g, sx, _sy, sz) => {
   // Side panels
   fillBox(g, sx, sz, 0, 3, 0, 0, 7, 19, PAL_TEAM_ACCENT);
   fillBox(g, sx, sz, 19, 3, 0, 19, 7, 19, PAL_TEAM_ACCENT);
+  // Windows — glow is power-conditional
+  // +Z face (z=19, avoiding chimney at x=15-19)
+  fillBox(g, sx, sz, 4, 5, 19, 6, 6, 19, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 10, 5, 19, 12, 6, 19, PAL_WINDOW_GLOW);
+  // +X face (x=19, within side accent panel)
+  fillBox(g, sx, sz, 19, 5, 4, 19, 6, 6, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 19, 5, 10, 19, 6, 12, PAL_WINDOW_GLOW);
 });
 
 export const SUPPLY_DEPOT_MODEL = createModel(24, 14, 24, (g, sx, _sy, sz) => {

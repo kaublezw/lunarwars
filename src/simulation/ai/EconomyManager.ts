@@ -39,6 +39,7 @@ export class EconomyManager {
       terrain: ctx.terrain,
       energyNodes: ctx.energyNodes,
       oreDeposits: ctx.oreDeposits,
+      powerGrid: ctx.powerGrid,
     };
   }
 

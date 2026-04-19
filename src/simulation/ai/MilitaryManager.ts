@@ -47,6 +47,7 @@ export class MilitaryManager {
       terrain: ctx.terrain,
       energyNodes: ctx.energyNodes,
       oreDeposits: ctx.oreDeposits,
+      powerGrid: ctx.powerGrid,
     };
   }
 

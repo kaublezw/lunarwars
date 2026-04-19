@@ -3,7 +3,7 @@ import type { VoxelModel } from '@sim/data/VoxelModels';
 import {
   VOXEL_SIZE, SHARED_PALETTE,
   PAL_TEAM_PRIMARY, PAL_TEAM_ACCENT,
-  PAL_BLUE_GLOW,
+  PAL_BLUE_GLOW, PAL_WINDOW_GLOW,
 } from '@sim/data/VoxelModels';
 
 const TEAM_COLORS = [0x4488ff, 0xff4444];
@@ -111,7 +111,9 @@ export function buildVoxelGeometry(
   destroyed: Uint8Array,
   team: number,
   scorchHeat?: Float32Array,
+  powered?: boolean,
 ): BuiltGeometry {
+  const isPowered = powered !== false;
   const { sizeX, sizeY, sizeZ, grid, turretMinY, turretMaxY } = model;
   const hasTurret = turretMinY != null;
 
@@ -290,9 +292,17 @@ export function buildVoxelGeometry(
             // Normal voxel
             const palIdx = val - 1;
             resolveColor(palIdx, team, model.palette, _color);
-            // PAL_BLUE_GLOW voxels emit cyan light
+            // PAL_BLUE_GLOW voxels always emit cyan light
             if (palIdx === PAL_BLUE_GLOW) {
               emR = 0.4; emG = 0.8; emB = 1.0;
+            }
+            // PAL_WINDOW_GLOW: glows when powered, dark when unpowered
+            if (palIdx === PAL_WINDOW_GLOW) {
+              if (isPowered) {
+                emR = 0.4; emG = 0.8; emB = 1.0;
+              } else {
+                _color.setHex(0x222222);
+              }
             }
           }
 

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, PRODUCTION_QUEUE, BUILD_COMMAND, REPAIR_COMMAND } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, PRODUCTION_QUEUE, BUILD_COMMAND, REPAIR_COMMAND, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -9,6 +9,7 @@ import type { HealthComponent } from '@sim/components/Health';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { RepairCommandComponent } from '@sim/components/RepairCommand';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { ParticleRenderer } from '@render/effects/ParticleRenderer';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
@@ -98,7 +99,11 @@ export class BuildingEffectsRenderer {
 
       if (building.buildingType === BuildingType.MatterPlant) {
         activeEntities.add(e);
-        this.updateSmoke(e, pos, dt, visible);
+        const powerNode = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+        const powered = powerNode ? powerNode.powered : true;
+        if (powered) {
+          this.updateSmoke(e, pos, dt, visible);
+        }
       } else if (building.buildingType === BuildingType.EnergyExtractor) {
         activeEntities.add(e);
         this.updateGlow(e, pos, dt, visible);

@@ -40,6 +40,7 @@ export interface GameCommandContext {
   terrain: TerrainData;
   energyNodes: EnergyNode[];
   oreDeposits: OreDeposit[];
+  powerGrid: PowerGridState;
 }
 
 export interface WallSegment {

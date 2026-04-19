@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Entity, World } from '@core/ECS';
-import { POSITION, RENDERABLE, TEAM, VOXEL_STATE, BUILDING, DEATH_TIMER, TURRET } from '@sim/components/ComponentTypes';
+import { POSITION, RENDERABLE, TEAM, VOXEL_STATE, BUILDING, DEATH_TIMER, TURRET, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import type { TeamComponent } from '@sim/components/Team';
@@ -14,6 +14,7 @@ import type { VoxelModel } from '@sim/data/VoxelModels';
 import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { DeathTimerComponent } from '@sim/components/DeathTimer';
 import type { TurretComponent } from '@sim/components/Turret';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { buildVoxelGeometry } from '@render/VoxelGeometryBuilder';
 
@@ -84,6 +85,8 @@ interface EntityMeshState {
   hasOwnGeometry: boolean;
   /** True while flashing white during death */
   isFlashing: boolean;
+  /** Whether the building is powered (for window glow). Non-buildings default to true. */
+  powered: boolean;
   /** Per-solid-voxel heat values for scorch. >0=cooling, 0=never scorched, -1=permanent ash. null=no scorch. */
   scorchHeat: Float32Array | null;
   /** Frame counter for periodic scorch geometry rebuilds */
@@ -170,6 +173,25 @@ export class VoxelMeshManager {
         const turret = world.getComponent<TurretComponent>(e, TURRET);
         this.updateDamage(e, voxelState, pos, isBuilding, turret?.turretRotation, existing.model.turretMinY, existing.model.turretMaxY);
         voxelState.dirty = false;
+      }
+
+      // Check for power state changes (window glow)
+      if (existing) {
+        const powerNode = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+        const nowPowered = powerNode ? powerNode.powered : true;
+        if (nowPowered !== existing.powered) {
+          existing.powered = nowPowered;
+          if (existing.hasOwnGeometry) {
+            existing.geometryDirty = true;
+          } else {
+            // Swap to powered/unpowered template
+            const template = this.getOrCreateTemplate(voxelState.modelId, teamNum, existing.model, nowPowered);
+            existing.bodyMesh.geometry = template.body;
+            if (existing.turretMesh && template.turret) {
+              existing.turretMesh.geometry = template.turret;
+            }
+          }
+        }
       }
     }
 
@@ -341,7 +363,7 @@ export class VoxelMeshManager {
 
       const voxelState = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE)!;
       const scorchHeat = state.scorchHeat ?? undefined;
-      const result = buildVoxelGeometry(state.model, voxelState.destroyed, state.team, scorchHeat);
+      const result = buildVoxelGeometry(state.model, voxelState.destroyed, state.team, scorchHeat, state.powered);
 
       // Dispose old geometry if we own it
       if (state.hasOwnGeometry) {
@@ -436,12 +458,12 @@ export class VoxelMeshManager {
     this.trackedEntities = currentEntities;
   }
 
-  private getOrCreateTemplate(modelId: string, team: number, model: VoxelModel): { body: THREE.BufferGeometry; turret: THREE.BufferGeometry | null } {
-    const key: TemplateCacheKey = `${modelId}:${team}`;
+  private getOrCreateTemplate(modelId: string, team: number, model: VoxelModel, powered = true): { body: THREE.BufferGeometry; turret: THREE.BufferGeometry | null } {
+    const key: TemplateCacheKey = `${modelId}:${team}:${powered ? 1 : 0}`;
     let cached = this.templateCache.get(key);
     if (!cached) {
       const emptyDestroyed = new Uint8Array(Math.ceil(model.totalSolid / 8));
-      const result = buildVoxelGeometry(model, emptyDestroyed, team);
+      const result = buildVoxelGeometry(model, emptyDestroyed, team, undefined, powered);
       cached = { body: result.bodyGeometry, turret: result.turretGeometry };
       this.templateCache.set(key, cached);
     }
@@ -453,6 +475,9 @@ export class VoxelMeshManager {
     if (!model) return;
     if (model.totalSolid === 0) return;
 
+    const powerNode = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+    const powered = powerNode ? powerNode.powered : true;
+
     const hasDamage = voxelState.destroyedCount > 0;
     let bodyGeo: THREE.BufferGeometry;
     let turretGeo: THREE.BufferGeometry | null = null;
@@ -460,13 +485,13 @@ export class VoxelMeshManager {
 
     if (hasDamage) {
       // Build individual geometry for damaged entity
-      const result = buildVoxelGeometry(model, voxelState.destroyed, team);
+      const result = buildVoxelGeometry(model, voxelState.destroyed, team, undefined, powered);
       bodyGeo = result.bodyGeometry;
       turretGeo = result.turretGeometry;
       hasOwnGeometry = true;
     } else {
       // Use shared template geometry
-      const template = this.getOrCreateTemplate(voxelState.modelId, team, model);
+      const template = this.getOrCreateTemplate(voxelState.modelId, team, model, powered);
       bodyGeo = template.body;
       turretGeo = template.turret;
       hasOwnGeometry = false;
@@ -503,6 +528,7 @@ export class VoxelMeshManager {
       geometryDirty: false,
       hasOwnGeometry,
       isFlashing: false,
+      powered,
       scorchHeat: null,
       scorchRebuildTimer: 0,
       hasCoolingVoxels: false,

@@ -183,7 +183,13 @@ function executeDemolish(
     ctx.resources.get(team).matter += refund;
   }
 
-  world.destroyEntity(entityId);
+  // Trigger normal death pipeline: flash, explosion, rubble, power grid cleanup
+  const health = world.getComponent<HealthComponent>(entityId, HEALTH);
+  if (health) {
+    health.dead = true;
+  } else {
+    world.destroyEntity(entityId);
+  }
 }
 
 function executeRepairBuilding(

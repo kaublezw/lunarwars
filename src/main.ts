@@ -741,6 +741,7 @@ const cmdCtx: GameCommandContext = {
   terrain: terrainData,
   energyNodes,
   oreDeposits,
+  powerGrid: powerGridState,
 };
 
 /** Send a command through multiplayer network, or execute immediately in single-player. */
