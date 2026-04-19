@@ -315,6 +315,13 @@ export const SUPPLY_DEPOT_MODEL = createModel(24, 14, 24, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 12, 12, 1, 19, 12, 2, PAL_LIGHT_GREY);
   // Center marker on platform
   fillBox(g, sx, sz, 10, 1, 10, 13, 1, 13, PAL_TEAM_PRIMARY);
+  // Windows — glow is power-conditional
+  // +Z face (z=21, flanking loading bay opening at x=7-16)
+  fillBox(g, sx, sz, 3, 4, 21, 5, 6, 21, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 18, 4, 21, 20, 6, 21, PAL_WINDOW_GLOW);
+  // +X face (x=21)
+  fillBox(g, sx, sz, 21, 4, 5, 21, 6, 7, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 21, 4, 14, 21, 6, 16, PAL_WINDOW_GLOW);
 });
 
 export const DRONE_FACTORY_MODEL = createModel(32, 22, 32, (g, sx, _sy, sz) => {
@@ -336,6 +343,13 @@ export const DRONE_FACTORY_MODEL = createModel(32, 22, 32, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 8, 13, 8, 23, 17, 23, 0);
   // Roof hatch interior bay (indented 2 voxels below the opening)
   fillBox(g, sx, sz, 9, 11, 9, 22, 12, 22, 0);
+  // Windows — glow is power-conditional
+  // +Z face (z=31, flanking garage opening)
+  fillBox(g, sx, sz, 3, 6, 31, 6, 8, 31, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 25, 6, 31, 28, 8, 31, PAL_WINDOW_GLOW);
+  // +X face (x=31)
+  fillBox(g, sx, sz, 31, 6, 4, 31, 8, 7, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 31, 6, 24, 31, 8, 27, PAL_WINDOW_GLOW);
 });
 
 export const CONSTRUCTION_SITE_MODEL = createModel(14, 4, 14, (g, sx, _sy, sz) => {

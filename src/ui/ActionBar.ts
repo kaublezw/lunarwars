@@ -1,5 +1,5 @@
 import type { World } from '@core/ECS';
-import { SELECTABLE, UNIT_TYPE, BUILDING, TEAM, PRODUCTION_QUEUE, CONSTRUCTION, POWER_POLE_RUIN, PLANT_STORAGE } from '@sim/components/ComponentTypes';
+import { SELECTABLE, UNIT_TYPE, BUILDING, TEAM, PRODUCTION_QUEUE, CONSTRUCTION, POWER_POLE_RUIN, PLANT_STORAGE, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
 import type { BuildingComponent } from '@sim/components/Building';
@@ -7,6 +7,7 @@ import type { TeamComponent } from '@sim/components/Team';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { PlantStorageComponent } from '@sim/components/PlantStorage';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
@@ -259,10 +260,12 @@ export class ActionBar {
           this.buttonAffordable.set('repair_poles', affordable);
         }
       } else if (targetMode === 'factory') {
+        const factoryPower = world.getComponent<PowerNodeComponent>(factoryEntity, POWER_NODE);
+        const factoryPowered = factoryPower ? factoryPower.powered : true;
         for (const btn of FACTORY_TRAIN_BUTTONS) {
           const def = UNIT_DEFS[btn.unitType];
           if (!def) continue;
-          const affordable = resources.canAfford(playerTeam, def.energyCost) && totalMatter >= def.matterCost;
+          const affordable = factoryPowered && resources.canAfford(playerTeam, def.energyCost) && totalMatter >= def.matterCost;
           const key = `train_${btn.unitType}`;
           const button = this.createButton(
             key,

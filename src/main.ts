@@ -149,6 +149,7 @@ let saveData: {
   resources: ReturnType<ResourceState['serialize']>;
   fogExplored: number[][];
   powerGrid?: ReturnType<PowerGridState['serialize']>;
+  trackState?: ReturnType<TrackState['serialize']>;
   spectator?: boolean;
 } | null = null;
 
@@ -503,6 +504,7 @@ if (saveData) {
     resourceState.deserialize(saveData.resources);
     fogState.deserializeExplored(saveData.fogExplored);
     if (saveData.powerGrid) powerGridState.deserialize(saveData.powerGrid);
+    if (saveData.trackState) trackState.deserialize(saveData.trackState);
   } catch (err) {
     console.error('Save restore failed, starting fresh:', err);
     sessionStorage.removeItem(SAVE_KEY);
@@ -1361,6 +1363,7 @@ if (scenarioMode !== 'sandbox' && !isMultiplayer) {
         resources: resourceState.serialize(),
         fogExplored: fogState.serializeExplored(),
         powerGrid: powerGridState.serialize(),
+        trackState: trackState.serialize(),
       };
       sessionStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch {

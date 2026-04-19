@@ -6,7 +6,7 @@ import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import {
   POSITION, RENDERABLE, SELECTABLE, HEALTH, TEAM,
   BUILDING, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND,
-  PRODUCTION_QUEUE, VOXEL_STATE,
+  PRODUCTION_QUEUE, VOXEL_STATE, POWER_NODE,
   REPAIR_COMMAND, WALL_BUILD_QUEUE, POWER_POLE_RUIN,
   MACRO_GRID_SIZE,
 } from '@sim/components/ComponentTypes';
@@ -23,6 +23,7 @@ import type { SelectableComponent } from '@sim/components/Selectable';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 import type { PowerPoleRuinComponent } from '@sim/components/PowerPoleRuin';
+import type { PowerNodeComponent } from '@sim/components/PowerNode';
 
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -300,6 +301,10 @@ export function trainUnit(
 ): boolean {
   const def = UNIT_DEFS[unitType];
   if (!def) return false;
+
+  // Block production at unpowered buildings
+  const powerNode = ctx.world.getComponent<PowerNodeComponent>(factory, POWER_NODE);
+  if (powerNode && !powerNode.powered) return false;
 
   // Single engine rule: only 1 TrainEngine per team
   if (unitType === UnitCategory.TrainEngine) {
