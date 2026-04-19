@@ -65,9 +65,8 @@ import { GarageDoorRenderer } from '@render/effects/GarageDoorRenderer';
 import { DebrisRenderer } from '@render/effects/DebrisRenderer';
 import { VoxelMeshManager } from '@render/VoxelMeshManager';
 import { DepotRangeRenderer } from '@render/DepotRangeRenderer';
-import { SupplySystem } from '@sim/systems/SupplySystem';
 import { SeededRandom } from '@sim/utils/SeededRandom';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, VOXEL_STATE, TURRET, MATTER_STORAGE, DEPOT_RADIUS, POWER_NODE } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND, PRODUCTION_QUEUE, VOXEL_STATE, TURRET, DEPOT_RADIUS, POWER_NODE } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import type { BuildingComponent } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -94,7 +93,6 @@ import { executeCommand } from '@network/CommandExecutor';
 import { DesyncDetector } from '@network/DesyncDetector';
 import { LobbyOverlay } from '@ui/LobbyOverlay';
 import type { GameCommandPayload } from '@network/Protocol';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import { spawnTrainSet, teamHasEngine } from '@sim/logistics/TrainSpawner';
@@ -361,13 +359,12 @@ world.addSystem(new FogOfWarSystem(fogState));
 world.addSystem(new TurretSystem(simRng, eventBus));
 world.addSystem(new ProjectileSystem());
 world.addSystem(new VoxelDamageSystem(simRng));
-world.addSystem(new ResupplySystem());
+world.addSystem(new ResupplySystem(resourceState));
 world.addSystem(new RepairSystem(resourceState, 2, eventBus));
 world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem(eventBus));
 world.addSystem(new PowerGridSystem(powerGridState, 2));
 world.addSystem(new EconomySystem(resourceState, 2, terrainData));
-world.addSystem(new SupplySystem(terrainData, resourceState));
 world.addSystem(new BuildSystem(eventBus, powerGridState, terrainData, buildingOccupancy));
 world.addSystem(new ProductionSystem(resourceState, terrainData));
 world.addSystem(new TrackManagerSystem(trackState, terrainData, 2));
@@ -459,8 +456,8 @@ function spawnBuilding(x: number, z: number, team: number, type: BuildingType): 
   world.addComponent<BuildingComponent>(e, BUILDING, { buildingType: type });
   world.addComponent<VisionComponent>(e, VISION, { range: visionRange });
 
-  // Production queue for HQ, Drone Factory, and Supply Depot
-  if (type === BuildingType.HQ || type === BuildingType.DroneFactory || type === BuildingType.SupplyDepot) {
+  // Production queue for HQ and Drone Factory
+  if (type === BuildingType.HQ || type === BuildingType.DroneFactory) {
     const isHQBuilding = type === BuildingType.HQ;
     world.addComponent<ProductionQueueComponent>(e, PRODUCTION_QUEUE, {
       queue: [],
@@ -469,20 +466,8 @@ function spawnBuilding(x: number, z: number, team: number, type: BuildingType): 
     });
   }
 
-  // Matter storage for Supply Depot
-  if (type === BuildingType.SupplyDepot) {
-    world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
-      stored: 100,
-      capacity: 200,
-    });
-  }
-
-  // HQ acts as fallback resupply point
+  // HQ and Supply Depot act as resupply points (resupply draws from global pool)
   if (type === BuildingType.HQ) {
-    world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
-      stored: 0,
-      capacity: 100,
-    });
     world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
   }
 
@@ -593,11 +578,7 @@ if (saveData) {
       });
     }
 
-    // HQ acts as resupply point (ammo + repair) like a Supply Depot
-    world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
-      stored: 0,
-      capacity: 100,
-    });
+    // HQ acts as resupply point (resupply draws from global pool)
     world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
 
     // HQ is the root of the power grid — always powered
@@ -817,9 +798,7 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     // Determine which building type trains this unit
     const targetBuildingType = (unitType === UnitCategory.WorkerDrone || unitType === UnitCategory.CargoCar || unitType === UnitCategory.TrainEngine)
       ? BuildingType.HQ
-      : unitType === UnitCategory.FerryDrone
-        ? BuildingType.SupplyDepot
-        : BuildingType.DroneFactory;
+      : BuildingType.DroneFactory;
 
     // Find selected building of the right type
     const selectables = world.query(SELECTABLE, BUILDING, TEAM, PRODUCTION_QUEUE, POSITION);

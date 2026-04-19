@@ -1,8 +1,8 @@
 import type { World } from '@core/ECS';
 import {
   POSITION, UNIT_TYPE, HEALTH, TEAM, BUILDING,
-  BUILD_COMMAND, CONSTRUCTION, SUPPLY_ROUTE,
-  MATTER_STORAGE, RESUPPLY_SEEK, PRODUCTION_QUEUE,
+  BUILD_COMMAND, CONSTRUCTION,
+  RESUPPLY_SEEK, PRODUCTION_QUEUE,
   REPAIR_COMMAND, GARAGE_EXIT, ROOF_EXIT,
   TRAIN_LINK,
 } from '@sim/components/ComponentTypes';
@@ -12,7 +12,6 @@ import type { HealthComponent } from '@sim/components/Health';
 import type { TeamComponent } from '@sim/components/Team';
 import type { BuildingComponent } from '@sim/components/Building';
 import type { ConstructionComponent } from '@sim/components/Construction';
-import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TrainLinkComponent } from '@sim/components/TrainLink';
 
@@ -81,7 +80,7 @@ export function getCompletedDepots(ctx: AIContext, state: AIWorldState): number[
   const depots = state.myBuildings.get(BuildingType.SupplyDepot) ?? [];
   const hqs = state.myBuildings.get(BuildingType.HQ) ?? [];
   return [...depots, ...hqs].filter(
-    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
+    d => !ctx.world.hasComponent(d, CONSTRUCTION)
   );
 }
 
@@ -91,21 +90,6 @@ export function getFactoriesWithOpenSlots(ctx: AIContext, state: AIWorldState, m
     const pq = ctx.world.getComponent<ProductionQueueComponent>(f, PRODUCTION_QUEUE);
     return pq && pq.queue.length < maxQueueDepth;
   });
-}
-
-export function getFerryCountByDepot(ctx: AIContext): Map<number, number> {
-  const ferryCountByDepot = new Map<number, number>();
-  const units = ctx.world.query(UNIT_TYPE, TEAM, SUPPLY_ROUTE);
-  for (const e of units) {
-    const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
-    if (team.team !== ctx.team) continue;
-    const ut = ctx.world.getComponent<UnitTypeComponent>(e, UNIT_TYPE)!;
-    if (ut.category !== UnitCategory.FerryDrone) continue;
-    const route = ctx.world.getComponent<SupplyRouteComponent>(e, SUPPLY_ROUTE)!;
-    const count = ferryCountByDepot.get(route.destEntity) ?? 0;
-    ferryCountByDepot.set(route.destEntity, count + 1);
-  }
-  return ferryCountByDepot;
 }
 
 export function getTeamCargoCarCount(ctx: AIContext): number {
@@ -294,7 +278,7 @@ export function assessWorldState(
     ...(myBuildings.get(BuildingType.SupplyDepot) ?? []),
     ...(myBuildings.get(BuildingType.HQ) ?? []),
   ].filter(
-    d => !ctx.world.hasComponent(d, CONSTRUCTION) && ctx.world.hasComponent(d, MATTER_STORAGE)
+    d => !ctx.world.hasComponent(d, CONSTRUCTION)
   );
   const totalMatter = ctx.resources.get(ctx.team).matter;
   const totalArmySize = myCombat.length + Math.max(0, myAerial.length - 1);

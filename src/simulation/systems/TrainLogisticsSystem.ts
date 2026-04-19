@@ -1,7 +1,7 @@
 import type { System, World } from '@core/ECS';
 import {
   HEALTH, TEAM, TRAIN_LINK, TRACK_FOLLOWER, CARGO_STORAGE, PLANT_STORAGE, POSITION,
-  VOXEL_STATE,
+  VOXEL_STATE, BUILDING,
 } from '@sim/components/ComponentTypes';
 import type { HealthComponent } from '@sim/components/Health';
 import type { TeamComponent } from '@sim/components/Team';
@@ -9,6 +9,8 @@ import type { TrainLinkComponent } from '@sim/components/TrainLink';
 import type { TrackFollowerComponent } from '@sim/components/TrackFollower';
 import type { CargoStorageComponent } from '@sim/components/CargoStorage';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
+import type { BuildingComponent } from '@sim/components/Building';
+import { BuildingType } from '@sim/components/Building';
 import type { PlantStorageComponent } from '@sim/components/PlantStorage';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TrackState } from '@sim/logistics/TrackState';
@@ -78,11 +80,18 @@ export class TrainLogisticsSystem implements System {
     if (!waypoint) return;
 
     if (waypoint.entityId != null) {
-      this.loadAtPlant(world, engine, waypoint.entityId);
-      follower.halted = false; // Resume after loading
+      const building = world.getComponent<BuildingComponent>(waypoint.entityId, BUILDING);
+      if (building && building.buildingType === BuildingType.SupplyDepot) {
+        // Depot stop: unload cargo to global pool
+        this.unloadCargo(world, engine, team);
+      } else {
+        // Plant stop: load from plant storage
+        this.loadAtPlant(world, engine, waypoint.entityId);
+      }
+      follower.halted = false;
     } else if (waypoint.isHQ) {
-      this.unloadAtHQ(world, engine, team);
-      follower.halted = false; // Resume after unloading
+      this.unloadCargo(world, engine, team);
+      follower.halted = false;
     }
     // Intermediate path waypoints (entityId=null, isHQ=false) are ignored
   }
@@ -129,7 +138,7 @@ export class TrainLogisticsSystem implements System {
   }
 
   /** Dump all cargo into the team's global resource pool. */
-  private unloadAtHQ(
+  private unloadCargo(
     world: World,
     engine: number,
     team: number,

@@ -14,7 +14,6 @@ export const BUILD_COMMAND = 'BuildCommand';
 export const CONSTRUCTION = 'Construction';
 export const PRODUCTION_QUEUE = 'ProductionQueue';
 export const MATTER_STORAGE = 'MatterStorage';
-export const SUPPLY_ROUTE = 'SupplyRoute';
 export const RESUPPLY_SEEK = 'ResupplySeek';
 export const DEPOT_RADIUS = 'DepotRadius';
 export const ATTACK_TARGET = 'AttackTarget';

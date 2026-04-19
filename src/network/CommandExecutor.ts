@@ -3,7 +3,7 @@ import type { GameCommandPayload } from '@network/Protocol';
 import type { GameCommandContext } from '@sim/commands/GameCommands';
 
 import {
-  POSITION, MOVE_COMMAND, ATTACK_TARGET, SUPPLY_ROUTE,
+  POSITION, MOVE_COMMAND, ATTACK_TARGET,
   RESUPPLY_SEEK, REPAIR_COMMAND, BUILD_COMMAND, TURRET,
   PRODUCTION_QUEUE, BUILDING, CONSTRUCTION, TEAM, HEALTH,
   UNIT_TYPE, SELECTABLE,
@@ -50,7 +50,6 @@ function clearMoveCommands(world: World, entity: number): void {
 }
 
 function clearCombatCommands(world: World, entity: number): void {
-  if (world.hasComponent(entity, SUPPLY_ROUTE)) world.removeComponent(entity, SUPPLY_ROUTE);
   if (world.hasComponent(entity, RESUPPLY_SEEK)) world.removeComponent(entity, RESUPPLY_SEEK);
   if (world.hasComponent(entity, REPAIR_COMMAND)) world.removeComponent(entity, REPAIR_COMMAND);
   if (world.hasComponent(entity, ATTACK_TARGET)) world.removeComponent(entity, ATTACK_TARGET);
@@ -195,7 +194,6 @@ function executeRepairBuilding(
 
   for (const w of workerEntities) {
     if (world.hasComponent(w, BUILD_COMMAND)) world.removeComponent(w, BUILD_COMMAND);
-    if (world.hasComponent(w, SUPPLY_ROUTE)) world.removeComponent(w, SUPPLY_ROUTE);
     if (world.hasComponent(w, RESUPPLY_SEEK)) world.removeComponent(w, RESUPPLY_SEEK);
     if (world.hasComponent(w, REPAIR_COMMAND)) world.removeComponent(w, REPAIR_COMMAND);
 
@@ -216,7 +214,6 @@ function executeReassignWorker(
   if (!sitePos || !construction) return;
 
   if (world.hasComponent(workerEntity, BUILD_COMMAND)) world.removeComponent(workerEntity, BUILD_COMMAND);
-  if (world.hasComponent(workerEntity, SUPPLY_ROUTE)) world.removeComponent(workerEntity, SUPPLY_ROUTE);
   if (world.hasComponent(workerEntity, RESUPPLY_SEEK)) world.removeComponent(workerEntity, RESUPPLY_SEEK);
   if (world.hasComponent(workerEntity, REPAIR_COMMAND)) world.removeComponent(workerEntity, REPAIR_COMMAND);
 

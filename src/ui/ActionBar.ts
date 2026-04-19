@@ -294,21 +294,6 @@ export class ActionBar {
           this.buttonAffordable.set('demolish', true);
         }
       } else if (targetMode === 'depot') {
-        // Train Ferry Drone button
-        const ferryDef = UNIT_DEFS[UnitCategory.FerryDrone];
-        if (ferryDef) {
-          const affordable = resources.canAfford(playerTeam, ferryDef.energyCost) && totalMatter >= ferryDef.matterCost;
-          const button = this.createButton(
-            'train_ferry',
-            'Train Ferry Drone',
-            `${ferryDef.energyCost}e ${ferryDef.matterCost}m`,
-            affordable,
-            () => this.onTrain?.(UnitCategory.FerryDrone),
-          );
-          this.buttonsDiv.appendChild(button);
-          this.buttonElements.set('train_ferry', button);
-          this.buttonAffordable.set('train_ferry', affordable);
-        }
         // Demolish button for depot
         {
           const depotDef = BUILDING_DEFS[BuildingType.SupplyDepot];
@@ -434,19 +419,6 @@ export class ActionBar {
         { key: 'train_cargo_car', unitType: UnitCategory.CargoCar },
         { key: 'train_engine', unitType: UnitCategory.TrainEngine },
       ]);
-    } else if (targetMode === 'depot') {
-      const ferryDef = UNIT_DEFS[UnitCategory.FerryDrone];
-      if (ferryDef) {
-        const affordable = resources.canAfford(playerTeam, ferryDef.energyCost) && totalMatter >= ferryDef.matterCost;
-        if (affordable !== this.buttonAffordable.get('train_ferry')) {
-          this.buttonAffordable.set('train_ferry', affordable);
-          const el = this.buttonElements.get('train_ferry');
-          if (el) this.updateButtonStyle(el, 'train_ferry', 'Train Ferry Drone', `${ferryDef.energyCost}e ${ferryDef.matterCost}m`, affordable);
-        }
-      }
-
-      const pq = world.getComponent<ProductionQueueComponent>(depotEntity, PRODUCTION_QUEUE);
-      this.updateQueueBadgesAndProgress(pq, [{ key: 'train_ferry', unitType: UnitCategory.FerryDrone }]);
     } else if (targetMode === 'factory') {
       const trainButtons: { key: string; unitType: string }[] = [];
       for (const btn of FACTORY_TRAIN_BUTTONS) {

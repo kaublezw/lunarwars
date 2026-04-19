@@ -3,10 +3,12 @@ import type { IsometricCamera } from '@render/IsometricCamera';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { World } from '@core/ECS';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
-import { BUILDING, POSITION, CONSTRUCTION, RENDERABLE, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
+import { BUILDING, POSITION, CONSTRUCTION, RENDERABLE, TEAM, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
+import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
 import { BuildingType, type BuildingComponent } from '@sim/components/Building';
+import type { ConstructionComponent } from '@sim/components/Construction';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 
 
@@ -574,6 +576,26 @@ export class PlacementController {
       if (!closest || closest.dist > ORE_DEPOSIT_SNAP_RANGE) {
         return false;
       }
+    }
+
+    // Supply depots: limit 1 per player
+    if (this.buildingType === BuildingType.SupplyDepot) {
+      let depotCount = 0;
+      const allBuildings = this.world.query(BUILDING, TEAM);
+      for (const e of allBuildings) {
+        const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
+        if (t.team !== this.playerTeam) continue;
+        const b = this.world.getComponent<BuildingComponent>(e, BUILDING)!;
+        if (b.buildingType === BuildingType.SupplyDepot) depotCount++;
+      }
+      const allSites = this.world.query(CONSTRUCTION, TEAM);
+      for (const e of allSites) {
+        const t = this.world.getComponent<TeamComponent>(e, TEAM)!;
+        if (t.team !== this.playerTeam) continue;
+        const c = this.world.getComponent<ConstructionComponent>(e, CONSTRUCTION)!;
+        if (c.buildingType === BuildingType.SupplyDepot) depotCount++;
+      }
+      if (depotCount >= 1) return false;
     }
 
     return true;

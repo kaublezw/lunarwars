@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, SUPPLY_ROUTE, GARAGE_EXIT, ROOF_EXIT, TRAIN_LINK, TRACK_FOLLOWER, CARGO_STORAGE, PENDING_CAR_ATTACH, POWER_NODE } from '@sim/components/ComponentTypes';
+import { PRODUCTION_QUEUE, TEAM, POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, VISION, MOVE_COMMAND, TURRET, VOXEL_STATE, BUILDING, GARAGE_EXIT, ROOF_EXIT, TRAIN_LINK, TRACK_FOLLOWER, CARGO_STORAGE, PENDING_CAR_ATTACH, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
@@ -15,7 +15,6 @@ import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { TurretComponent } from '@sim/components/Turret';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
-import type { SupplyRouteComponent } from '@sim/components/SupplyRoute';
 import type { GarageExitComponent } from '@sim/components/GarageExit';
 import type { RoofExitComponent } from '@sim/components/RoofExit';
 import type { TrainLinkComponent } from '@sim/components/TrainLink';
@@ -178,30 +177,7 @@ export class ProductionSystem implements System {
           });
         }
 
-        // Auto-ferry: FerryDrones spawned from Supply Depots get a SUPPLY_ROUTE
-        const isDepotSpawn = def.category === UnitCategory.FerryDrone
-          && world.hasComponent(e, BUILDING)
-          && world.getComponent<BuildingComponent>(e, BUILDING)!.buildingType === BuildingType.SupplyDepot;
-
-        if (isDepotSpawn) {
-          const hq = this.findHQ(world, team.team);
-          if (hq !== null) {
-            const hqPos = world.getComponent<PositionComponent>(hq, POSITION)!;
-            world.addComponent<SupplyRouteComponent>(unit, SUPPLY_ROUTE, {
-              sourceEntity: hq,
-              destEntity: e,
-              state: 'to_source',
-              timer: 0,
-              carried: 0,
-              carryCapacity: 10,
-            });
-            // Move toward HQ to start ferrying
-            world.addComponent<MoveCommandComponent>(unit, MOVE_COMMAND, {
-              path: [], currentWaypoint: 0,
-              destX: hqPos.x, destZ: hqPos.z,
-            });
-          }
-        } else if (isHQ && !isEngineSpawn) {
+        if (isHQ && !isEngineSpawn) {
           // HQ spawns (except train engines): predetermined straight-line exit through garage door
           world.addComponent<GarageExitComponent>(unit, GARAGE_EXIT, {
             exitZ: bldgPos.z + 2.5,

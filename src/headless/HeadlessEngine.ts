@@ -19,12 +19,11 @@ import { RepairSystem } from '@sim/systems/RepairSystem';
 import { GameOverSystem } from '@sim/systems/GameOverSystem';
 import { HealthSystem } from '@sim/systems/HealthSystem';
 import { EconomySystem } from '@sim/systems/EconomySystem';
-import { SupplySystem } from '@sim/systems/SupplySystem';
 import { BuildSystem } from '@sim/systems/BuildSystem';
 import { ProductionSystem } from '@sim/systems/ProductionSystem';
 import { FogOfWarSystem } from '@sim/systems/FogOfWarSystem';
 import { AISystem } from '@sim/systems/AIBrain';
-import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, MATTER_STORAGE, DEPOT_RADIUS, POWER_NODE } from '@sim/components/ComponentTypes';
+import { POSITION, VELOCITY, RENDERABLE, UNIT_TYPE, SELECTABLE, STEERING, HEALTH, TEAM, BUILDING, VISION, PRODUCTION_QUEUE, VOXEL_STATE, DEPOT_RADIUS, POWER_NODE } from '@sim/components/ComponentTypes';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
@@ -40,7 +39,6 @@ import type { VisionComponent } from '@sim/components/Vision';
 import type { BuildingComponent } from '@sim/components/Building';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 
@@ -127,13 +125,12 @@ export class HeadlessEngine {
     this.world.addSystem(new TurretSystem(simRng));
     this.world.addSystem(new ProjectileSystem());
     this.world.addSystem(new VoxelDamageSystem(simRng, true));
-    this.world.addSystem(new ResupplySystem());
+    this.world.addSystem(new ResupplySystem(this.resourceState));
     this.world.addSystem(new RepairSystem(this.resourceState, 2));
     this.world.addSystem(gameOverSystem);
     this.world.addSystem(new HealthSystem());
     this.world.addSystem(new PowerGridSystem(powerGridState, 2));
     this.world.addSystem(new EconomySystem(this.resourceState, 2, this.terrainData));
-    this.world.addSystem(new SupplySystem(this.terrainData, this.resourceState));
     this.world.addSystem(new BuildSystem(undefined, powerGridState, this.terrainData, this.buildingOccupancy));
     this.world.addSystem(new ProductionSystem(this.resourceState, this.terrainData));
     this.world.addSystem(new TrackManagerSystem(trackState, this.terrainData, 2));
@@ -218,11 +215,7 @@ export class HeadlessEngine {
         });
       }
 
-      // HQ acts as resupply point (ammo + repair) like a Supply Depot
-      this.world.addComponent<MatterStorageComponent>(e, MATTER_STORAGE, {
-        stored: 0,
-        capacity: 100,
-      });
+      // HQ acts as resupply point (resupply draws from global pool)
       this.world.addComponent<DepotRadiusComponent>(e, DEPOT_RADIUS, { radius: 8 });
 
       // HQ is the root of the power grid — always powered

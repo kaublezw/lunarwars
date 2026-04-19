@@ -82,8 +82,8 @@ export class TrackManagerSystem implements System {
       return;
     }
 
-    // 2. Collect all completed, living plants (extractors + matter plants) for this team
-    const plants = this.collectPlants(world, team);
+    // 2. Collect all completed, living stops (matter plants + supply depots) for this team
+    const plants = this.collectStops(world, team);
     const plantIds = plants.map(p => p.entity).sort((a, b) => a - b);
 
     // 3. Check if the plant set has changed since the last route computation
@@ -670,8 +670,8 @@ export class TrackManagerSystem implements System {
     return route;
   }
 
-  /** Find completed, living matter plants for a team. */
-  private collectPlants(world: World, team: number): { entity: number; x: number; z: number }[] {
+  /** Find completed, living matter plants and supply depots for a team. */
+  private collectStops(world: World, team: number): { entity: number; x: number; z: number }[] {
     const result: { entity: number; x: number; z: number }[] = [];
     const entities = world.query(BUILDING, TEAM);
 
@@ -680,7 +680,7 @@ export class TrackManagerSystem implements System {
       const t = world.getComponent<TeamComponent>(e, TEAM)!;
       if (t.team !== team) continue;
       const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (building.buildingType !== BuildingType.MatterPlant) continue;
+      if (building.buildingType !== BuildingType.MatterPlant && building.buildingType !== BuildingType.SupplyDepot) continue;
       const health = world.getComponent<HealthComponent>(e, HEALTH);
       if (health && health.dead) continue;
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;

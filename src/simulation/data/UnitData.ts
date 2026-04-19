@@ -86,17 +86,6 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     muzzleOffset: 0.4,
     muzzleHeight: 0.5,
   },
-  [UnitCategory.FerryDrone]: {
-    category: UnitCategory.FerryDrone,
-    energyCost: 30,
-    matterCost: 30,
-    trainTime: 8,
-    hp: 60,
-    speed: 2.4,
-    radius: 0.25,
-    visionRange: 8,
-    meshType: 'ferry_drone',
-  },
   [UnitCategory.TrainEngine]: {
     category: UnitCategory.TrainEngine,
     energyCost: 100,

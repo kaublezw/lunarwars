@@ -14,8 +14,8 @@ import type { AIContext, AIWorldState, AIPhase, IntelligenceReport } from '@sim/
 import { MAX_AI_WALLS } from '@sim/ai/AITypes';
 
 import {
-  getBuildingCount, getIdleWorkers, getCompletedDepots,
-  getFerryCountByDepot, getDamagedBuildings,
+  getBuildingCount, getIdleWorkers,
+  getDamagedBuildings,
   getTeamCargoCarCount, getCargoCarsInProduction,
 } from '@sim/ai/AIQueries';
 import {
@@ -49,7 +49,6 @@ export class EconomyManager {
     this.executeTrainMaintenance(ctx, state);
     this.executeBuildOrder(ctx, state, enemyMemory);
     this.executeWallBuilding(ctx, state, phase, enemyMemory);
-    this.executeFerry(ctx, state);
   }
 
   private executePoleMaintenance(ctx: AIContext, _state: AIWorldState): void {
@@ -234,32 +233,6 @@ export class EconomyManager {
 
       const wallWorker = this.findClosestWorker(ctx, idleWorkers, segments[0].x, segments[0].z);
       if (buildWallSegments(cmdCtx, ctx.team, segments, wallWorker)) return;
-    }
-  }
-
-  private executeFerry(ctx: AIContext, state: AIWorldState): void {
-    const hqPos = ctx.world.getComponent<PositionComponent>(ctx.hqEntity, POSITION)!;
-    const completedDepots = getCompletedDepots(ctx, state);
-    if (completedDepots.length === 0) return;
-
-    const ferryCountMap = getFerryCountByDepot(ctx);
-    const cmdCtx = this.buildCmdCtx(ctx);
-
-    for (const depot of completedDepots) {
-      // HQ acts as a resupply point but should not train ferry drones
-      if (depot === ctx.hqEntity) continue;
-
-      const depotPos = ctx.world.getComponent<PositionComponent>(depot, POSITION)!;
-      const dx = depotPos.x - hqPos.x;
-      const dz = depotPos.z - hqPos.z;
-      const distance = Math.sqrt(dx * dx + dz * dz);
-
-      const requiredFerries = Math.max(1, Math.min(4, Math.ceil(distance / 40)));
-      const currentFerries = ferryCountMap.get(depot) ?? 0;
-
-      if (currentFerries >= requiredFerries) continue;
-
-      trainUnit(cmdCtx, ctx.team, depot, UnitCategory.FerryDrone, hqPos.x, hqPos.z);
     }
   }
 

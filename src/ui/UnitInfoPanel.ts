@@ -1,11 +1,10 @@
 import type { World } from '@core/ECS';
-import { SELECTABLE, TURRET, HEALTH, UNIT_TYPE, BUILDING, MATTER_STORAGE } from '@sim/components/ComponentTypes';
+import { SELECTABLE, TURRET, HEALTH, UNIT_TYPE, BUILDING } from '@sim/components/ComponentTypes';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { TurretComponent } from '@sim/components/Turret';
 import type { HealthComponent } from '@sim/components/Health';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
 import type { BuildingComponent } from '@sim/components/Building';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 
 const LABEL_MAP: Record<string, string> = {
   combat_drone: 'Combat Drone',
@@ -77,8 +76,6 @@ export class UnitInfoPanel {
     const building = world.getComponent<BuildingComponent>(e, BUILDING);
     const health = world.getComponent<HealthComponent>(e, HEALTH);
     const turret = world.getComponent<TurretComponent>(e, TURRET);
-    const storage = world.getComponent<MatterStorageComponent>(e, MATTER_STORAGE);
-
     const key = unit ? unit.category : building ? building.buildingType : null;
     const name = key ? (LABEL_MAP[key] ?? key) : 'Unit';
     let html = `<div style="margin-bottom:6px;color:#fff;font-weight:bold">${name}</div>`;
@@ -95,10 +92,6 @@ export class UnitInfoPanel {
       const ammoColor = ammoPct > 30 ? '#4af' : ammoPct > 10 ? '#ca4' : '#c44';
       html += `<div style="margin:6px 0 4px">Ammo ${turret.ammo}/${turret.maxAmmo}</div>`;
       html += this.bar(ammoPct, ammoColor);
-    }
-
-    if (storage) {
-      html += `<div style="margin:6px 0 4px">Matter: ${Math.floor(storage.stored)}</div>`;
     }
 
     this.content.innerHTML = html;

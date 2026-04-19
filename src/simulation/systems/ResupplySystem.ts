@@ -1,6 +1,6 @@
 import type { System, World } from '@core/ECS';
 import {
-  TURRET, TEAM, POSITION, HEALTH, MOVE_COMMAND, RESUPPLY_SEEK, MATTER_STORAGE, UNIT_TYPE,
+  TURRET, TEAM, POSITION, HEALTH, MOVE_COMMAND, RESUPPLY_SEEK, UNIT_TYPE,
   BUILDING, CONSTRUCTION, DEPOT_RADIUS, VOXEL_STATE, POWER_NODE,
 } from '@sim/components/ComponentTypes';
 import type { TurretComponent } from '@sim/components/Turret';
@@ -9,9 +9,9 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { ResupplySeekComponent } from '@sim/components/ResupplySeek';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
+import type { ResourceState } from '@sim/economy/ResourceState';
 import { findNearestDepot, RESUPPLY_RANGE, AMMO_MATTER_COST, REPAIR_MATTER_COST, REPAIR_RATE } from '@sim/economy/DepotUtils';
 
 const RESUPPLY_RANGE_SQ = RESUPPLY_RANGE * RESUPPLY_RANGE;
@@ -19,16 +19,18 @@ const RESUPPLY_RANGE_SQ = RESUPPLY_RANGE * RESUPPLY_RANGE;
 export class ResupplySystem implements System {
   readonly name = 'ResupplySystem';
 
+  constructor(private resources: ResourceState) {}
+
   update(world: World, dt: number): void {
     this.passiveAura(world, dt);
     this.detectEmpty(world);
     this.processResupply(world, dt);
   }
 
-  /** Passive aura: any combat unit near a depot with matter gets ammo topped off + HP repaired. */
+  /** Passive aura: any combat unit near a depot gets ammo topped off + HP repaired from global pool. */
   private passiveAura(world: World, dt: number): void {
-    // Collect all active depots with matter
-    const depots = world.query(DEPOT_RADIUS, BUILDING, TEAM, POSITION, HEALTH, MATTER_STORAGE);
+    // Collect all active depots
+    const depots = world.query(DEPOT_RADIUS, BUILDING, TEAM, POSITION, HEALTH);
     const activeDepots: { entity: number; team: number; x: number; z: number }[] = [];
 
     for (const d of depots) {
@@ -37,8 +39,6 @@ export class ResupplySystem implements System {
       if (health.dead) continue;
       const power = world.getComponent<PowerNodeComponent>(d, POWER_NODE);
       if (power && !power.powered) continue;
-      const storage = world.getComponent<MatterStorageComponent>(d, MATTER_STORAGE)!;
-      if (storage.stored <= 0) continue;
       const team = world.getComponent<TeamComponent>(d, TEAM)!;
       const pos = world.getComponent<PositionComponent>(d, POSITION)!;
       activeDepots.push({ entity: d, team: team.team, x: pos.x, z: pos.z });
@@ -66,31 +66,31 @@ export class ResupplySystem implements System {
         const dz = pos.z - depot.z;
         if (dx * dx + dz * dz > RESUPPLY_RANGE_SQ) continue;
 
-        const storage = world.getComponent<MatterStorageComponent>(depot.entity, MATTER_STORAGE)!;
-        if (storage.stored <= 0) continue;
+        const globalMatter = this.resources.get(team.team).matter;
+        if (globalMatter <= 0) continue;
 
         // Refill ammo instantly
         if (turret.ammo < turret.maxAmmo) {
           const ammoNeeded = turret.maxAmmo - turret.ammo;
           const matterNeeded = ammoNeeded * AMMO_MATTER_COST;
-          const matterAvailable = Math.min(matterNeeded, storage.stored);
+          const matterAvailable = Math.min(matterNeeded, this.resources.get(team.team).matter);
           const ammoRefilled = Math.floor(matterAvailable / AMMO_MATTER_COST);
           if (ammoRefilled > 0) {
             turret.ammo += ammoRefilled;
-            storage.stored -= ammoRefilled * AMMO_MATTER_COST;
+            this.resources.spendMatter(team.team, ammoRefilled * AMMO_MATTER_COST);
           }
         }
 
         // Repair gradually
         let actualRepair = 0;
-        if (health.current < health.max && storage.stored > 0) {
+        if (health.current < health.max && this.resources.get(team.team).matter > 0) {
           const hpToRepair = Math.min(REPAIR_RATE * dt, health.max - health.current);
           const repairCost = hpToRepair * REPAIR_MATTER_COST;
-          const affordable = Math.min(repairCost, storage.stored);
+          const affordable = Math.min(repairCost, this.resources.get(team.team).matter);
           actualRepair = affordable / REPAIR_MATTER_COST;
           if (actualRepair > 0) {
             health.current = Math.min(health.current + actualRepair, health.max);
-            storage.stored -= affordable;
+            this.resources.spendMatter(team.team, affordable);
           }
         }
 

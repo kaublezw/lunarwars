@@ -6,7 +6,7 @@ import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import {
   POSITION, RENDERABLE, SELECTABLE, HEALTH, TEAM,
   BUILDING, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND,
-  PRODUCTION_QUEUE, SUPPLY_ROUTE, VOXEL_STATE,
+  PRODUCTION_QUEUE, VOXEL_STATE,
   REPAIR_COMMAND, WALL_BUILD_QUEUE, POWER_POLE_RUIN,
   MACRO_GRID_SIZE,
 } from '@sim/components/ComponentTypes';
@@ -122,9 +122,6 @@ function clearWorkerCommands(world: World, workerEntity: number): void {
   if (world.hasComponent(workerEntity, BUILD_COMMAND)) {
     world.removeComponent(workerEntity, BUILD_COMMAND);
   }
-  if (world.hasComponent(workerEntity, SUPPLY_ROUTE)) {
-    world.removeComponent(workerEntity, SUPPLY_ROUTE);
-  }
   if (world.hasComponent(workerEntity, REPAIR_COMMAND)) {
     world.removeComponent(workerEntity, REPAIR_COMMAND);
   }
@@ -180,6 +177,26 @@ export function buildStructure(
 
   const def = BUILDING_DEFS[type];
   if (!def) return false;
+
+  // Supply depots: limit 1 per player
+  if (type === BuildingType.SupplyDepot) {
+    let depotCount = 0;
+    const allBuildings = ctx.world.query(BUILDING, TEAM);
+    for (const e of allBuildings) {
+      const t = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const b = ctx.world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (b.buildingType === BuildingType.SupplyDepot) depotCount++;
+    }
+    const allSites = ctx.world.query(CONSTRUCTION, TEAM);
+    for (const e of allSites) {
+      const t = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const c = ctx.world.getComponent<ConstructionComponent>(e, CONSTRUCTION)!;
+      if (c.buildingType === BuildingType.SupplyDepot) depotCount++;
+    }
+    if (depotCount >= 1) return false;
+  }
 
   // Affordability
   if (!ctx.resources.canAfford(team, def.energyCost)) return false;

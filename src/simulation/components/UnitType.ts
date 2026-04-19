@@ -3,7 +3,6 @@ export enum UnitCategory {
   AssaultPlatform = 'assault_platform',
   AerialDrone = 'aerial_drone',
   WorkerDrone = 'worker_drone',
-  FerryDrone = 'ferry_drone',
   TrainEngine = 'train_engine',
   CargoCar = 'cargo_car',
 }

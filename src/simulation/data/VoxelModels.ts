@@ -226,16 +226,6 @@ export const WORKER_DRONE_MODEL = createModel(8, 6, 8, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 3, 5, 3, 4, 5, 4, PAL_TEAM_ACCENT);
 });
 
-export const FERRY_DRONE_MODEL = createModel(6, 4, 6, (g, sx, _sy, sz) => {
-  // Compact body
-  fillBox(g, sx, sz, 1, 1, 1, 4, 2, 4, PAL_TEAM_PRIMARY);
-  // Two skids (front-to-back rails)
-  fillBox(g, sx, sz, 1, 0, 0, 1, 0, 5, PAL_MED_GREY);
-  fillBox(g, sx, sz, 4, 0, 0, 4, 0, 5, PAL_MED_GREY);
-  // Cargo bay platform on top
-  fillBox(g, sx, sz, 1, 3, 1, 4, 3, 4, PAL_TEAM_ACCENT);
-});
-
 // --- Building Models ---
 
 export const HQ_MODEL = createModel(27, 38, 27, (g, sx, _sy, sz) => {
@@ -492,7 +482,6 @@ export const VOXEL_MODELS: Record<string, VoxelModel> = {
   assault_platform: ASSAULT_PLATFORM_MODEL,
   aerial_drone: AERIAL_DRONE_MODEL,
   worker_drone: WORKER_DRONE_MODEL,
-  ferry_drone: FERRY_DRONE_MODEL,
   hq: HQ_MODEL,
   energy_extractor: ENERGY_EXTRACTOR_MODEL,
   matter_plant: MATTER_PLANT_MODEL,

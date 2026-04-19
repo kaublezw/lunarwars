@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, MATTER_STORAGE, DEPOT_RADIUS, SUPPLY_ROUTE, VOXEL_STATE, WALL_BUILD_QUEUE, POWER_NODE, POWER_POLE, TEAM, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
+import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, DEPOT_RADIUS, VOXEL_STATE, WALL_BUILD_QUEUE, POWER_NODE, POWER_POLE, TEAM, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
@@ -11,7 +11,6 @@ import { BuildingType } from '@sim/components/Building';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { VisionComponent } from '@sim/components/Vision';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
@@ -54,11 +53,6 @@ export class BuildSystem implements System {
     for (const e of builders) {
       const cmd = world.getComponent<BuildCommandComponent>(e, BUILD_COMMAND)!;
       const workerPos = world.getComponent<PositionComponent>(e, POSITION)!;
-
-      // Cancel ferry if worker is building
-      if (world.hasComponent(e, SUPPLY_ROUTE)) {
-        world.removeComponent(e, SUPPLY_ROUTE);
-      }
 
       if (cmd.state === 'moving') {
         // Wait for MOVE_COMMAND to be removed (unit arrived)
@@ -176,22 +170,8 @@ export class BuildSystem implements System {
             });
           }
 
-          // SupplyDepot gets matter storage, visual radius, and production queue
+          // SupplyDepot gets visual radius
           if (construction.buildingType === BuildingType.SupplyDepot) {
-            if (!world.hasComponent(site, PRODUCTION_QUEUE)) {
-              const sitePos3 = world.getComponent<PositionComponent>(site, POSITION)!;
-              world.addComponent<ProductionQueueComponent>(site, PRODUCTION_QUEUE, {
-                queue: [],
-                rallyX: sitePos3.x + 3,
-                rallyZ: sitePos3.z + 3,
-              });
-            }
-            if (!world.hasComponent(site, MATTER_STORAGE)) {
-              world.addComponent<MatterStorageComponent>(site, MATTER_STORAGE, {
-                stored: 0,
-                capacity: Infinity,
-              });
-            }
             if (!world.hasComponent(site, DEPOT_RADIUS)) {
               world.addComponent<DepotRadiusComponent>(site, DEPOT_RADIUS, {
                 radius: DEPOT_VISUAL_RADIUS,

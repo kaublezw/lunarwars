@@ -5,7 +5,7 @@ import type { World, Entity } from '@core/ECS';
 import type { EventBus } from '@core/EventBus';
 import {
   POSITION, SELECTABLE, MOVE_COMMAND, UNIT_TYPE, TEAM, RESUPPLY_SEEK,
-  BUILDING, CONSTRUCTION, HEALTH, SUPPLY_ROUTE, BUILD_COMMAND,
+  BUILDING, CONSTRUCTION, HEALTH, BUILD_COMMAND,
   TURRET, ATTACK_TARGET, PRODUCTION_QUEUE, REPAIR_COMMAND,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
@@ -383,9 +383,6 @@ export class SelectionController {
         if (this.world.hasComponent(w.entity, BUILD_COMMAND)) {
           this.world.removeComponent(w.entity, BUILD_COMMAND);
         }
-        if (this.world.hasComponent(w.entity, SUPPLY_ROUTE)) {
-          this.world.removeComponent(w.entity, SUPPLY_ROUTE);
-        }
         if (this.world.hasComponent(w.entity, RESUPPLY_SEEK)) {
           this.world.removeComponent(w.entity, RESUPPLY_SEEK);
         }
@@ -459,10 +456,7 @@ export class SelectionController {
         }
         const enemyPos = this.world.getComponent<PositionComponent>(enemy, POSITION)!;
         for (const s of mobileUnits) {
-          // Cancel ferry and resupply
-          if (this.world.hasComponent(s.entity, SUPPLY_ROUTE)) {
-            this.world.removeComponent(s.entity, SUPPLY_ROUTE);
-          }
+          // Cancel resupply
           if (this.world.hasComponent(s.entity, RESUPPLY_SEEK)) {
             this.world.removeComponent(s.entity, RESUPPLY_SEEK);
           }
@@ -536,9 +530,6 @@ export class SelectionController {
 
     // Normal move - cancel ferry and attack target for all selected units
     for (const s of selected) {
-      if (this.world.hasComponent(s.entity, SUPPLY_ROUTE)) {
-        this.world.removeComponent(s.entity, SUPPLY_ROUTE);
-      }
       if (this.world.hasComponent(s.entity, ATTACK_TARGET)) {
         this.world.removeComponent(s.entity, ATTACK_TARGET);
       }
@@ -625,9 +616,6 @@ export class SelectionController {
     const w = workers[0];
     if (this.world.hasComponent(w.entity, BUILD_COMMAND)) {
       this.world.removeComponent(w.entity, BUILD_COMMAND);
-    }
-    if (this.world.hasComponent(w.entity, SUPPLY_ROUTE)) {
-      this.world.removeComponent(w.entity, SUPPLY_ROUTE);
     }
     if (this.world.hasComponent(w.entity, RESUPPLY_SEEK)) {
       this.world.removeComponent(w.entity, RESUPPLY_SEEK);
@@ -827,9 +815,6 @@ export class SelectionController {
     }
 
     for (const s of mobile) {
-      if (this.world.hasComponent(s.entity, SUPPLY_ROUTE)) {
-        this.world.removeComponent(s.entity, SUPPLY_ROUTE);
-      }
       if (this.world.hasComponent(s.entity, ATTACK_TARGET)) {
         this.world.removeComponent(s.entity, ATTACK_TARGET);
       }
@@ -978,7 +963,6 @@ export class SelectionController {
       if (this.world.hasComponent(e, BUILD_COMMAND)) continue;
       if (this.world.hasComponent(e, MOVE_COMMAND)) continue;
       if (this.world.hasComponent(e, REPAIR_COMMAND)) continue;
-      if (this.world.hasComponent(e, SUPPLY_ROUTE)) continue;
       if (this.world.hasComponent(e, RESUPPLY_SEEK)) continue;
 
       const pos = this.world.getComponent<PositionComponent>(e, POSITION)!;

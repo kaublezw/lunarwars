@@ -1,8 +1,7 @@
 import {
   POSITION, HEALTH, TEAM,
   BUILDING, BUILD_COMMAND, MOVE_COMMAND,
-  MATTER_STORAGE, SUPPLY_ROUTE, RESUPPLY_SEEK,
-  REPAIR_COMMAND,
+  RESUPPLY_SEEK, REPAIR_COMMAND, DEPOT_RADIUS,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
@@ -51,16 +50,13 @@ export function sendSquadTo(ctx: AIContext, squad: Squad, x: number, z: number):
 export function retreatWounded(ctx: AIContext, squad: Squad): void {
   const depotEntities: number[] = [];
 
-  const buildings = ctx.world.query(BUILDING, TEAM, POSITION, HEALTH, MATTER_STORAGE);
+  const buildings = ctx.world.query(DEPOT_RADIUS, BUILDING, TEAM, POSITION, HEALTH);
   for (const e of buildings) {
     const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
     if (team.team !== ctx.team) continue;
     const health = ctx.world.getComponent<HealthComponent>(e, HEALTH)!;
     if (health.dead) continue;
-    const bldg = ctx.world.getComponent<BuildingComponent>(e, BUILDING)!;
-    if (bldg.buildingType === BuildingType.SupplyDepot || bldg.buildingType === BuildingType.HQ) {
-      depotEntities.push(e);
-    }
+    depotEntities.push(e);
   }
 
   for (const unitId of squad.unitIds) {
@@ -198,9 +194,6 @@ export function assignRepair(ctx: AIContext, worker: number, buildingEntity: num
   // Cancel existing commands
   if (ctx.world.hasComponent(worker, BUILD_COMMAND)) {
     ctx.world.removeComponent(worker, BUILD_COMMAND);
-  }
-  if (ctx.world.hasComponent(worker, SUPPLY_ROUTE)) {
-    ctx.world.removeComponent(worker, SUPPLY_ROUTE);
   }
   if (ctx.world.hasComponent(worker, RESUPPLY_SEEK)) {
     ctx.world.removeComponent(worker, RESUPPLY_SEEK);

@@ -1,10 +1,9 @@
 import type { System, World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, MATTER_STORAGE, PLANT_STORAGE, POWER_NODE } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, PLANT_STORAGE, POWER_NODE } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
 import type { HealthComponent } from '@sim/components/Health';
-import type { MatterStorageComponent } from '@sim/components/MatterStorage';
 import type { PlantStorageComponent } from '@sim/components/PlantStorage';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { ResourceState } from '@sim/economy/ResourceState';
@@ -47,26 +46,6 @@ export class EconomySystem implements System {
         matterRates[team.team] += PLANT_MATTER_RATE;
         const storage = this.ensurePlantStorage(world, e, 'matter');
         storage.amount += PLANT_MATTER_RATE * dt;
-      }
-    }
-
-    // Auto-fill HQ matter storage from global pool (HQ acts as fallback resupply point)
-    for (const e of entities) {
-      if (world.hasComponent(e, CONSTRUCTION)) continue;
-      const building = world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (building.buildingType !== BuildingType.HQ) continue;
-      const health = world.getComponent<HealthComponent>(e, HEALTH);
-      if (health && health.dead) continue;
-      const hqPower = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
-      if (hqPower && !hqPower.powered) continue;
-      const storage = world.getComponent<MatterStorageComponent>(e, MATTER_STORAGE);
-      if (!storage) continue;
-      const team = world.getComponent<TeamComponent>(e, TEAM)!;
-      const available = this.resources.get(team.team).matter;
-      const toFill = Math.min(storage.capacity - storage.stored, available);
-      if (toFill > 0) {
-        storage.stored += toFill;
-        this.resources.spendMatter(team.team, toFill);
       }
     }
 
