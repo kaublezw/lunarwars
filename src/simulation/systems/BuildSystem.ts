@@ -204,6 +204,7 @@ export class BuildSystem implements System {
                 this.powerGrid, this.terrainData, this.occupancy,
               );
             }
+            this.powerGrid.markHealPending(teamComp.team);
           }
         }
 
@@ -353,6 +354,7 @@ export class BuildSystem implements System {
 
       for (const team of dirtyTeams) {
         this.powerGrid.markDirty(team);
+        this.powerGrid.markHealPending(team);
       }
     }
   }

@@ -364,7 +364,7 @@ world.addSystem(new ResupplySystem(resourceState));
 world.addSystem(new RepairSystem(resourceState, 2, eventBus));
 world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem(eventBus));
-world.addSystem(new PowerGridSystem(powerGridState, 2));
+world.addSystem(new PowerGridSystem(powerGridState, 2, terrainData, buildingOccupancy));
 world.addSystem(new EconomySystem(resourceState, 2, terrainData));
 world.addSystem(new BuildSystem(eventBus, powerGridState, terrainData, buildingOccupancy));
 world.addSystem(new ProductionSystem(resourceState, terrainData));
@@ -839,6 +839,11 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
 
   ab.onRepairPolesRequest(() => {
     GameCommands.repairAllPoles(cmdCtx, PLAYER_TEAM, powerGridState);
+  });
+
+  ab.onRebuildLinesRequest(() => {
+    powerGridState.markDirty(PLAYER_TEAM);
+    powerGridState.markHealPending(PLAYER_TEAM);
   });
 
   pc.onPlacementConfirmed((type, x, z) => {

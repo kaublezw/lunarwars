@@ -12,6 +12,9 @@ import type { RenderableComponent } from '@sim/components/Renderable';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { PowerGridState } from '@sim/economy/PowerGridState';
+import { routePowerConnection } from '@sim/economy/PowerGridRouter';
+import type { TerrainData } from '@sim/terrain/TerrainData';
+import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 
 const TEAM_COLORS = [0x4488ff, 0xff4444];
@@ -22,6 +25,8 @@ export class PowerGridSystem implements System {
   constructor(
     private gridState: PowerGridState,
     private teamCount: number,
+    private terrainData?: TerrainData,
+    private occupancy?: BuildingOccupancy,
   ) {}
 
   update(world: World, _dt: number): void {
@@ -75,55 +80,95 @@ export class PowerGridSystem implements System {
     // Recompute connectivity via BFS for dirty teams
     for (let team = 0; team < this.teamCount; team++) {
       if (!this.gridState.isDirty(team)) continue;
+      this.runBFS(world, team);
+      // Only heal gaps after construction (not after destruction)
+      if (this.gridState.isHealPending(team)) {
+        this.gridState.clearHealPending(team);
+        this.healDisconnectedNodes(world, team);
+      }
+    }
+  }
 
-      const powered = new Set<number>();
+  private runBFS(world: World, team: number): void {
+    const powered = new Set<number>();
 
-      // Find all HQ entities for this team as BFS roots
-      const roots: number[] = [];
-      const allNodes = world.query(POWER_NODE, TEAM);
-      for (const e of allNodes) {
-        const t = world.getComponent<TeamComponent>(e, TEAM)!;
-        if (t.team !== team) continue;
+    // Find all HQ entities for this team as BFS roots
+    const roots: number[] = [];
+    const allNodes = world.query(POWER_NODE, TEAM);
+    for (const e of allNodes) {
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
 
-        const health = world.getComponent<HealthComponent>(e, HEALTH);
-        if (health && health.dead) continue;
+      const health = world.getComponent<HealthComponent>(e, HEALTH);
+      if (health && health.dead) continue;
 
-        if (world.hasComponent(e, BUILDING)) {
-          const bldg = world.getComponent<BuildingComponent>(e, BUILDING)!;
-          if (bldg.buildingType === BuildingType.HQ) {
-            roots.push(e);
-          }
+      if (world.hasComponent(e, BUILDING)) {
+        const bldg = world.getComponent<BuildingComponent>(e, BUILDING)!;
+        if (bldg.buildingType === BuildingType.HQ) {
+          roots.push(e);
         }
       }
+    }
 
-      // BFS from HQ(s)
-      const queue = [...roots];
-      for (const r of roots) powered.add(r);
+    // BFS from HQ(s)
+    const queue = [...roots];
+    for (const r of roots) powered.add(r);
 
-      while (queue.length > 0) {
-        const current = queue.shift()!;
-        const neighbors = this.gridState.getNeighbors(team, current);
-        for (const neighbor of neighbors) {
-          if (powered.has(neighbor)) continue;
-          // Verify neighbor entity still has POWER_NODE and is alive
-          if (!world.hasComponent(neighbor, POWER_NODE)) continue;
-          const nh = world.getComponent<HealthComponent>(neighbor, HEALTH);
-          if (nh && nh.dead) continue;
-          powered.add(neighbor);
-          queue.push(neighbor);
-        }
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const neighbors = this.gridState.getNeighbors(team, current);
+      for (const neighbor of neighbors) {
+        if (powered.has(neighbor)) continue;
+        if (!world.hasComponent(neighbor, POWER_NODE)) continue;
+        const nh = world.getComponent<HealthComponent>(neighbor, HEALTH);
+        if (nh && nh.dead) continue;
+        powered.add(neighbor);
+        queue.push(neighbor);
       }
+    }
 
-      // Update powered flag on all power node entities for this team
-      this.gridState.setPoweredNodes(team, powered);
-      for (const e of allNodes) {
-        const t = world.getComponent<TeamComponent>(e, TEAM)!;
-        if (t.team !== team) continue;
-        const pn = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
-        if (pn) {
-          pn.powered = powered.has(e);
-        }
+    // Update powered flag on all power node entities for this team
+    this.gridState.setPoweredNodes(team, powered);
+    for (const e of allNodes) {
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const pn = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+      if (pn) {
+        pn.powered = powered.has(e);
       }
+    }
+  }
+
+  /**
+   * After BFS, reconnect any unpowered nodes by routing new poles to the nearest powered node.
+   * This heals gaps caused by destroyed intermediaries or missing stored neighbors.
+   */
+  private healDisconnectedNodes(world: World, team: number): void {
+    if (!this.terrainData || !this.occupancy) return;
+
+    const allNodes = world.query(POWER_NODE, TEAM);
+    const unpowered: number[] = [];
+    const powered = this.gridState.getPoweredNodes(team);
+
+    for (const e of allNodes) {
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const health = world.getComponent<HealthComponent>(e, HEALTH);
+      if (health && health.dead) continue;
+      if (!powered.has(e)) {
+        unpowered.push(e);
+      }
+    }
+
+    if (unpowered.length === 0) return;
+
+    // Route each unpowered node to the nearest powered node (spawns poles if needed)
+    for (const entity of unpowered) {
+      // Skip if it became powered from a previous iteration's routing
+      if (this.gridState.getPoweredNodes(team).has(entity)) continue;
+      routePowerConnection(world, team, entity, this.gridState, this.terrainData, this.occupancy);
+      // Re-run BFS so subsequent nodes can find the newly powered chain
+      this.runBFS(world, team);
     }
   }
 

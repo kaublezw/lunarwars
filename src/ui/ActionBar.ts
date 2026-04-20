@@ -41,6 +41,7 @@ export class ActionBar {
   private onTrain: ((unitType: string) => void) | null = null;
   private onDemolish: ((entity: number) => void) | null = null;
   private onRepairPoles: (() => void) | null = null;
+  private onRebuildLines: (() => void) | null = null;
 
   // Cached state to avoid rebuilding DOM every frame
   private currentMode: BarMode = 'hidden';
@@ -96,6 +97,10 @@ export class ActionBar {
 
   onRepairPolesRequest(cb: () => void): void {
     this.onRepairPoles = cb;
+  }
+
+  onRebuildLinesRequest(cb: () => void): void {
+    this.onRebuildLines = cb;
   }
 
   update(world: World, resources: ResourceState, playerTeam: number): void {
@@ -259,6 +264,19 @@ export class ActionBar {
           this.buttonElements.set('repair_poles', button);
           this.buttonAffordable.set('repair_poles', affordable);
         }
+        // Rebuild Lines button (shown when unpowered nodes exist)
+        if (this.hasUnpoweredNodes(world, playerTeam)) {
+          const button = this.createButton(
+            'rebuild_lines',
+            'Rebuild Lines',
+            'free',
+            true,
+            () => this.onRebuildLines?.(),
+          );
+          this.buttonsDiv.appendChild(button);
+          this.buttonElements.set('rebuild_lines', button);
+          this.buttonAffordable.set('rebuild_lines', true);
+        }
       } else if (targetMode === 'factory') {
         const factoryPower = world.getComponent<PowerNodeComponent>(factoryEntity, POWER_NODE);
         const factoryPowered = factoryPower ? factoryPower.powered : true;
@@ -412,6 +430,17 @@ export class ActionBar {
         }
       } else if (repairEl) {
         // No more ruins — force rebuild to remove button
+        this.currentMode = 'hidden';
+        return;
+      }
+
+      // Dynamic rebuild lines button update
+      const hasOrphans = this.hasUnpoweredNodes(world, playerTeam);
+      const rebuildEl = this.buttonElements.get('rebuild_lines');
+      if (hasOrphans && !rebuildEl) {
+        this.currentMode = 'hidden';
+        return;
+      } else if (!hasOrphans && rebuildEl) {
         this.currentMode = 'hidden';
         return;
       }
@@ -576,5 +605,16 @@ export class ActionBar {
       if (t.team === team) count++;
     }
     return { count, energyCost: count * def.energyCost, matterCost: count * def.matterCost };
+  }
+
+  private hasUnpoweredNodes(world: World, team: number): boolean {
+    const nodes = world.query(POWER_NODE, TEAM);
+    for (const e of nodes) {
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const pn = world.getComponent<PowerNodeComponent>(e, POWER_NODE)!;
+      if (!pn.powered) return true;
+    }
+    return false;
   }
 }

@@ -129,7 +129,7 @@ export class HeadlessEngine {
     this.world.addSystem(new RepairSystem(this.resourceState, 2));
     this.world.addSystem(gameOverSystem);
     this.world.addSystem(new HealthSystem());
-    this.world.addSystem(new PowerGridSystem(powerGridState, 2));
+    this.world.addSystem(new PowerGridSystem(powerGridState, 2, this.terrainData, this.buildingOccupancy));
     this.world.addSystem(new EconomySystem(this.resourceState, 2, this.terrainData));
     this.world.addSystem(new BuildSystem(undefined, powerGridState, this.terrainData, this.buildingOccupancy));
     this.world.addSystem(new ProductionSystem(this.resourceState, this.terrainData));

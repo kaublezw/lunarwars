@@ -7,6 +7,7 @@ interface TeamPowerGrid {
   edges: PowerEdge[];
   poweredNodes: Set<number>;
   dirty: boolean;
+  healPending: boolean;
 }
 
 export class PowerGridState {
@@ -16,7 +17,7 @@ export class PowerGridState {
   constructor(teamCount: number) {
     this.teams = [];
     for (let i = 0; i < teamCount; i++) {
-      this.teams.push({ edges: [], poweredNodes: new Set(), dirty: true });
+      this.teams.push({ edges: [], poweredNodes: new Set(), dirty: true, healPending: false });
     }
   }
 
@@ -60,6 +61,18 @@ export class PowerGridState {
 
   isDirty(team: number): boolean {
     return this.teams[team].dirty;
+  }
+
+  markHealPending(team: number): void {
+    this.teams[team].healPending = true;
+  }
+
+  isHealPending(team: number): boolean {
+    return this.teams[team].healPending;
+  }
+
+  clearHealPending(team: number): void {
+    this.teams[team].healPending = false;
   }
 
   /** Set the powered nodes after BFS and clear dirty flag. */
