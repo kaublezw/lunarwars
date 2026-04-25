@@ -22,7 +22,7 @@ import type { HealthComponent } from '@sim/components/Health';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 
-import { buildStructure, buildWallSegments, trainUnit } from '@sim/commands/GameCommands';
+import { buildStructure, buildWallSegments, trainUnit, repairAllPoles } from '@sim/commands/GameCommands';
 import type { WallSegment } from '@sim/commands/GameCommands';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UnitCategory } from '@sim/components/UnitType';
@@ -106,6 +106,15 @@ export function executeCommand(
 
     case 'reassignWorker':
       executeReassignWorker(cmd.workerEntity, cmd.constructionSiteEntity, world);
+      break;
+
+    case 'repairAllPoles':
+      repairAllPoles(ctx, cmd.team, ctx.powerGrid);
+      break;
+
+    case 'rebuildLines':
+      ctx.powerGrid.markDirty(cmd.team);
+      ctx.powerGrid.markHealPending(cmd.team);
       break;
   }
 }

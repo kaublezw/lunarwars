@@ -69,6 +69,16 @@ export interface ReassignWorkerPayload {
   constructionSiteEntity: number;
 }
 
+export interface RepairAllPolesPayload {
+  type: 'repairAllPoles';
+  team: number;
+}
+
+export interface RebuildLinesPayload {
+  type: 'rebuildLines';
+  team: number;
+}
+
 export type GameCommandPayload =
   | MoveUnitsPayload
   | AttackMovePayload
@@ -78,7 +88,9 @@ export type GameCommandPayload =
   | SetRallyPointPayload
   | DemolishPayload
   | RepairBuildingPayload
-  | ReassignWorkerPayload;
+  | ReassignWorkerPayload
+  | RepairAllPolesPayload
+  | RebuildLinesPayload;
 
 // --- Tick-tagged command (sent over the wire) ---
 

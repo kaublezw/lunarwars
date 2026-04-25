@@ -28,6 +28,7 @@ export class NetworkClient {
 
   // Meta callbacks
   onOpponentDisconnected: (() => void) | null = null;
+  onDesyncAlert: ((tick: number, checksum: number) => void) | null = null;
 
   constructor(serverUrl?: string) {
     this.serverUrl = serverUrl || getServerUrl();
@@ -126,6 +127,9 @@ export class NetworkClient {
         break;
       case 'player_disconnected':
         this.onOpponentDisconnected?.();
+        break;
+      case 'desync_alert':
+        this.onDesyncAlert?.(msg.tick, msg.checksum);
         break;
     }
   }

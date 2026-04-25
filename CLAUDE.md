@@ -174,6 +174,36 @@ The train is the matter delivery mechanism. Energy flows directly from extractor
 - `npm run convert-vox` — Convert `.vox` files in `assets/vox/` to `GeneratedVoxelModels.ts`
 - `npm run headless` — Run AI vs AI headless game (no browser/rendering)
 
+## Multiplayer
+
+### Running locally
+1. Install server dependencies: `cd server && npm install`
+2. Start the relay server: `npm run server` (port 8080)
+3. Start the dev server: `npm run dev` (port 5173)
+4. Open two browser tabs:
+   - Tab 1: Click "Multiplayer" button (top right) then "Create Game" — shows room code
+   - Tab 2: Click "Multiplayer" then "Join Game" — enter the 4-char room code
+5. Game starts automatically when both players connect
+
+Alternative: use URL params directly — `?host` to create, `?room=CODE` to join.
+
+### Architecture
+- **Lockstep deterministic**: Both clients run identical simulations; server relays commands only
+- `server/server.ts` — WebSocket relay server (room management, team assignment, command relay)
+- `src/network/Protocol.ts` — All message type definitions (lobby + game commands)
+- `src/network/NetworkClient.ts` — Client-side WebSocket connection
+- `src/network/CommandBuffer.ts` — Per-tick command buffering with dual-player confirmation, input delay (6 ticks = 100ms)
+- `src/network/CommandExecutor.ts` — Deterministic command execution (single entry point for all player actions)
+- `src/network/DesyncDetector.ts` — FNV-1a checksum verification every 300 ticks (~5s)
+- `src/ui/LobbyOverlay.ts` — Connecting/waiting UI during lobby phase
+- `src/ui/MultiplayerMenu.ts` ��� In-game multiplayer entry menu (create/join)
+
+### Determinism contract
+All player actions **must** go through `issueCommand()` in main.ts. This routes through CommandBuffer/network in multiplayer or executes directly in single-player. Never mutate ECS state directly from UI callbacks — this causes desyncs.
+
+### Deployment
+Set `VITE_WS_SERVER_URL` environment variable to the WebSocket server URL (e.g., `wss://your-server.com:8080`) before building.
+
 ## Headless Engine
 
 Runs a complete AI vs AI game without browser or Three.js dependencies. Useful for testing AI changes and training.

@@ -92,6 +92,7 @@ import { CommandBuffer } from '@network/CommandBuffer';
 import { executeCommand } from '@network/CommandExecutor';
 import { DesyncDetector } from '@network/DesyncDetector';
 import { LobbyOverlay } from '@ui/LobbyOverlay';
+import { MultiplayerMenu } from '@ui/MultiplayerMenu';
 import type { GameCommandPayload } from '@network/Protocol';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
@@ -838,12 +839,11 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
   });
 
   ab.onRepairPolesRequest(() => {
-    GameCommands.repairAllPoles(cmdCtx, PLAYER_TEAM, powerGridState);
+    issueCommand({ type: 'repairAllPoles', team: PLAYER_TEAM });
   });
 
   ab.onRebuildLinesRequest(() => {
-    powerGridState.markDirty(PLAYER_TEAM);
-    powerGridState.markHealPending(PLAYER_TEAM);
+    issueCommand({ type: 'rebuildLines', team: PLAYER_TEAM });
   });
 
   pc.onPlacementConfirmed((type, x, z) => {
@@ -1050,6 +1050,9 @@ if (isMultiplayer && networkClient && commandBuffer) {
     desyncDetector.setSendFn((tick, checksum) => {
       networkClient!.sendDesyncAlert(tick, checksum);
     });
+    networkClient.onDesyncAlert = (tick, checksum) => {
+      desyncDetector!.addRemoteChecksum(tick, checksum);
+    };
   }
 
   // beforeTick gate: apply buffered commands, confirm ticks
@@ -1342,10 +1345,24 @@ sandboxBtn.addEventListener('click', () => {
 });
 document.body.appendChild(sandboxBtn);
 
+// --- Multiplayer Button ---
+if (!isMultiplayer) {
+  const multiplayerMenu = new MultiplayerMenu();
+  multiplayerMenu.mount(app);
+
+  const mpBtn = document.createElement('button');
+  mpBtn.textContent = 'Multiplayer';
+  mpBtn.style.cssText = 'position:fixed;top:10px;right:460px;z-index:1000;padding:6px 16px;background:#1a3a2a;color:#66ffaa;border:1px solid #44aa77;border-radius:4px;cursor:pointer;font-family:monospace;font-size:14px;';
+  mpBtn.addEventListener('mouseenter', () => { mpBtn.style.background = '#2a4a3a'; });
+  mpBtn.addEventListener('mouseleave', () => { mpBtn.style.background = '#1a3a2a'; });
+  mpBtn.addEventListener('click', () => { multiplayerMenu.show(); });
+  document.body.appendChild(mpBtn);
+}
+
 // --- Seed Display ---
 const seedLabel = document.createElement('span');
 seedLabel.textContent = `Seed: ${seed}`;
-seedLabel.style.cssText = 'position:fixed;top:14px;right:370px;z-index:1000;color:#888;font-family:monospace;font-size:12px;';
+seedLabel.style.cssText = `position:fixed;top:14px;right:${isMultiplayer ? '370px' : '570px'};z-index:1000;color:#888;font-family:monospace;font-size:12px;`;
 document.body.appendChild(seedLabel);
 
 // --- Tick Counter (replay mode only) ---
