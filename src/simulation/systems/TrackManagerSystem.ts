@@ -88,13 +88,19 @@ export class TrackManagerSystem implements System {
 
     // 3. Check if the plant set has changed since the last route computation
     const lastSnapshot = ts.pendingRoute != null ? ts.pendingPlantSnapshot : ts.activePlantSnapshot;
-    if (!this.arraysEqual(plantIds, lastSnapshot)) {
+    const stopsChanged = !this.arraysEqual(plantIds, lastSnapshot);
+
+    // Also recompute if any non-stop building now sits on the active track
+    const buildingOnTrack = !stopsChanged && ts.activeTrackCells.size > 0 &&
+      this.hasBuildingOnTrack(world, team, ts.activeTrackCells);
+
+    if (stopsChanged || buildingOnTrack) {
       // 4. Compute new optimal circuit
       const hqPos = world.getComponent<PositionComponent>(hqEntity, POSITION)!;
-      const route = this.computeCircuit(hqPos, plants);
+      const { route, trackCells } = this.computeCircuit(world, hqPos, plants);
 
       // 5. Store as pending
-      this.trackState.setPendingRoute(team, route, plantIds);
+      this.trackState.setPendingRoute(team, route, plantIds, trackCells);
     }
 
     // 6. Handle dock operations (route swap + pending car attachment)
@@ -258,10 +264,11 @@ export class TrackManagerSystem implements System {
   // ───────────────────────────────────────────────────────────────────────
 
   private computeCircuit(
+    world: World,
     hqPos: PositionComponent,
     plants: { entity: number; x: number; z: number }[],
-  ): TrackWaypoint[] {
-    if (plants.length === 0) return [];
+  ): { route: TrackWaypoint[]; trackCells: Set<string> } {
+    if (plants.length === 0) return { route: [], trackCells: new Set() };
 
     // 3a. Nearest-neighbor TSP to determine stop order
     const stopOrder: { x: number; z: number; entity: number | null; isHQ: boolean }[] =
@@ -282,11 +289,22 @@ export class TrackManagerSystem implements System {
       stopOrder.push({ x: curX, z: curZ, entity: plants[bestIdx].entity, isHQ: false });
     }
 
-    // 3b. Build a set of blocked grid cells (building centers only).
+    // 3b. Build a set of blocked grid cells (all buildings + construction sites).
     const blockedCells = new Set<string>();
-    for (const stop of stopOrder) {
-      const bgx = Math.round(stop.x / MACRO_GRID_SIZE);
-      const bgz = Math.round(stop.z / MACRO_GRID_SIZE);
+    const allBuildings = world.query(BUILDING, POSITION);
+    for (const e of allBuildings) {
+      const b = world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (b.buildingType === BuildingType.Wall || b.buildingType === BuildingType.PowerPole) continue;
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const bgx = Math.round(pos.x / MACRO_GRID_SIZE);
+      const bgz = Math.round(pos.z / MACRO_GRID_SIZE);
+      blockedCells.add(`${bgx},${bgz}`);
+    }
+    const allSites = world.query(CONSTRUCTION, POSITION);
+    for (const e of allSites) {
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const bgx = Math.round(pos.x / MACRO_GRID_SIZE);
+      const bgz = Math.round(pos.z / MACRO_GRID_SIZE);
       blockedCells.add(`${bgx},${bgz}`);
     }
 
@@ -370,7 +388,7 @@ export class TrackManagerSystem implements System {
     const pass2 = buildLoop(pass1.finalDir);
     const masterPath = pass2.path;
 
-    if (masterPath.length < 2) return [];
+    if (masterPath.length < 2) return { route: [], trackCells: new Set<string>() };
 
     // VALIDATE: every consecutive pair must be same-dir (straight) or +-1 dir (90-degree turn)
     const DIR_NAMES = ['N', 'E', 'S', 'W'];
@@ -399,10 +417,23 @@ export class TrackManagerSystem implements System {
       }
     }
 
-    // 3e. Convert master node path to world-space TrackWaypoints
+    // 3e. Extract grid cells occupied by the track (for placement blocking).
+    const trackCells = new Set<string>();
+    for (let i = 0; i < masterPath.length; i++) {
+      trackCells.add(`${masterPath[i].x},${masterPath[i].z}`);
+      // For curves, also include the diagonal cell the arc sweeps through
+      if (i > 0 && masterPath[i].dir !== masterPath[i - 1].dir) {
+        const prev = masterPath[i - 1];
+        const isRight = ((masterPath[i].dir - prev.dir + 4) % 4) === 1;
+        const perpDir = isRight ? (prev.dir + 1) % 4 : (prev.dir + 3) % 4;
+        trackCells.add(`${prev.x + DIR_DX[perpDir]},${prev.z + DIR_DZ[perpDir]}`);
+      }
+    }
+
+    // 3f. Convert master node path to world-space TrackWaypoints
     const route = this.nodesToWaypoints(masterPath);
 
-    // 3f. Map entityIds — for each building, find the closest waypoint
+    // 3g. Map entityIds — for each building, find the closest waypoint
     // (which will be on an adjacent grid cell, close enough for load/unload)
     for (const gs of gridStops) {
       let bestIdx = 0;
@@ -417,7 +448,7 @@ export class TrackManagerSystem implements System {
       route[bestIdx].isHQ = gs.isHQ;
     }
 
-    return route;
+    return { route, trackCells };
   }
 
   // ───────────────────────────────────────────────────────────────────────
@@ -717,6 +748,33 @@ export class TrackManagerSystem implements System {
       return e;
     }
     return null;
+  }
+
+  /** Check if any completed building (non-wall, non-pole) sits on one of the given track cells. */
+  private hasBuildingOnTrack(world: World, team: number, trackCells: Set<string>): boolean {
+    const buildings = world.query(BUILDING, POSITION, TEAM);
+    for (const e of buildings) {
+      if (world.hasComponent(e, CONSTRUCTION)) continue;
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const b = world.getComponent<BuildingComponent>(e, BUILDING)!;
+      if (b.buildingType === BuildingType.Wall || b.buildingType === BuildingType.PowerPole) continue;
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const gx = Math.round(pos.x / MACRO_GRID_SIZE);
+      const gz = Math.round(pos.z / MACRO_GRID_SIZE);
+      if (trackCells.has(`${gx},${gz}`)) return true;
+    }
+    // Also check construction sites
+    const sites = world.query(CONSTRUCTION, POSITION, TEAM);
+    for (const e of sites) {
+      const t = world.getComponent<TeamComponent>(e, TEAM)!;
+      if (t.team !== team) continue;
+      const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+      const gx = Math.round(pos.x / MACRO_GRID_SIZE);
+      const gz = Math.round(pos.z / MACRO_GRID_SIZE);
+      if (trackCells.has(`${gx},${gz}`)) return true;
+    }
+    return false;
   }
 
   /** Compare two sorted number arrays for equality. */

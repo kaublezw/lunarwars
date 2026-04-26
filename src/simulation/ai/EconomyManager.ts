@@ -40,6 +40,7 @@ export class EconomyManager {
       energyNodes: ctx.energyNodes,
       oreDeposits: ctx.oreDeposits,
       powerGrid: ctx.powerGrid,
+      trackState: ctx.trackState,
     };
   }
 

@@ -5,6 +5,7 @@ import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import type { PowerGridState } from '@sim/economy/PowerGridState';
+import type { TrackState } from '@sim/logistics/TrackState';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 
@@ -185,6 +186,7 @@ export interface AIContext {
   hqEntity: number;
   totalTicks: number;
   powerGrid: PowerGridState;
+  trackState?: TrackState;
 }
 
 export interface IntelligenceReport {

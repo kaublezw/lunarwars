@@ -373,9 +373,9 @@ world.addSystem(new TrackManagerSystem(trackState, terrainData, 2));
 if (isMultiplayer) {
   // Multiplayer: no AI — both teams are human players
 } else {
-  world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState));
+  world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
   if (spectatorMode) {
-    world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState));
+    world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
   }
 }
 
@@ -673,7 +673,7 @@ if (!spectatorMode && scenarioMode !== 'sandbox') {
   selectionController = new SelectionController(inputManager, isoCamera, world, eventBus);
   selectionController.setFogState(fogState, PLAYER_TEAM);
 
-  placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, oreDeposits, PLAYER_TEAM);
+  placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, oreDeposits, PLAYER_TEAM, trackState);
   selectionController.setPlacementCheck(() => placementController!.isActive());
 
   minimap.onRightClick = (worldX, worldZ) => {
@@ -745,6 +745,7 @@ const cmdCtx: GameCommandContext = {
   energyNodes,
   oreDeposits,
   powerGrid: powerGridState,
+  trackState,
 };
 
 /** Send a command through multiplayer network, or execute immediately in single-player. */
@@ -1162,7 +1163,7 @@ if (scenarioMode === 'sandbox') {
     };
 
     // Create PlacementController + ActionBar for sandbox play mode
-    placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, oreDeposits, PLAYER_TEAM);
+    placementController = new PlacementController(inputManager, isoCamera, terrainData, world, energyNodes, oreDeposits, PLAYER_TEAM, trackState);
     selectionController.setPlacementCheck(() => placementController!.isActive());
 
     if (!actionBar) {

@@ -33,6 +33,7 @@ import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import { validateAndSnapPlacement } from '@sim/ai/PlacementValidator';
 import { teamHasEngine, engineInProduction } from '@sim/logistics/TrainSpawner';
 import type { PowerGridState } from '@sim/economy/PowerGridState';
+import type { TrackState } from '@sim/logistics/TrackState';
 import { TEAM_COLORS } from '@sim/ai/AITypes';
 
 export interface GameCommandContext {
@@ -42,6 +43,7 @@ export interface GameCommandContext {
   energyNodes: EnergyNode[];
   oreDeposits: OreDeposit[];
   powerGrid: PowerGridState;
+  trackState?: TrackState;
 }
 
 export interface WallSegment {
@@ -206,7 +208,7 @@ export function buildStructure(
 
   // Spatial validation + snap
   const placement = validateAndSnapPlacement(
-    type, x, z, ctx.world, ctx.terrain, ctx.energyNodes, ctx.oreDeposits,
+    type, x, z, ctx.world, ctx.terrain, ctx.energyNodes, ctx.oreDeposits, ctx.trackState, team,
   );
   if (!placement.valid) return false;
 

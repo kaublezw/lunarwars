@@ -18,6 +18,10 @@ export interface TeamTrackState {
   pendingPlantSnapshot: number[];
   /** Entity IDs of completed plants that contributed to the active route. */
   activePlantSnapshot: number[];
+  /** Grid cells occupied by the active track route ("gx,gz" keys). */
+  activeTrackCells: Set<string>;
+  /** Grid cells occupied by the pending track route ("gx,gz" keys). */
+  pendingTrackCells: Set<string>;
 }
 
 export class TrackState {
@@ -31,6 +35,8 @@ export class TrackState {
         pendingRoute: null,
         pendingPlantSnapshot: [],
         activePlantSnapshot: [],
+        activeTrackCells: new Set(),
+        pendingTrackCells: new Set(),
       });
     }
   }
@@ -39,48 +45,85 @@ export class TrackState {
     return this.teams[team];
   }
 
+  /** Check whether a grid cell is occupied by another team's active or pending track.
+   *  Own-team track is excluded because it will auto-reroute around new buildings. */
+  hasEnemyTrackAtGrid(team: number, gx: number, gz: number): boolean {
+    const key = `${gx},${gz}`;
+    for (let i = 0; i < this.teams.length; i++) {
+      if (i === team) continue;
+      const ts = this.teams[i];
+      if (ts.activeTrackCells.has(key) || ts.pendingTrackCells.has(key)) return true;
+    }
+    return false;
+  }
+
+  /** Check whether a grid cell overlaps any team's active track (used for recompute triggers). */
+  hasActiveTrackAtGrid(team: number, gx: number, gz: number): boolean {
+    const ts = this.teams[team];
+    return ts.activeTrackCells.has(`${gx},${gz}`);
+  }
+
   /** Promote the pending route to active (called when engine docks at HQ). */
   applyPendingRoute(team: number): boolean {
     const ts = this.teams[team];
     if (!ts.pendingRoute) return false;
     ts.activeRoute = ts.pendingRoute;
     ts.activePlantSnapshot = [...ts.pendingPlantSnapshot];
+    ts.activeTrackCells = ts.pendingTrackCells;
     ts.pendingRoute = null;
     ts.pendingPlantSnapshot = [];
+    ts.pendingTrackCells = new Set();
     return true;
   }
 
   /** Store a newly computed route as pending. */
-  setPendingRoute(team: number, route: TrackWaypoint[], plantSnapshot: number[]): void {
+  setPendingRoute(team: number, route: TrackWaypoint[], plantSnapshot: number[], trackCells?: Set<string>): void {
     const ts = this.teams[team];
     ts.pendingRoute = route;
     ts.pendingPlantSnapshot = [...plantSnapshot];
+    ts.pendingTrackCells = trackCells ?? new Set();
   }
 
   /** Directly set the active route (for initial route when no train exists yet). */
-  setActiveRoute(team: number, route: TrackWaypoint[], plantSnapshot: number[]): void {
+  setActiveRoute(team: number, route: TrackWaypoint[], plantSnapshot: number[], trackCells?: Set<string>): void {
     const ts = this.teams[team];
     ts.activeRoute = route;
     ts.activePlantSnapshot = [...plantSnapshot];
+    ts.activeTrackCells = trackCells ?? new Set();
     ts.pendingRoute = null;
     ts.pendingPlantSnapshot = [];
+    ts.pendingTrackCells = new Set();
   }
 
-  serialize(): TeamTrackState[] {
+  serialize(): Record<string, unknown>[] {
     return this.teams.map(t => ({
       activeRoute: t.activeRoute.map(w => ({ ...w })),
       pendingRoute: t.pendingRoute ? t.pendingRoute.map(w => ({ ...w })) : null,
       pendingPlantSnapshot: [...t.pendingPlantSnapshot],
       activePlantSnapshot: [...t.activePlantSnapshot],
+      activeTrackCells: [...t.activeTrackCells],
+      pendingTrackCells: [...t.pendingTrackCells],
     }));
   }
 
-  deserialize(data: TeamTrackState[]): void {
-    this.teams = data.map(t => ({
-      activeRoute: t.activeRoute.map(w => ({ ...w })),
-      pendingRoute: t.pendingRoute ? t.pendingRoute.map(w => ({ ...w })) : null,
-      pendingPlantSnapshot: [...t.pendingPlantSnapshot],
-      activePlantSnapshot: [...t.activePlantSnapshot],
-    }));
+  deserialize(data: Record<string, unknown>[]): void {
+    this.teams = data.map(t => {
+      const d = t as {
+        activeRoute: TrackWaypoint[];
+        pendingRoute: TrackWaypoint[] | null;
+        pendingPlantSnapshot: number[];
+        activePlantSnapshot: number[];
+        activeTrackCells?: string[];
+        pendingTrackCells?: string[];
+      };
+      return {
+        activeRoute: d.activeRoute.map(w => ({ ...w })),
+        pendingRoute: d.pendingRoute ? d.pendingRoute.map(w => ({ ...w })) : null,
+        pendingPlantSnapshot: [...d.pendingPlantSnapshot],
+        activePlantSnapshot: [...d.activePlantSnapshot],
+        activeTrackCells: new Set(d.activeTrackCells ?? []),
+        pendingTrackCells: new Set(d.pendingTrackCells ?? []),
+      };
+    });
   }
 }

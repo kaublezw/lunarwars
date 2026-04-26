@@ -3,6 +3,7 @@ import type { IsometricCamera } from '@render/IsometricCamera';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { World } from '@core/ECS';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
+import type { TrackState } from '@sim/logistics/TrackState';
 import { BUILDING, POSITION, CONSTRUCTION, RENDERABLE, TEAM, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { TeamComponent } from '@sim/components/Team';
 import type { PositionComponent } from '@sim/components/Position';
@@ -61,6 +62,7 @@ export class PlacementController {
     private energyNodes: EnergyNode[],
     private oreDeposits: OreDeposit[],
     private playerTeam: number,
+    private trackState?: TrackState,
   ) {
     input.onMouseMove((x, y) => {
       if (!this.active) return;
@@ -596,6 +598,13 @@ export class PlacementController {
         if (c.buildingType === BuildingType.SupplyDepot) depotCount++;
       }
       if (depotCount >= 1) return false;
+    }
+
+    // Can't build on enemy train track
+    if (this.trackState) {
+      const gx = Math.round(x / MACRO_GRID_SIZE);
+      const gz = Math.round(z / MACRO_GRID_SIZE);
+      if (this.trackState.hasEnemyTrackAtGrid(this.playerTeam, gx, gz)) return false;
     }
 
     return true;

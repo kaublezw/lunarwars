@@ -100,12 +100,16 @@ export class RepairSystem implements System {
       const affordable = Math.min(repairCost, teamMatter);
       const actualRepair = affordable / REPAIR_MATTER_COST;
 
-      if (actualRepair > 0) {
-        targetHealth.current = Math.min(targetHealth.current + actualRepair, targetHealth.max);
-        this.resources.spendMatter(team.team, affordable);
-        if (this.eventBus) {
-          this.eventBus.emit('construction:active', workerPos.x, workerPos.z);
-        }
+      if (actualRepair <= 0) {
+        // No matter available — cancel repair so worker can do other things
+        world.removeComponent(e, REPAIR_COMMAND);
+        continue;
+      }
+
+      targetHealth.current = Math.min(targetHealth.current + actualRepair, targetHealth.max);
+      this.resources.spendMatter(team.team, affordable);
+      if (this.eventBus) {
+        this.eventBus.emit('construction:active', workerPos.x, workerPos.z);
       }
 
       this.restoreVoxels(world, repair.targetEntity, targetHealth, actualRepair);

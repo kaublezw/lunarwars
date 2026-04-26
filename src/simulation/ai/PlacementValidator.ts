@@ -1,6 +1,7 @@
 import type { World } from '@core/ECS';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
+import type { TrackState } from '@sim/logistics/TrackState';
 import { BUILDING, POSITION, CONSTRUCTION, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import { BuildingType } from '@sim/components/Building';
@@ -18,6 +19,8 @@ export function validateAndSnapPlacement(
   terrainData: TerrainData,
   energyNodes: EnergyNode[],
   oreDeposits: OreDeposit[],
+  trackState?: TrackState,
+  team?: number,
 ): { valid: boolean; x: number; z: number } {
   const def = BUILDING_DEFS[buildingType];
   if (!def) return { valid: false, x, z };
@@ -91,6 +94,15 @@ export function validateAndSnapPlacement(
     const dx = pos.x - snappedX;
     const dz = pos.z - snappedZ;
     if (dx * dx + dz * dz < spacingSq) {
+      return { valid: false, x: snappedX, z: snappedZ };
+    }
+  }
+
+  // Check track overlap — can't build on enemy track
+  if (trackState && team !== undefined) {
+    const gx = Math.round(snappedX / MACRO_GRID_SIZE);
+    const gz = Math.round(snappedZ / MACRO_GRID_SIZE);
+    if (trackState.hasEnemyTrackAtGrid(team, gx, gz)) {
       return { valid: false, x: snappedX, z: snappedZ };
     }
   }
