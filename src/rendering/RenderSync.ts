@@ -168,6 +168,7 @@ export class RenderSync {
   private meshTypes = new Map<Entity, string>();
   private turrets = new Map<Entity, TurretRef>();
   private trackedEntities = new Set<Entity>();
+  private dyingEntities = new Map<Entity, number>(); // entity -> frames remaining before removal
   private ghostedEntities = new Set<Entity>();
   private originalMaterials = new Map<Entity, Map<THREE.Material, { color: THREE.Color; opacity: number; transparent: boolean }>>();
   private loadedModels = new Map<string, THREE.Object3D>();
@@ -326,18 +327,26 @@ export class RenderSync {
     this.updateTurrets(world, alpha);
 
     // Remove entities that no longer exist
+    // Short-lived entities (projectiles) get 2 extra frames so they're visible
+    // even when tick batching processes creation+destruction in a single frame
     for (const e of this.trackedEntities) {
       if (!currentEntities.has(e)) {
-        const obj = this.objects.get(e);
-        if (obj) {
-          this.scene.remove(obj);
-          this.disposeObject(obj);
-          this.objects.delete(e);
+        const meshType = this.meshTypes.get(e);
+        if (meshType === 'projectile' && !this.dyingEntities.has(e)) {
+          this.dyingEntities.set(e, 2);
+        } else if (!this.dyingEntities.has(e)) {
+          this.removeEntity(e);
         }
-        this.meshTypes.delete(e);
-        this.turrets.delete(e);
-        this.ghostedEntities.delete(e);
-        this.originalMaterials.delete(e);
+      }
+    }
+
+    // Tick down dying entities and remove when expired
+    for (const [e, frames] of this.dyingEntities) {
+      if (frames <= 0) {
+        this.removeEntity(e);
+        this.dyingEntities.delete(e);
+      } else {
+        this.dyingEntities.set(e, frames - 1);
       }
     }
 
@@ -466,6 +475,19 @@ export class RenderSync {
         turret.firedThisFrame = false;
       }
     }
+  }
+
+  private removeEntity(e: Entity): void {
+    const obj = this.objects.get(e);
+    if (obj) {
+      this.scene.remove(obj);
+      this.disposeObject(obj);
+      this.objects.delete(e);
+    }
+    this.meshTypes.delete(e);
+    this.turrets.delete(e);
+    this.ghostedEntities.delete(e);
+    this.originalMaterials.delete(e);
   }
 
   private createObject(e: Entity, world: World): void {

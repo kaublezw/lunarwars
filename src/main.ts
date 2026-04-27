@@ -1087,9 +1087,6 @@ if (isMultiplayer && networkClient && commandBuffer) {
 
   // Lock time scale and disable save in multiplayer
   gameLoop.setTimeScale(1);
-  // Cap ticks per frame to 2 so projectiles and other short-lived entities
-  // are always visible (prevents tick batching after lockstep stalls)
-  gameLoop.setMaxTicksPerFrame(2);
 }
 
 // --- Pause Toggle (P key) ---
