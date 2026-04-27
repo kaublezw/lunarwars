@@ -8,6 +8,7 @@ export class GameLoop {
   private timeScale = 1;
   private tickCount = 0;
   private beforeTick: ((tick: number) => boolean) | null = null;
+  private maxTicksPerFrame = 16;
 
   constructor(
     private simulate: (dt: number) => void,
@@ -59,6 +60,11 @@ export class GameLoop {
     this.beforeTick = fn;
   }
 
+  /** Limit simulation ticks per render frame. Lower values prevent tick batching from hiding short-lived entities. */
+  setMaxTicksPerFrame(max: number): void {
+    this.maxTicksPerFrame = Math.max(1, max);
+  }
+
   private loop = (): void => {
     if (!this.running) return;
     this.rafId = requestAnimationFrame(this.loop);
@@ -73,9 +79,9 @@ export class GameLoop {
     if (!this.paused) {
       this.accumulator += frameTime * this.timeScale;
 
-      // Cap at 16 ticks per frame to prevent runaway at high time scales
-      if (this.accumulator > this.TICK_RATE * 16) {
-        this.accumulator = this.TICK_RATE * 16;
+      // Cap ticks per frame to prevent runaway and ensure short-lived entities get rendered
+      if (this.accumulator > this.TICK_RATE * this.maxTicksPerFrame) {
+        this.accumulator = this.TICK_RATE * this.maxTicksPerFrame;
       }
 
       while (this.accumulator >= this.TICK_RATE) {
