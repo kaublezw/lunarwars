@@ -122,10 +122,11 @@ const urlParams = new URLSearchParams(window.location.search);
 const multiplayerHost = urlParams.has('host');
 const multiplayerJoinCode = urlParams.get('room');
 const isMultiplayer = multiplayerHost || multiplayerJoinCode !== null;
+const mpAIMode = isMultiplayer && urlParams.has('ai');
 
 // --- Spectator Mode ---
 const SPECTATOR_KEY = 'lunarwars_spectator';
-const spectatorMode = replayMode || sessionStorage.getItem(SPECTATOR_KEY) === 'true';
+const spectatorMode = replayMode || mpAIMode || sessionStorage.getItem(SPECTATOR_KEY) === 'true';
 
 // --- Scenario Mode (URL param or sessionStorage) ---
 const SANDBOX_KEY = 'lunarwars_sandbox';
@@ -370,8 +371,12 @@ world.addSystem(new EconomySystem(resourceState, 2, terrainData));
 world.addSystem(new BuildSystem(eventBus, powerGridState, terrainData, buildingOccupancy));
 world.addSystem(new ProductionSystem(resourceState, terrainData));
 world.addSystem(new TrackManagerSystem(trackState, terrainData, 2));
-if (isMultiplayer) {
+if (isMultiplayer && !mpAIMode) {
   // Multiplayer: no AI — both teams are human players
+} else if (mpAIMode) {
+  // Multiplayer AI test: both teams controlled by AI, spectator view
+  world.addSystem(new AISystem(0, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
+  world.addSystem(new AISystem(1, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
 } else {
   world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
   if (spectatorMode) {
