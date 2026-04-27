@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import type { Entity, World } from '@core/ECS';
-import { POSITION, CARGO_STORAGE, HEALTH, TRAIN_LINK } from '@sim/components/ComponentTypes';
+import { POSITION, CARGO_STORAGE, HEALTH, TRAIN_LINK, TEAM } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { CargoStorageComponent } from '@sim/components/CargoStorage';
 import type { HealthComponent } from '@sim/components/Health';
+import type { TeamComponent } from '@sim/components/Team';
+import type { FogOfWarState } from '@sim/fog/FogOfWarState';
 
 const ENERGY_COLOR = 0x66ccff;  // cyan
 const MATTER_COLOR = 0xff8833;  // orange
@@ -25,6 +27,8 @@ export class CargoIndicatorRenderer {
   private indicators = new Map<Entity, THREE.Mesh>();
   private geometry = new THREE.BoxGeometry(1, 1, 1);
   private materials = new Map<string, THREE.MeshBasicMaterial>();
+  private fogState: FogOfWarState | null = null;
+  private playerTeam = 0;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -46,6 +50,15 @@ export class CargoIndicatorRenderer {
     }));
   }
 
+  setFogState(fogState: FogOfWarState, playerTeam: number): void {
+    this.fogState = fogState;
+    this.playerTeam = playerTeam;
+  }
+
+  setPlayerTeam(team: number): void {
+    this.playerTeam = team;
+  }
+
   sync(world: World): void {
     const cars = world.query(CARGO_STORAGE, POSITION, TRAIN_LINK);
     const activeCars = new Set<Entity>();
@@ -58,12 +71,24 @@ export class CargoIndicatorRenderer {
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
       activeCars.add(e);
 
+      // Fog of war: hide enemy cargo indicators outside visible range
+      let indicatorVisible = true;
+      if (this.fogState && this.playerTeam >= 0) {
+        const team = world.getComponent<TeamComponent>(e, TEAM);
+        if (team && team.team !== this.playerTeam) {
+          indicatorVisible = this.fogState.isVisible(this.playerTeam, pos.x, pos.z);
+        }
+      }
+
       let mesh = this.indicators.get(e);
       if (!mesh) {
         mesh = new THREE.Mesh(this.geometry, this.materials.get('empty')!);
         this.scene.add(mesh);
         this.indicators.set(e, mesh);
       }
+
+      mesh.visible = indicatorVisible;
+      if (!indicatorVisible) continue;
 
       // Pick material based on committed type
       const matKey = cargo.committedType ?? 'empty';

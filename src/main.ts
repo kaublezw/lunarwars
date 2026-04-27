@@ -723,10 +723,12 @@ const depotRangeRenderer = new DepotRangeRenderer(sceneManager.scene);
 depotRangeRenderer.setPlayerTeam(initialFogTeam);
 const trackRenderer = new TrackRenderer(sceneManager.scene);
 trackRenderer.setPlayerTeam(initialFogTeam);
+trackRenderer.setFogState(fogState);
 const powerLineRenderer = new PowerLineRenderer(sceneManager.scene);
 powerLineRenderer.setPlayerTeam(initialFogTeam);
 powerLineRenderer.setFogState(fogState);
 const cargoIndicatorRenderer = new CargoIndicatorRenderer(sceneManager.scene);
+cargoIndicatorRenderer.setFogState(fogState, initialFogTeam);
 
 // Wire box select callbacks (only if player input active)
 if (selectionController) {
@@ -939,6 +941,7 @@ function setFogPerspective(team: number): void {
   garageDoorRenderer.setPlayerTeam(team);
   depotRangeRenderer.setPlayerTeam(team);
   trackRenderer.setPlayerTeam(team);
+  cargoIndicatorRenderer.setPlayerTeam(team);
   powerLineRenderer.setPlayerTeam(team);
   if (team < 0) {
     fogRenderer.setVisible(false);
