@@ -29,6 +29,7 @@ export class NetworkClient {
   // Meta callbacks
   onOpponentDisconnected: (() => void) | null = null;
   onDesyncAlert: ((tick: number, checksum: number) => void) | null = null;
+  onSpeedChange: ((scale: number) => void) | null = null;
 
   constructor(serverUrl?: string) {
     this.serverUrl = serverUrl || getServerUrl();
@@ -97,6 +98,10 @@ export class NetworkClient {
     this.send({ type: 'desync_alert', tick, checksum });
   }
 
+  sendSpeedChange(scale: number): void {
+    this.send({ type: 'speed_change', scale });
+  }
+
   // --- Internal ---
 
   private send(msg: unknown): void {
@@ -130,6 +135,9 @@ export class NetworkClient {
         break;
       case 'desync_alert':
         this.onDesyncAlert?.(msg.tick, msg.checksum);
+        break;
+      case 'speed_change':
+        this.onSpeedChange?.(msg.scale);
         break;
     }
   }

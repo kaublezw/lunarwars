@@ -160,6 +160,11 @@ export interface DesyncAlertMessage {
   checksum: number;
 }
 
+export interface SpeedChangeMessage {
+  type: 'speed_change';
+  scale: number;
+}
+
 // --- Union of all messages ---
 
 export type ClientToServerMessage =
@@ -167,7 +172,8 @@ export type ClientToServerMessage =
   | JoinRoomMessage
   | GameCommandMessage
   | TickConfirmMessage
-  | DesyncAlertMessage;
+  | DesyncAlertMessage
+  | SpeedChangeMessage;
 
 export type ServerToClientMessage =
   | RoomCreatedMessage
@@ -177,7 +183,8 @@ export type ServerToClientMessage =
   | GameCommandMessage
   | TickConfirmMessage
   | PlayerDisconnectedMessage
-  | DesyncAlertMessage;
+  | DesyncAlertMessage
+  | SpeedChangeMessage;
 
 // Input delay default (ticks). 6 ticks = 100ms at 60Hz.
 export const DEFAULT_INPUT_DELAY = 6;

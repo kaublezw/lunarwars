@@ -131,7 +131,8 @@ wss.on('connection', (ws: WebSocket) => {
 
       case 'game_command':
       case 'tick_confirm':
-      case 'desync_alert': {
+      case 'desync_alert':
+      case 'speed_change': {
         // Relay game messages to both players (including sender)
         const room = playerRoom.get(ws);
         if (!room || !room.started) return;

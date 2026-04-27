@@ -959,6 +959,10 @@ function setFogPerspective(team: number): void {
 if (spectatorPanel) {
   spectatorPanel.onSpeedChange = (scale: number) => {
     gameLoop.setTimeScale(scale);
+    // In multiplayer AI mode, broadcast speed change to other client
+    if (mpAIMode && networkClient) {
+      networkClient.sendSpeedChange(scale);
+    }
   };
 
   spectatorPanel.onFogChange = (mode: FogMode) => {
@@ -1085,8 +1089,20 @@ if (isMultiplayer && networkClient && commandBuffer) {
     return true;
   });
 
-  // Lock time scale and disable save in multiplayer
-  gameLoop.setTimeScale(1);
+  // Lock time scale in human multiplayer (AI spectator allows speed controls)
+  if (!mpAIMode) {
+    gameLoop.setTimeScale(1);
+  }
+
+  // Receive speed changes from the other client
+  if (mpAIMode) {
+    networkClient!.onSpeedChange = (scale: number) => {
+      gameLoop.setTimeScale(scale);
+      if (spectatorPanel) {
+        spectatorPanel.setSpeed(scale);
+      }
+    };
+  }
 }
 
 // --- Pause Toggle (P key) ---

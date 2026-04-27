@@ -124,6 +124,11 @@ export class SpectatorPanel {
     return sep;
   }
 
+  setSpeed(scale: number): void {
+    this.currentSpeed = scale;
+    this.highlightSpeed();
+  }
+
   private highlightSpeed(): void {
     const speeds = [1, 2, 4, 8];
     for (let i = 0; i < this.speedButtons.length; i++) {
