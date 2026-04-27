@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "convert-vox": "tsx scripts/convert-vox.ts",
     "headless": "tsx scripts/run-headless.ts",
-    "server": "cd server && npx tsx server.ts"
+    "server": "cd server && npx tsx server.ts",
+    "mp-test": "tsx scripts/run-mp-test.ts"
   },
   "dependencies": {
     "@types/howler": "^2.2.12",
@@ -18,8 +19,10 @@
   "devDependencies": {
     "@types/node": "^22.19.13",
     "@types/three": "^0.170.0",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "ws": "^8.20.0"
   }
 }

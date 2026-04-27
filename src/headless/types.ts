@@ -8,3 +8,8 @@ export interface GameResult {
   totalTicks: number;
   winner: number | null;  // 0 or 1, or null if truncated
 }
+
+export interface MultiplayerGameResult extends GameResult {
+  desyncCount: number;
+  checksumsPassed: number;
+}
