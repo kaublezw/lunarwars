@@ -8,6 +8,8 @@ import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { PlantStorageComponent } from '@sim/components/PlantStorage';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
+import type { PowerPoleRuinComponent } from '@sim/components/PowerPoleRuin';
+import { findNodeAtGrid } from '@sim/economy/PowerGridRouter';
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
@@ -602,7 +604,15 @@ export class ActionBar {
     let count = 0;
     for (const e of ruins) {
       const t = world.getComponent<TeamComponent>(e, TEAM)!;
-      if (t.team === team) count++;
+      if (t.team !== team) continue;
+      const ruin = world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
+      // Skip orphaned poles with no surviving neighbors
+      let hasSurvivor = false;
+      for (const [gx, gz] of ruin.neighborGridPositions) {
+        if (findNodeAtGrid(world, team, gx, gz) !== null) { hasSurvivor = true; break; }
+      }
+      if (!hasSurvivor) continue;
+      count++;
     }
     return { count, energyCost: count * def.energyCost, matterCost: count * def.matterCost };
   }

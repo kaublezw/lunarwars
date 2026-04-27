@@ -35,6 +35,7 @@ import { teamHasEngine, engineInProduction } from '@sim/logistics/TrainSpawner';
 import type { PowerGridState } from '@sim/economy/PowerGridState';
 import type { TrackState } from '@sim/logistics/TrackState';
 import { TEAM_COLORS } from '@sim/ai/AITypes';
+import { findNodeAtGrid } from '@sim/economy/PowerGridRouter';
 
 export interface GameCommandContext {
   world: World;
@@ -341,7 +342,23 @@ export function trainUnit(
 }
 
 /**
+ * Check if a pole ruin has at least one surviving neighbor POWER_NODE.
+ * If none survive, the pole is orphaned (its building was destroyed) and not worth rebuilding.
+ */
+function hasAnySurvivingNeighbor(
+  world: World,
+  team: number,
+  ruin: PowerPoleRuinComponent,
+): boolean {
+  for (const [gx, gz] of ruin.neighborGridPositions) {
+    if (findNodeAtGrid(world, team, gx, gz) !== null) return true;
+  }
+  return false;
+}
+
+/**
  * Count pole ruins for a team and return the total repair cost.
+ * Skips orphaned ruins whose neighbor buildings no longer exist.
  */
 export function getPoleRepairCost(
   world: World,
@@ -354,7 +371,10 @@ export function getPoleRepairCost(
   let count = 0;
   for (const e of ruins) {
     const t = world.getComponent<TeamComponent>(e, TEAM)!;
-    if (t.team === team) count++;
+    if (t.team !== team) continue;
+    const ruin = world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
+    if (!hasAnySurvivingNeighbor(world, team, ruin)) continue;
+    count++;
   }
 
   return {
@@ -394,6 +414,9 @@ export function repairAllPoles(
     if (t.team !== team) continue;
     const pos = ctx.world.getComponent<PositionComponent>(e, POSITION)!;
     const ruin = ctx.world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
+
+    // Skip orphaned ruins — no surviving neighbor buildings
+    if (!hasAnySurvivingNeighbor(ctx.world, team, ruin)) continue;
 
     const site = ctx.world.createEntity();
     ctx.world.addComponent<PositionComponent>(site, POSITION, {
