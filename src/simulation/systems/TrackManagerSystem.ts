@@ -309,7 +309,9 @@ export class TrackManagerSystem implements System {
     }
 
     // 3c. For each building, pick the best adjacent grid cell as the track target.
-    const gridStops = stopOrder.map(stop => {
+    // Skip stops that have no valid adjacent cell (hemmed in by terrain/buildings).
+    const gridStops: { gx: number; gz: number; entity: number | null; isHQ: boolean; origX: number; origZ: number }[] = [];
+    for (const stop of stopOrder) {
       const bgx = Math.round(stop.x / MACRO_GRID_SIZE);
       const bgz = Math.round(stop.z / MACRO_GRID_SIZE);
 
@@ -325,10 +327,13 @@ export class TrackManagerSystem implements System {
         if (wx < 4 || wx > 252 || wz < 4 || wz > 252) continue;
         if (!this.terrainData.isPassable(wx, wz)) continue;
         if (blockedCells.has(`${nx},${nz}`)) continue;
-        // Score: count how many of this cell's cardinal neighbors are NOT blocked
+        // Score: count how many of this cell's cardinal neighbors are passable and not blocked
         let freeNeighbors = 0;
         for (const [dx2, dz2] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-          if (!blockedCells.has(`${nx + dx2},${nz + dz2}`)) freeNeighbors++;
+          const nwx = (nx + dx2) * MACRO_GRID_SIZE;
+          const nwz = (nz + dz2) * MACRO_GRID_SIZE;
+          if (!blockedCells.has(`${nx + dx2},${nz + dz2}`) &&
+              this.terrainData.isPassable(nwx, nwz)) freeNeighbors++;
         }
         if (freeNeighbors > bestScore) {
           bestScore = freeNeighbors;
@@ -336,15 +341,19 @@ export class TrackManagerSystem implements System {
           bestGz = nz;
         }
       }
-      return {
+      // HQ is always included; skip non-HQ stops with no valid adjacent cell
+      if (bestScore === -Infinity && !stop.isHQ) continue;
+      gridStops.push({
         gx: bestGx,
         gz: bestGz,
         entity: stop.entity,
         isHQ: stop.isHQ,
         origX: stop.x,
         origZ: stop.z,
-      };
-    });
+      });
+    }
+    // Need at least HQ + 1 plant to form a circuit
+    if (gridStops.length < 2) return { route: [], trackCells: new Set<string>() };
 
     // 3d. Chain findDiscretePath calls with momentum awareness.
     // Two passes: first pass discovers the return direction, second pass
@@ -360,6 +369,10 @@ export class TrackManagerSystem implements System {
         const result = this.findDiscretePath(
           fromGx, fromGz, mom, to.gx, to.gz, blockedCells,
         );
+        // If any segment fails, abort — don't create a broken/warped route
+        if (result.path.length === 0) {
+          return { path: [], finalDir: mom };
+        }
         // Skip first node if it duplicates the tail of the path
         for (let j = 0; j < result.path.length; j++) {
           if (j === 0 && path.length > 0) {
@@ -373,11 +386,9 @@ export class TrackManagerSystem implements System {
         }
         mom = result.exitDir;
         // Next segment starts from where this one actually ended
-        if (result.path.length > 0) {
-          const end = result.path[result.path.length - 1];
-          fromGx = end.x;
-          fromGz = end.z;
-        }
+        const end = result.path[result.path.length - 1];
+        fromGx = end.x;
+        fromGz = end.z;
       }
       return { path, finalDir: mom };
     };

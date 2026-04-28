@@ -18,6 +18,10 @@ function xorshift32(state: number): number {
   return state >>> 0;
 }
 
+// Minimum clearance from elevated terrain (mountains/walls) in world units.
+// 2 macro grid cells = 8 wu — ensures track routing has room for curves.
+const MIN_TERRAIN_CLEARANCE = 8;
+
 export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyNode[] {
   let rng = (seed * 6271) >>> 0 || 1;
   const next = (): number => {
@@ -42,7 +46,7 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
       const z = Math.round(rawZ / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
       if (x < 2 || x > 254 || z < 2 || z > 254) continue;
-      if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
+      if (!hasTerrainClearance(terrain, x, z, MIN_TERRAIN_CLEARANCE)) continue;
       if (!isFarEnough(nodes, x, z, MIN_DIST)) continue;
 
       nodes.push({ x, z });
@@ -60,7 +64,7 @@ export function generateEnergyNodes(terrain: TerrainData, seed: number): EnergyN
     const x = Math.round(rawX / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
     const z = Math.round(rawZ / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
-    if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
+    if (!hasTerrainClearance(terrain, x, z, MIN_TERRAIN_CLEARANCE)) continue;
     if (!isFarEnough(nodes, x, z, MIN_DIST)) continue;
 
     nodes.push({ x, z });
@@ -103,7 +107,7 @@ export function generateOreDeposits(terrain: TerrainData, seed: number, energyNo
       const z = Math.round(rawZ / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
       if (x < 2 || x > 254 || z < 2 || z > 254) continue;
-      if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
+      if (!hasTerrainClearance(terrain, x, z, MIN_TERRAIN_CLEARANCE)) continue;
       if (!isFarEnough(deposits, x, z, MIN_DIST)) continue;
       if (!isFarFromEnergy(x, z)) continue;
 
@@ -121,7 +125,7 @@ export function generateOreDeposits(terrain: TerrainData, seed: number, energyNo
     const x = Math.round(rawX / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
     const z = Math.round(rawZ / MACRO_GRID_SIZE) * MACRO_GRID_SIZE;
 
-    if (!terrain.isFlatTile(Math.floor(x), Math.floor(z))) continue;
+    if (!hasTerrainClearance(terrain, x, z, MIN_TERRAIN_CLEARANCE)) continue;
     if (!isFarEnough(deposits, x, z, MIN_DIST)) continue;
     if (!isFarFromEnergy(x, z)) continue;
 
@@ -136,6 +140,20 @@ function isFarEnough(nodes: EnergyNode[], x: number, z: number, minDist: number)
     const dx = node.x - x;
     const dz = node.z - z;
     if (dx * dx + dz * dz < minDist * minDist) return false;
+  }
+  return true;
+}
+
+/** Check that all tiles within `clearance` wu are flat (no mountains/walls nearby). */
+function hasTerrainClearance(terrain: TerrainData, x: number, z: number, clearance: number): boolean {
+  const minTx = Math.max(0, Math.floor(x - clearance));
+  const maxTx = Math.min(255, Math.floor(x + clearance));
+  const minTz = Math.max(0, Math.floor(z - clearance));
+  const maxTz = Math.min(255, Math.floor(z + clearance));
+  for (let tz = minTz; tz <= maxTz; tz++) {
+    for (let tx = minTx; tx <= maxTx; tx++) {
+      if (!terrain.isFlatTile(tx, tz)) return false;
+    }
   }
   return true;
 }

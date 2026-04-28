@@ -1,13 +1,15 @@
 import type { System, World } from '@core/ECS';
 import {
   POSITION, HEALTH, TEAM, TRAIN_LINK, TRACK_FOLLOWER,
-  BUILDING,
+  BUILDING, UNIT_TYPE,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { TeamComponent } from '@sim/components/Team';
 import type { TrainLinkComponent } from '@sim/components/TrainLink';
 import type { TrackFollowerComponent } from '@sim/components/TrackFollower';
+import type { UnitTypeComponent } from '@sim/components/UnitType';
+import { UnitCategory } from '@sim/components/UnitType';
 import { SpatialHash } from '@sim/spatial/SpatialHash';
 
 /** Distance between linked train entities (world units). */
@@ -382,6 +384,8 @@ export class TrainMovementSystem implements System {
       if (other === selfEntity) continue;
       if (world.hasComponent(other, TRAIN_LINK)) continue;
       if (world.hasComponent(other, BUILDING)) continue;
+      const unitType = world.getComponent<UnitTypeComponent>(other, UNIT_TYPE);
+      if (unitType?.category === UnitCategory.AerialDrone) continue;
 
       const otherPos = world.getComponent<PositionComponent>(other, POSITION);
       if (!otherPos) continue;
