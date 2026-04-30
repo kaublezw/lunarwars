@@ -3,12 +3,12 @@ import type { TerrainData } from '@sim/terrain/TerrainData';
 import { VOXEL_SIZE } from '@sim/data/VoxelModels';
 
 // Colors
-const FLOOR_SIDE_COLOR = 0x5a432e;
-const FLOOR_TOP_COLOR = 0x6e5438;
-const MOUNTAIN_TOP_COLOR = 0x5c4530;
-const MOUNTAIN_SIDE_COLOR = 0x483624;
-const BORDER_SIDE_COLOR = 0x483624;
-const BORDER_TOP_COLOR = 0x5c4530;
+const FLOOR_SIDE_COLOR = 0x7b6958;
+const FLOOR_TOP_COLOR = 0x8b7660;
+const MOUNTAIN_TOP_COLOR = 0x7d6a59;
+const MOUNTAIN_SIDE_COLOR = 0x6d5e50;
+const BORDER_SIDE_COLOR = 0x6d5e50;
+const BORDER_TOP_COLOR = 0x7d6a59;
 
 // Chunk size in tiles
 const CHUNK_TILES = 32;
