@@ -17,6 +17,7 @@ import { World } from '@core/ECS';
 import { GameLoop } from '@core/GameLoop';
 import { EventBus } from '@core/EventBus';
 import { AudioManager } from './audio/AudioManager';
+import { trackGameStart, trackGameEnd } from './analytics';
 import { RenderSync } from '@render/RenderSync';
 import { EnergyNodeRenderer } from '@render/EnergyNodeRenderer';
 import { GarageExitSystem } from '@sim/systems/GarageExitSystem';
@@ -171,6 +172,13 @@ if (savedRaw && !replayMode) {
     sessionStorage.removeItem(SAVE_KEY);
   }
 }
+
+const isSinglePlayer =
+  !isMultiplayer &&
+  !replayMode &&
+  !mpAIMode &&
+  scenarioMode !== 'sandbox' &&
+  saveData === null;
 
 // --- Multiplayer Lobby (blocks until game_start if multiplayer) ---
 let mpSeed = 0;
@@ -344,6 +352,11 @@ gameOverSystem.setCallback((losingTeam: number) => {
   pauseOverlay.hide();
   gameLoop.stop();
   audioManager.stopMusic();
+  if (isSinglePlayer) {
+    const ticks = gameLoop.getTickCount();
+    const winner = losingTeam === 0 ? 1 : 0;
+    trackGameEnd(winner, winner === PLAYER_TEAM, ticks / 60, ticks);
+  }
   if (spectatorMode) {
     gameOverOverlay.showSpectator(losingTeam);
   } else {
@@ -1375,6 +1388,7 @@ renderSync.preload().catch((err) => {
   console.error('Model preload failed, starting anyway:', err);
 }).finally(() => {
   gameLoop.start();
+  if (isSinglePlayer) trackGameStart();
   // Sandbox starts paused (editor mode)
   if (scenarioMode === 'sandbox') {
     gameLoop.togglePause();
