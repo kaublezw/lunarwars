@@ -15,6 +15,7 @@ import type { PowerGridState } from '@sim/economy/PowerGridState';
 import { routePowerConnection } from '@sim/economy/PowerGridRouter';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
+import type { TrackState } from '@sim/logistics/TrackState';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 
 const TEAM_COLORS = [0x4488ff, 0xff4444];
@@ -27,6 +28,7 @@ export class PowerGridSystem implements System {
     private teamCount: number,
     private terrainData?: TerrainData,
     private occupancy?: BuildingOccupancy,
+    private trackState?: TrackState,
   ) {}
 
   update(world: World, _dt: number): void {
@@ -166,7 +168,7 @@ export class PowerGridSystem implements System {
     for (const entity of unpowered) {
       // Skip if it became powered from a previous iteration's routing
       if (this.gridState.getPoweredNodes(team).has(entity)) continue;
-      routePowerConnection(world, team, entity, this.gridState, this.terrainData, this.occupancy);
+      routePowerConnection(world, team, entity, this.gridState, this.terrainData, this.occupancy, this.trackState);
       // Re-run BFS so subsequent nodes can find the newly powered chain
       this.runBFS(world, team);
     }

@@ -243,11 +243,11 @@ export class HeadlessMultiplayerEngine {
     this.world.addSystem(new RepairSystem(this.resourceState, 2));
     this.world.addSystem(gameOverSystem);
     this.world.addSystem(new HealthSystem());
-    this.world.addSystem(new PowerGridSystem(this.powerGridState, 2, this.terrainData, this.buildingOccupancy));
+    this.world.addSystem(new PowerGridSystem(this.powerGridState, 2, this.terrainData, this.buildingOccupancy, this.trackState));
     this.world.addSystem(new EconomySystem(this.resourceState, 2, this.terrainData));
-    this.world.addSystem(new BuildSystem(undefined, this.powerGridState, this.terrainData, this.buildingOccupancy));
+    this.world.addSystem(new BuildSystem(undefined, this.powerGridState, this.terrainData, this.buildingOccupancy, this.trackState));
     this.world.addSystem(new ProductionSystem(this.resourceState, this.terrainData));
-    this.world.addSystem(new TrackManagerSystem(this.trackState, this.terrainData, 2));
+    this.world.addSystem(new TrackManagerSystem(this.trackState, this.terrainData, 2, this.buildingOccupancy));
 
     // Both teams controlled by AI (same as HeadlessEngine)
     this.world.addSystem(new AISystem(1, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy, this.powerGridState, this.trackState));

@@ -23,6 +23,7 @@ import type { PowerGridState } from '@sim/economy/PowerGridState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import { routePowerConnection, findNodeAtGrid } from '@sim/economy/PowerGridRouter';
+import type { TrackState } from '@sim/logistics/TrackState';
 const DEPOT_VISUAL_RADIUS = 38;
 
 const BUILD_RANGE = 6; // max distance worker can be from site to build (must exceed largest footprint radius + pathfinding margin)
@@ -33,17 +34,20 @@ export class BuildSystem implements System {
   private powerGrid?: PowerGridState;
   private terrainData?: TerrainData;
   private occupancy?: BuildingOccupancy;
+  private trackState?: TrackState;
 
   constructor(
     eventBus?: EventBus,
     powerGrid?: PowerGridState,
     terrainData?: TerrainData,
     occupancy?: BuildingOccupancy,
+    trackState?: TrackState,
   ) {
     this.eventBus = eventBus;
     this.powerGrid = powerGrid;
     this.terrainData = terrainData;
     this.occupancy = occupancy;
+    this.trackState = trackState;
   }
 
   update(world: World, dt: number): void {
@@ -197,7 +201,7 @@ export class BuildSystem implements System {
             if (this.terrainData && this.occupancy) {
               routePowerConnection(
                 world, teamComp.team, site,
-                this.powerGrid, this.terrainData, this.occupancy,
+                this.powerGrid, this.terrainData, this.occupancy, this.trackState,
               );
             }
             this.powerGrid.markHealPending(teamComp.team);
@@ -311,7 +315,7 @@ export class BuildSystem implements System {
         }
 
         if (edgesRestored === 0 && this.terrainData && this.occupancy) {
-          routePowerConnection(world, cp.team, cp.entity, this.powerGrid, this.terrainData, this.occupancy);
+          routePowerConnection(world, cp.team, cp.entity, this.powerGrid, this.terrainData, this.occupancy, this.trackState);
         }
 
         dirtyTeams.add(cp.team);

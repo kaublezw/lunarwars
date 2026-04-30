@@ -14,6 +14,7 @@ import type { PowerPoleComponent } from '@sim/components/PowerPole';
 import type { PowerGridState } from './PowerGridState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
+import type { TrackState } from '@sim/logistics/TrackState';
 import { MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
@@ -32,6 +33,7 @@ export function routePowerConnection(
   gridState: PowerGridState,
   terrainData: TerrainData,
   occupancy: BuildingOccupancy | null,
+  trackState?: TrackState | null,
 ): number[] {
   const fromPos = world.getComponent<PositionComponent>(fromEntity, POSITION)!;
 
@@ -91,8 +93,33 @@ export function routePowerConnection(
       continue;
     }
 
-    // Spawn a new pole
-    const pole = spawnPole(world, team, worldX, worldZ, terrainData, gridState);
+    // Offset pole away from track if it would overlap
+    let finalGx = gx;
+    let finalGz = gz;
+    if (trackState && trackState.hasAnyTrackAtGrid(gx, gz)) {
+      const offset = findOffsetCell(gx, gz, terrainData, occupancy, trackState);
+      if (offset) {
+        [finalGx, finalGz] = offset;
+      } else {
+        continue; // no valid offset — skip this pole position
+      }
+    }
+
+    // Check if an existing node already occupies the (possibly offset) cell
+    if (finalGx !== gx || finalGz !== gz) {
+      const existingAtOffset = findNodeAtGrid(world, team, finalGx, finalGz);
+      if (existingAtOffset !== null) {
+        gridState.addEdge(team, prevNode, existingAtOffset);
+        prevNode = existingAtOffset;
+        stepsSinceLast = 0;
+        continue;
+      }
+    }
+
+    // Spawn a new pole at the (possibly offset) position
+    const finalWorldX = finalGx * MACRO_GRID_SIZE;
+    const finalWorldZ = finalGz * MACRO_GRID_SIZE;
+    const pole = spawnPole(world, team, finalWorldX, finalWorldZ, terrainData, gridState);
     newPoles.push(pole);
     gridState.addEdge(team, prevNode, pole);
     prevNode = pole;
@@ -217,6 +244,31 @@ function spawnPole(
   world.addComponent<PowerPoleComponent>(e, POWER_POLE, { gridX, gridZ });
 
   return e;
+}
+
+/**
+ * Given a grid cell that overlaps track, find the nearest adjacent cell
+ * that is passable, unoccupied, and not on any track.
+ */
+function findOffsetCell(
+  gx: number, gz: number,
+  terrainData: TerrainData,
+  occupancy: BuildingOccupancy | null,
+  trackState: TrackState,
+): [number, number] | null {
+  const offsets: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+  for (const [dx, dz] of offsets) {
+    const nx = gx + dx;
+    const nz = gz + dz;
+    const wx = nx * MACRO_GRID_SIZE;
+    const wz = nz * MACRO_GRID_SIZE;
+    if (wx < 4 || wx > 252 || wz < 4 || wz > 252) continue;
+    if (!terrainData.isPassable(wx, wz)) continue;
+    if (occupancy && occupancy.isBlocked(Math.floor(wx), Math.floor(wz))) continue;
+    if (trackState.hasAnyTrackAtGrid(nx, nz)) continue;
+    return [nx, nz];
+  }
+  return null;
 }
 
 /**

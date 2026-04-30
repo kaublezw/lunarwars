@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, TRAIN_LINK, TRACK_FOLLOWER, PENDING_CAR_ATTACH, MOVE_COMMAND, UNIT_TYPE, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
+import { BUILDING, TEAM, CONSTRUCTION, POSITION, HEALTH, TRAIN_LINK, TRACK_FOLLOWER, PENDING_CAR_ATTACH, MOVE_COMMAND, UNIT_TYPE, MACRO_GRID_SIZE, POWER_POLE } from '@sim/components/ComponentTypes';
 import type { BuildingComponent } from '@sim/components/Building';
 import { BuildingType } from '@sim/components/Building';
 import type { TeamComponent } from '@sim/components/Team';
@@ -11,6 +11,8 @@ import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { PendingCarAttachComponent } from '@sim/components/PendingCarAttach';
 import type { TrackState, TrackWaypoint } from '@sim/logistics/TrackState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
+import type { PowerPoleComponent } from '@sim/components/PowerPole';
+import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import { appendCarToTrain, STUB_BEHIND_CELLS, STUB_AHEAD_CELLS } from '@sim/logistics/TrainSpawner';
 
 /** How close (squared distance) an engine must be to HQ to count as "docked". */
@@ -58,6 +60,7 @@ export class TrackManagerSystem implements System {
     private trackState: TrackState,
     private terrainData: TerrainData,
     private teamCount: number,
+    private occupancy?: BuildingOccupancy,
   ) {}
 
   update(world: World, _dt: number): void {
@@ -101,6 +104,9 @@ export class TrackManagerSystem implements System {
 
       // 5. Store as pending (applied when engine docks at HQ)
       this.trackState.setPendingRoute(team, route, plantIds, trackCells);
+
+      // 6. Displace any power poles that now sit on the new track
+      this.displacePoles(world, trackCells);
     }
 
     // 6. Handle dock operations (route swap + pending car attachment)
@@ -116,6 +122,7 @@ export class TrackManagerSystem implements System {
       // No engine yet — promote pending route immediately so it's ready on first spawn
       if (ts.pendingRoute) {
         this.trackState.applyPendingRoute(team);
+        this.displacePoles(world, ts.activeTrackCells);
         this.clearFriendlyUnitsFromTrack(world, team, ts.activeRoute);
       }
       return;
@@ -134,6 +141,7 @@ export class TrackManagerSystem implements System {
     // Swap pending route to active
     if (ts.pendingRoute) {
       this.trackState.applyPendingRoute(team);
+      this.displacePoles(world, ts.activeTrackCells);
       const follower = world.getComponent<TrackFollowerComponent>(engine, TRACK_FOLLOWER);
       if (follower) {
         follower.path = ts.activeRoute.map(w => ({ x: w.x, y: w.y, z: w.z, entityId: w.entityId, isHQ: w.isHQ }));
@@ -797,6 +805,47 @@ export class TrackManagerSystem implements System {
     }
 
     return result;
+  }
+
+  /**
+   * Move any power poles that overlap the given track cells to an adjacent non-track cell.
+   */
+  private displacePoles(world: World, trackCells: Set<string>): void {
+    if (trackCells.size === 0) return;
+
+    const poles = world.query(POWER_POLE, POSITION);
+    for (const e of poles) {
+      const pole = world.getComponent<PowerPoleComponent>(e, POWER_POLE)!;
+      const key = `${pole.gridX},${pole.gridZ}`;
+      if (!trackCells.has(key)) continue;
+
+      // Try 4 cardinal neighbors for a valid offset
+      const offsets: [number, number][] = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+      for (const [dx, dz] of offsets) {
+        const nx = pole.gridX + dx;
+        const nz = pole.gridZ + dz;
+        const wx = nx * MACRO_GRID_SIZE;
+        const wz = nz * MACRO_GRID_SIZE;
+        if (wx < 4 || wx > 252 || wz < 4 || wz > 252) continue;
+        if (!this.terrainData.isPassable(wx, wz)) continue;
+        if (this.occupancy && this.occupancy.isBlocked(Math.floor(wx), Math.floor(wz))) continue;
+        if (trackCells.has(`${nx},${nz}`)) continue;
+        if (this.trackState.hasAnyTrackAtGrid(nx, nz)) continue;
+
+        // Move the pole
+        const pos = world.getComponent<PositionComponent>(e, POSITION)!;
+        const newY = this.terrainData.getHeight(wx, wz);
+        pos.x = wx;
+        pos.z = wz;
+        pos.y = newY;
+        pos.prevX = wx;
+        pos.prevZ = wz;
+        pos.prevY = newY;
+        pole.gridX = nx;
+        pole.gridZ = nz;
+        break;
+      }
+    }
   }
 
   /** Find HQ entity for a team. */

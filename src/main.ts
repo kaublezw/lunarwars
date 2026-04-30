@@ -369,11 +369,11 @@ world.addSystem(new ResupplySystem(resourceState));
 world.addSystem(new RepairSystem(resourceState, 2, eventBus));
 world.addSystem(gameOverSystem);
 world.addSystem(new HealthSystem(eventBus));
-world.addSystem(new PowerGridSystem(powerGridState, 2, terrainData, buildingOccupancy));
+world.addSystem(new PowerGridSystem(powerGridState, 2, terrainData, buildingOccupancy, trackState));
 world.addSystem(new EconomySystem(resourceState, 2, terrainData));
-world.addSystem(new BuildSystem(eventBus, powerGridState, terrainData, buildingOccupancy));
+world.addSystem(new BuildSystem(eventBus, powerGridState, terrainData, buildingOccupancy, trackState));
 world.addSystem(new ProductionSystem(resourceState, terrainData));
-world.addSystem(new TrackManagerSystem(trackState, terrainData, 2));
+world.addSystem(new TrackManagerSystem(trackState, terrainData, 2, buildingOccupancy));
 if (isMultiplayer && !mpAIMode) {
   // Multiplayer: no AI — both teams are human players
 } else if (mpAIMode) {

@@ -60,6 +60,16 @@ export class TrackState {
     return false;
   }
 
+  /** Check whether a grid cell overlaps ANY team's active or pending track cells. */
+  hasAnyTrackAtGrid(gx: number, gz: number): boolean {
+    const key = `${gx},${gz}`;
+    for (let i = 0; i < this.teams.length; i++) {
+      const ts = this.teams[i];
+      if (ts.activeTrackCells.has(key) || ts.pendingTrackCells.has(key)) return true;
+    }
+    return false;
+  }
+
   /** Check whether a grid cell overlaps any team's active track (used for recompute triggers). */
   hasActiveTrackAtGrid(team: number, gx: number, gz: number): boolean {
     const ts = this.teams[team];
