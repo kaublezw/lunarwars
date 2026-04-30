@@ -1,5 +1,5 @@
 import type { System, World } from '@core/ECS';
-import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, DEPOT_RADIUS, VOXEL_STATE, WALL_BUILD_QUEUE, POWER_NODE, POWER_POLE, TEAM, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
+import { BUILD_COMMAND, CONSTRUCTION, POSITION, MOVE_COMMAND, RENDERABLE, BUILDING, HEALTH, VISION, SELECTABLE, PRODUCTION_QUEUE, DEPOT_RADIUS, VOXEL_STATE, POWER_NODE, POWER_POLE, TEAM, MACRO_GRID_SIZE } from '@sim/components/ComponentTypes';
 import type { BuildCommandComponent } from '@sim/components/BuildCommand';
 import type { ConstructionComponent } from '@sim/components/Construction';
 import type { MoveCommandComponent } from '@sim/components/MoveCommand';
@@ -12,7 +12,6 @@ import type { SelectableComponent } from '@sim/components/Selectable';
 import type { VisionComponent } from '@sim/components/Vision';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
-import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
@@ -120,12 +119,9 @@ export class BuildSystem implements System {
         const def = BUILDING_DEFS[construction.buildingType];
         if (def) {
           const renderable = world.getComponent<RenderableComponent>(site, RENDERABLE);
+          const finalMeshType = def.meshType;
 
-          // For walls, meshType is already correct per-segment (wall_x or wall_z)
-          const isWall = construction.buildingType === BuildingType.Wall;
-          const finalMeshType = isWall ? (renderable?.meshType ?? def.meshType) : def.meshType;
-
-          if (renderable && !isWall) {
+          if (renderable) {
             renderable.meshType = def.meshType;
           }
 
@@ -180,8 +176,8 @@ export class BuildSystem implements System {
           }
         }
 
-        // Add power grid node for non-wall buildings and route connection
-        if (construction.buildingType !== BuildingType.Wall && this.powerGrid) {
+        // Add power grid node and route connection
+        if (this.powerGrid) {
           const teamComp = world.getComponent<TeamComponent>(site, TEAM);
           if (teamComp) {
             world.addComponent<PowerNodeComponent>(site, POWER_NODE, {
@@ -213,37 +209,6 @@ export class BuildSystem implements System {
 
         // Remove build command from worker
         world.removeComponent(e, BUILD_COMMAND);
-
-        // Check for wall build queue continuation
-        const wallQueue = world.getComponent<WallBuildQueueComponent>(e, WALL_BUILD_QUEUE);
-        if (wallQueue) {
-          wallQueue.currentIndex++;
-          // Skip destroyed or already-completed segments
-          let foundNext = false;
-          while (wallQueue.currentIndex < wallQueue.siteEntities.length) {
-            const nextSite = wallQueue.siteEntities[wallQueue.currentIndex];
-            const nextPos = world.getComponent<PositionComponent>(nextSite, POSITION);
-            const nextCon = world.getComponent<ConstructionComponent>(nextSite, CONSTRUCTION);
-            if (nextPos && nextCon) {
-              nextCon.builderEntity = e;
-              world.addComponent<MoveCommandComponent>(e, MOVE_COMMAND, {
-                path: [], currentWaypoint: 0,
-                destX: nextPos.x, destZ: nextPos.z,
-              });
-              world.addComponent<BuildCommandComponent>(e, BUILD_COMMAND, {
-                buildingType: nextCon.buildingType,
-                targetX: nextPos.x, targetZ: nextPos.z,
-                state: 'moving', siteEntity: nextSite,
-              });
-              foundNext = true;
-              break;
-            }
-            wallQueue.currentIndex++;
-          }
-          if (!foundNext) {
-            world.removeComponent(e, WALL_BUILD_QUEUE);
-          }
-        }
       }
     }
 

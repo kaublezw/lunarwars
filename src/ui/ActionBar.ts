@@ -9,7 +9,7 @@ import type { ConstructionComponent } from '@sim/components/Construction';
 import type { PlantStorageComponent } from '@sim/components/PlantStorage';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { PowerPoleRuinComponent } from '@sim/components/PowerPoleRuin';
-import { findNodeAtGrid } from '@sim/economy/PowerGridRouter';
+import { isRuinChainUseful } from '@sim/commands/GameCommands';
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
@@ -22,7 +22,6 @@ const BUILD_BUTTONS: { type: BuildingType; label: string }[] = [
   { type: BuildingType.MatterPlant, label: 'Matter Plant' },
   { type: BuildingType.SupplyDepot, label: 'Supply Depot' },
   { type: BuildingType.DroneFactory, label: 'Drone Factory' },
-  { type: BuildingType.Wall, label: 'Wall' },
 ];
 
 const FACTORY_TRAIN_BUTTONS: { unitType: UnitCategory; label: string }[] = [
@@ -606,12 +605,7 @@ export class ActionBar {
       const t = world.getComponent<TeamComponent>(e, TEAM)!;
       if (t.team !== team) continue;
       const ruin = world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
-      // Skip orphaned poles with no surviving neighbors
-      let hasSurvivor = false;
-      for (const [gx, gz] of ruin.neighborGridPositions) {
-        if (findNodeAtGrid(world, team, gx, gz) !== null) { hasSurvivor = true; break; }
-      }
-      if (!hasSurvivor) continue;
+      if (!isRuinChainUseful(world, team, ruin)) continue;
       count++;
     }
     return { count, energyCost: count * def.energyCost, matterCost: count * def.matterCost };

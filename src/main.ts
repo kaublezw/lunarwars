@@ -96,7 +96,7 @@ import { MultiplayerMenu } from '@ui/MultiplayerMenu';
 import type { GameCommandPayload } from '@network/Protocol';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
-import { spawnTrainSet, teamHasEngine } from '@sim/logistics/TrainSpawner';
+import { spawnTrainSet, teamHasEngine, getHQStubCell, initHQStubTrack } from '@sim/logistics/TrainSpawner';
 import { TrainMovementSystem } from '@sim/systems/TrainMovementSystem';
 import { TrainLogisticsSystem } from '@sim/systems/TrainLogisticsSystem';
 import { TrackManagerSystem } from '@sim/systems/TrackManagerSystem';
@@ -127,6 +127,9 @@ const mpAIMode = isMultiplayer && urlParams.has('ai');
 // --- Spectator Mode ---
 const SPECTATOR_KEY = 'lunarwars_spectator';
 const spectatorMode = replayMode || mpAIMode || sessionStorage.getItem(SPECTATOR_KEY) === 'true';
+
+// --- Debug Mode (enables dev UI: sandbox, AI vs AI, multiplayer, seed) ---
+const debugMode = urlParams.has('debug');
 
 // --- Scenario Mode (URL param or sessionStorage) ---
 const SANDBOX_KEY = 'lunarwars_sandbox';
@@ -492,13 +495,11 @@ function spawnBuilding(x: number, z: number, team: number, type: BuildingType): 
     });
   }
 
-  // Power grid node for non-wall buildings
-  if (type !== BuildingType.Wall) {
-    world.addComponent<PowerNodeComponent>(e, POWER_NODE, {
-      powered: type === BuildingType.HQ, // HQ always powered; others determined by BFS
-      nodeId: powerGridState.allocateNodeId(),
-    });
-  }
+  // Power grid node
+  world.addComponent<PowerNodeComponent>(e, POWER_NODE, {
+    powered: type === BuildingType.HQ, // HQ always powered; others determined by BFS
+    nodeId: powerGridState.allocateNodeId(),
+  });
 
   return e;
 }
@@ -655,10 +656,12 @@ if (saveData) {
     }
   }
 
-  // --- Train Spawning (1 engine + 2 cargo cars per team, free) ---
+  // --- Train Spawning (1 engine + 2 cargo cars per team, on HQ stub track) ---
   for (const hq of hqSpawns) {
-    const trainY = terrainData.getHeight(hq.x, hq.z) + 0.1;
-    spawnTrainSet(world, hq.team, hq.x, trainY, hq.z, 2);
+    const stub = getHQStubCell(hq.x, hq.z);
+    const stubY = terrainData.getHeight(stub.worldX, stub.worldZ) + 0.1;
+    spawnTrainSet(world, hq.team, stub.worldX, stubY, stub.worldZ, 2, stub.direction);
+    initHQStubTrack(trackState, terrainData, hq.team, hq.x, hq.z);
   }
 }
 
@@ -742,7 +745,6 @@ if (selectionController) {
 }
 
 // --- Wire Action Bar + Placement ---
-let wallWorkerEntity = -1; // captured when Wall button is clicked so it survives deselection during drag
 
 // Shared command context for GameCommands and CommandExecutor
 const cmdCtx: GameCommandContext = {
@@ -791,19 +793,7 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     if (!def) return;
     if (!resourceState.canAfford(PLAYER_TEAM, def.energyCost)) return;
 
-    if (type === BuildingType.Wall) {
-      wallWorkerEntity = workerEntity;
-      pc.enterWallPlacementMode();
-    } else {
-      pc.enterPlacementMode(type);
-    }
-  });
-
-  pc.setWallMaxSegments(() => {
-    const def = BUILDING_DEFS[BuildingType.Wall];
-    if (!def || def.matterCost === 0) return Infinity;
-    const matter = resourceState.get(PLAYER_TEAM).matter;
-    return Math.floor(matter / def.matterCost);
+    pc.enterPlacementMode(type);
   });
 
   ab.onTrainRequest((unitType) => {
@@ -894,32 +884,6 @@ function wireActionBarAndPlacement(ab: ActionBar, pc: PlacementController): void
     );
   });
 
-  // --- Wall placement callbacks ---
-
-  pc.onWallPlacementConfirmed((segments) => {
-    // Use the worker captured when Wall button was clicked (survives deselection during drag)
-    const workerEntity = wallWorkerEntity;
-    wallWorkerEntity = -1;
-    if (workerEntity === -1) return;
-    // Verify the worker is still alive
-    if (!world.getComponent<PositionComponent>(workerEntity, POSITION)) return;
-
-    issueCommand({
-      type: 'buildWallSegments',
-      team: PLAYER_TEAM,
-      segments: segments as { x: number; z: number; meshType: string }[],
-      workerEntity,
-    });
-    ghostRenderer.hideWall();
-  });
-
-  pc.onWallPlacementUpdate((segments) => {
-    ghostRenderer.updateWall(segments);
-  });
-
-  pc.onWallPlacementCancelled(() => {
-    ghostRenderer.hideWall();
-  });
 }
 
 // Call for normal game mode
@@ -1140,30 +1104,6 @@ if (scenarioMode === 'sandbox') {
   );
   sandboxPanel.mount(app);
 
-  sandboxPanel.onSpawnWallSegments = (segments, team) => {
-    for (const seg of segments) {
-      const e = spawnBuilding(seg.x, seg.z, team, BuildingType.Wall);
-      // Fix meshType to match the segment orientation (spawnBuilding defaults to wall_x)
-      if (seg.meshType !== 'wall_x') {
-        const renderable = world.getComponent<RenderableComponent>(e, RENDERABLE);
-        if (renderable) {
-          renderable.meshType = seg.meshType;
-        }
-        const vs = world.getComponent<VoxelStateComponent>(e, VOXEL_STATE);
-        if (vs) {
-          vs.modelId = seg.meshType;
-          const voxelModel = VOXEL_MODELS[seg.meshType];
-          if (voxelModel) {
-            vs.totalVoxels = voxelModel.totalSolid;
-            vs.destroyed = new Uint8Array(Math.ceil(voxelModel.totalSolid / 8));
-            vs.destroyedCount = 0;
-            vs.dirty = true;
-          }
-        }
-      }
-    }
-  };
-
   // Snapshot for revert (captured before play starts)
   let sandboxSnapshot: { world: ReturnType<typeof world.serialize>; resources: ReturnType<typeof resourceState.serialize> } | null = null;
 
@@ -1230,7 +1170,9 @@ if (scenarioMode === 'sandbox') {
       const t = world.getComponent<TeamComponent>(e, TEAM)!;
       if (teamHasEngine(world, t.team)) continue;
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
-      spawnTrainSet(world, t.team, pos.x, pos.y + 0.1, pos.z, 2);
+      const stub = getHQStubCell(pos.x, pos.z);
+      const stubY = terrainData.getHeight(stub.worldX, stub.worldZ) + 0.1;
+      spawnTrainSet(world, t.team, stub.worldX, stubY, stub.worldZ, 2, stub.direction);
     }
 
     // Wire all action bar + placement callbacks (shared with normal game mode)
@@ -1335,60 +1277,63 @@ restartBtn.addEventListener('click', () => {
 });
 document.body.appendChild(restartBtn);
 
-// --- AI vs AI Toggle Button ---
-const modeBtn = document.createElement('button');
-modeBtn.textContent = spectatorMode ? 'Play Normal' : 'Watch AI vs AI';
-modeBtn.style.cssText = 'position:fixed;top:10px;right:100px;z-index:1000;padding:6px 16px;background:#2a3a5a;color:#aaccff;border:1px solid #4466aa;border-radius:4px;cursor:pointer;font-family:monospace;font-size:14px;';
-modeBtn.addEventListener('mouseenter', () => { modeBtn.style.background = '#3a4a6a'; });
-modeBtn.addEventListener('mouseleave', () => { modeBtn.style.background = '#2a3a5a'; });
-modeBtn.addEventListener('click', () => {
-  sessionStorage.removeItem(SAVE_KEY);
-  if (spectatorMode) {
-    sessionStorage.removeItem(SPECTATOR_KEY);
-  } else {
-    sessionStorage.setItem(SPECTATOR_KEY, 'true');
+// --- Debug-only UI (visible with ?debug query param) ---
+if (debugMode) {
+  // AI vs AI Toggle Button
+  const modeBtn = document.createElement('button');
+  modeBtn.textContent = spectatorMode ? 'Play Normal' : 'Watch AI vs AI';
+  modeBtn.style.cssText = 'position:fixed;top:10px;right:100px;z-index:1000;padding:6px 16px;background:#2a3a5a;color:#aaccff;border:1px solid #4466aa;border-radius:4px;cursor:pointer;font-family:monospace;font-size:14px;';
+  modeBtn.addEventListener('mouseenter', () => { modeBtn.style.background = '#3a4a6a'; });
+  modeBtn.addEventListener('mouseleave', () => { modeBtn.style.background = '#2a3a5a'; });
+  modeBtn.addEventListener('click', () => {
+    sessionStorage.removeItem(SAVE_KEY);
+    if (spectatorMode) {
+      sessionStorage.removeItem(SPECTATOR_KEY);
+    } else {
+      sessionStorage.setItem(SPECTATOR_KEY, 'true');
+    }
+    location.reload();
+  });
+  document.body.appendChild(modeBtn);
+
+  // Sandbox Toggle Button
+  const sandboxBtn = document.createElement('button');
+  sandboxBtn.textContent = scenarioMode === 'sandbox' ? 'Exit Sandbox' : 'Sandbox';
+  sandboxBtn.style.cssText = 'position:fixed;top:10px;right:250px;z-index:1000;padding:6px 16px;background:#3a2a1a;color:#ffcc88;border:1px solid #aa7744;border-radius:4px;cursor:pointer;font-family:monospace;font-size:14px;';
+  sandboxBtn.addEventListener('mouseenter', () => { sandboxBtn.style.background = '#4a3a2a'; });
+  sandboxBtn.addEventListener('mouseleave', () => { sandboxBtn.style.background = '#3a2a1a'; });
+  sandboxBtn.addEventListener('click', () => {
+    sessionStorage.removeItem(SAVE_KEY);
+    if (scenarioMode === 'sandbox') {
+      sessionStorage.removeItem(SANDBOX_KEY);
+    } else {
+      sessionStorage.setItem(SANDBOX_KEY, 'true');
+      sessionStorage.removeItem(SPECTATOR_KEY);
+    }
+    location.reload();
+  });
+  document.body.appendChild(sandboxBtn);
+
+  // Multiplayer Button
+  if (!isMultiplayer) {
+    const multiplayerMenu = new MultiplayerMenu();
+    multiplayerMenu.mount(app);
+
+    const mpBtn = document.createElement('button');
+    mpBtn.textContent = 'Multiplayer';
+    mpBtn.style.cssText = 'position:fixed;top:10px;right:460px;z-index:1000;padding:6px 16px;background:#1a3a2a;color:#66ffaa;border:1px solid #44aa77;border-radius:4px;cursor:pointer;font-family:monospace;font-size:14px;';
+    mpBtn.addEventListener('mouseenter', () => { mpBtn.style.background = '#2a4a3a'; });
+    mpBtn.addEventListener('mouseleave', () => { mpBtn.style.background = '#1a3a2a'; });
+    mpBtn.addEventListener('click', () => { multiplayerMenu.show(); });
+    document.body.appendChild(mpBtn);
   }
-  location.reload();
-});
-document.body.appendChild(modeBtn);
 
-// --- Sandbox Toggle Button ---
-const sandboxBtn = document.createElement('button');
-sandboxBtn.textContent = scenarioMode === 'sandbox' ? 'Exit Sandbox' : 'Sandbox';
-sandboxBtn.style.cssText = 'position:fixed;top:10px;right:250px;z-index:1000;padding:6px 16px;background:#3a2a1a;color:#ffcc88;border:1px solid #aa7744;border-radius:4px;cursor:pointer;font-family:monospace;font-size:14px;';
-sandboxBtn.addEventListener('mouseenter', () => { sandboxBtn.style.background = '#4a3a2a'; });
-sandboxBtn.addEventListener('mouseleave', () => { sandboxBtn.style.background = '#3a2a1a'; });
-sandboxBtn.addEventListener('click', () => {
-  sessionStorage.removeItem(SAVE_KEY);
-  if (scenarioMode === 'sandbox') {
-    sessionStorage.removeItem(SANDBOX_KEY);
-  } else {
-    sessionStorage.setItem(SANDBOX_KEY, 'true');
-    sessionStorage.removeItem(SPECTATOR_KEY);
-  }
-  location.reload();
-});
-document.body.appendChild(sandboxBtn);
-
-// --- Multiplayer Button ---
-if (!isMultiplayer) {
-  const multiplayerMenu = new MultiplayerMenu();
-  multiplayerMenu.mount(app);
-
-  const mpBtn = document.createElement('button');
-  mpBtn.textContent = 'Multiplayer';
-  mpBtn.style.cssText = 'position:fixed;top:10px;right:460px;z-index:1000;padding:6px 16px;background:#1a3a2a;color:#66ffaa;border:1px solid #44aa77;border-radius:4px;cursor:pointer;font-family:monospace;font-size:14px;';
-  mpBtn.addEventListener('mouseenter', () => { mpBtn.style.background = '#2a4a3a'; });
-  mpBtn.addEventListener('mouseleave', () => { mpBtn.style.background = '#1a3a2a'; });
-  mpBtn.addEventListener('click', () => { multiplayerMenu.show(); });
-  document.body.appendChild(mpBtn);
+  // Seed Display
+  const seedLabel = document.createElement('span');
+  seedLabel.textContent = `Seed: ${seed}`;
+  seedLabel.style.cssText = `position:fixed;top:14px;right:${isMultiplayer ? '370px' : '570px'};z-index:1000;color:#888;font-family:monospace;font-size:12px;`;
+  document.body.appendChild(seedLabel);
 }
-
-// --- Seed Display ---
-const seedLabel = document.createElement('span');
-seedLabel.textContent = `Seed: ${seed}`;
-seedLabel.style.cssText = `position:fixed;top:14px;right:${isMultiplayer ? '370px' : '570px'};z-index:1000;color:#888;font-family:monospace;font-size:12px;`;
-document.body.appendChild(seedLabel);
 
 // --- Tick Counter (replay mode only) ---
 let tickLabel: HTMLSpanElement | null = null;

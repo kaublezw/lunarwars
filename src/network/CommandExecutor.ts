@@ -22,8 +22,7 @@ import type { HealthComponent } from '@sim/components/Health';
 import type { UnitTypeComponent } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 
-import { buildStructure, buildWallSegments, trainUnit, repairAllPoles } from '@sim/commands/GameCommands';
-import type { WallSegment } from '@sim/commands/GameCommands';
+import { buildStructure, trainUnit, repairAllPoles } from '@sim/commands/GameCommands';
 import { BUILDING_DEFS } from '@sim/data/BuildingData';
 import { UnitCategory } from '@sim/components/UnitType';
 import { SeededRandom } from '@sim/utils/SeededRandom';
@@ -82,10 +81,6 @@ export function executeCommand(
 
     case 'buildStructure':
       buildStructure(ctx, cmd.team, cmd.buildingType as BuildingType, cmd.x, cmd.z, cmd.workerEntity);
-      break;
-
-    case 'buildWallSegments':
-      buildWallSegments(ctx, cmd.team, cmd.segments as WallSegment[], cmd.workerEntity);
       break;
 
     case 'trainUnit':

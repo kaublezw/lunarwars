@@ -57,17 +57,6 @@ export const BUILDING_DEFS: Record<string, BuildingDef> = {
     needsEnergyNode: false,
     needsOreDeposit: false,
   },
-  [BuildingType.Wall]: {
-    type: BuildingType.Wall,
-    energyCost: 0,
-    matterCost: 12,
-    buildTime: 3.5,
-    hp: 500,
-    visionRange: 3,
-    meshType: 'wall_x',
-    needsEnergyNode: false,
-    needsOreDeposit: false,
-  },
   [BuildingType.PowerPole]: {
     type: BuildingType.PowerPole,
     energyCost: 5,

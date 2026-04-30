@@ -61,11 +61,12 @@ export class TerrainData {
 
     for (let b = 0; b < blockCount; b++) {
       for (let attempt = 0; attempt < 40; attempt++) {
-        const bw = 10 + Math.floor(next() * 21); // 10-30 tiles width
-        const bd = 10 + Math.floor(next() * 21); // 10-30 tiles depth
+        const GRID = 4; // snap to macro grid so mountains align with track/building grid
+        const bw = (3 + Math.floor(next() * 5)) * GRID; // 12-28 tiles width (multiples of 4)
+        const bd = (3 + Math.floor(next() * 5)) * GRID; // 12-28 tiles depth (multiples of 4)
         const bh = 30; // match border wall height
-        const bx = 15 + Math.floor(next() * (this.width - 30 - bw));
-        const bz = 15 + Math.floor(next() * (this.height - 30 - bd));
+        const bx = Math.floor((15 + Math.floor(next() * (this.width - 30 - bw))) / GRID) * GRID;
+        const bz = Math.floor((15 + Math.floor(next() * (this.height - 30 - bd))) / GRID) * GRID;
 
         // Check clearance from flat zones
         let overlaps = false;

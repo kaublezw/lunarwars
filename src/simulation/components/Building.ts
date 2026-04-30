@@ -4,7 +4,6 @@ export enum BuildingType {
   MatterPlant = 'matter_plant',
   SupplyDepot = 'supply_depot',
   DroneFactory = 'drone_factory',
-  Wall = 'wall',
   PowerPole = 'power_pole',
 }
 

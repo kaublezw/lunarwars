@@ -11,7 +11,7 @@ import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { PendingCarAttachComponent } from '@sim/components/PendingCarAttach';
 import type { TrackState, TrackWaypoint } from '@sim/logistics/TrackState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
-import { appendCarToTrain } from '@sim/logistics/TrainSpawner';
+import { appendCarToTrain, STUB_BEHIND_CELLS, STUB_AHEAD_CELLS } from '@sim/logistics/TrainSpawner';
 
 /** How close (squared distance) an engine must be to HQ to count as "docked". */
 const DOCK_DIST_SQ = 36; // 6 wu (track passes 1 grid cell from HQ center)
@@ -97,9 +97,9 @@ export class TrackManagerSystem implements System {
     if (stopsChanged || buildingOnTrack) {
       // 4. Compute new optimal circuit
       const hqPos = world.getComponent<PositionComponent>(hqEntity, POSITION)!;
-      const { route, trackCells } = this.computeCircuit(world, hqPos, plants);
+      const { route, trackCells } = this.computeCircuit(world, hqPos, plants, team);
 
-      // 5. Store as pending
+      // 5. Store as pending (applied when engine docks at HQ)
       this.trackState.setPendingRoute(team, route, plantIds, trackCells);
     }
 
@@ -137,11 +137,30 @@ export class TrackManagerSystem implements System {
       const follower = world.getComponent<TrackFollowerComponent>(engine, TRACK_FOLLOWER);
       if (follower) {
         follower.path = ts.activeRoute.map(w => ({ x: w.x, y: w.y, z: w.z, entityId: w.entityId, isHQ: w.isHQ }));
-        follower.currentWaypointIndex = 0;
         follower.distanceAlongSegment = 0;
         follower.direction = 1;
         follower.reconnectTarget = -1;
         follower.halted = false;
+
+        // Find the HQ stop waypoint and start from there so the engine
+        // continues in the stub direction without flipping
+        const hqIdx = this.findHQWaypointIndex(follower.path);
+        follower.currentWaypointIndex = hqIdx;
+
+        // Snap engine to the HQ waypoint position (engine is already nearby)
+        if (follower.path.length >= 2) {
+          const w0 = follower.path[hqIdx];
+          const nextIdx = (hqIdx + 1) % follower.path.length;
+          const w1 = follower.path[nextIdx];
+          const ePos = world.getComponent<PositionComponent>(engine, POSITION)!;
+          ePos.x = w0.x;
+          ePos.z = w0.z;
+          ePos.y = w0.y;
+          ePos.prevX = w0.x;
+          ePos.prevZ = w0.z;
+          ePos.prevY = w0.y;
+          ePos.rotation = Math.atan2(w1.x - w0.x, w1.z - w0.z);
+        }
       }
       this.clearFriendlyUnitsFromTrack(world, team, ts.activeRoute);
     } else if (ts.activeRoute.length > 0) {
@@ -149,11 +168,13 @@ export class TrackManagerSystem implements System {
       const follower = world.getComponent<TrackFollowerComponent>(engine, TRACK_FOLLOWER);
       if (follower && follower.path.length === 0) {
         follower.path = ts.activeRoute.map(w => ({ x: w.x, y: w.y, z: w.z, entityId: w.entityId, isHQ: w.isHQ }));
-        follower.currentWaypointIndex = 0;
+        const hqIdx = this.findHQWaypointIndex(follower.path);
+        follower.currentWaypointIndex = hqIdx;
         follower.distanceAlongSegment = 0;
         follower.direction = 1;
         follower.reconnectTarget = -1;
-        follower.halted = false;
+        // Stay halted on stub track (no plants); only run on a real circuit
+        follower.halted = ts.activePlantSnapshot.length === 0;
       }
     }
 
@@ -259,6 +280,20 @@ export class TrackManagerSystem implements System {
     return Math.sqrt(ex * ex + ez * ez);
   }
 
+  /** Append nodes to target, skipping the first node if it duplicates the tail. */
+  private appendNodesDedup(target: TrackStateNode[], source: TrackStateNode[]): void {
+    for (let j = 0; j < source.length; j++) {
+      if (j === 0 && target.length > 0) {
+        const last = target[target.length - 1];
+        if (last.x === source[0].x && last.z === source[0].z &&
+            last.dir === source[0].dir) {
+          continue;
+        }
+      }
+      target.push(source[j]);
+    }
+  }
+
   // ───────────────────────────────────────────────────────────────────────
   // Step 3: Momentum-Aware Circuit Generation
   // ───────────────────────────────────────────────────────────────────────
@@ -267,6 +302,7 @@ export class TrackManagerSystem implements System {
     world: World,
     hqPos: PositionComponent,
     plants: { entity: number; x: number; z: number }[],
+    team: number,
   ): { route: TrackWaypoint[]; trackCells: Set<string> } {
     if (plants.length === 0) return { route: [], trackCells: new Set() };
 
@@ -294,7 +330,7 @@ export class TrackManagerSystem implements System {
     const allBuildings = world.query(BUILDING, POSITION);
     for (const e of allBuildings) {
       const b = world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (b.buildingType === BuildingType.Wall || b.buildingType === BuildingType.PowerPole) continue;
+      if (b.buildingType === BuildingType.PowerPole) continue;
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
       const bgx = Math.round(pos.x / MACRO_GRID_SIZE);
       const bgz = Math.round(pos.z / MACRO_GRID_SIZE);
@@ -310,10 +346,21 @@ export class TrackManagerSystem implements System {
 
     // 3c. For each building, pick the best adjacent grid cell as the track target.
     // Skip stops that have no valid adjacent cell (hemmed in by terrain/buildings).
+    const ts = this.trackState.get(team);
     const gridStops: { gx: number; gz: number; entity: number | null; isHQ: boolean; origX: number; origZ: number }[] = [];
     for (const stop of stopOrder) {
       const bgx = Math.round(stop.x / MACRO_GRID_SIZE);
       const bgz = Math.round(stop.z / MACRO_GRID_SIZE);
+
+      // HQ: use the predetermined stub cell so the train doesn't warp
+      if (stop.isHQ && ts.hqStubCell) {
+        gridStops.push({
+          gx: ts.hqStubCell.gx, gz: ts.hqStubCell.gz,
+          entity: stop.entity, isHQ: true,
+          origX: stop.x, origZ: stop.z,
+        });
+        continue;
+      }
 
       // Pick the adjacent cell that is farthest from other blocked cells
       // (to give the A* the most room to maneuver)
@@ -355,49 +402,62 @@ export class TrackManagerSystem implements System {
     // Need at least HQ + 1 plant to form a circuit
     if (gridStops.length < 2) return { route: [], trackCells: new Set<string>() };
 
-    // 3d. Chain findDiscretePath calls with momentum awareness.
-    // Two passes: first pass discovers the return direction, second pass
-    // rebuilds with correct starting momentum so the loop closes seamlessly.
-    const buildLoop = (startMomentum: number): { path: TrackStateNode[]; finalDir: number } => {
-      const path: TrackStateNode[] = [];
-      let mom = startMomentum;
-      let fromGx = gridStops[0].gx;
-      let fromGz = gridStops[0].gz;
+    // 3d. Build stub track nodes (always conserved as the start of the circuit).
+    // The stub is a straight track extending behind/ahead of the engine cell.
+    const stubDir = ts.hqStubCell?.direction ?? 2;
+    const stubGx = gridStops[0].gx;
+    const stubGz = gridStops[0].gz;
 
-      for (let i = 0; i < gridStops.length; i++) {
-        const to = gridStops[(i + 1) % gridStops.length];
-        const result = this.findDiscretePath(
-          fromGx, fromGz, mom, to.gx, to.gz, blockedCells,
-        );
-        // If any segment fails, abort — don't create a broken/warped route
-        if (result.path.length === 0) {
-          return { path: [], finalDir: mom };
-        }
-        // Skip first node if it duplicates the tail of the path
-        for (let j = 0; j < result.path.length; j++) {
-          if (j === 0 && path.length > 0) {
-            const last = path[path.length - 1];
-            if (last.x === result.path[0].x && last.z === result.path[0].z &&
-                last.dir === result.path[0].dir) {
-              continue;
-            }
-          }
-          path.push(result.path[j]);
-        }
-        mom = result.exitDir;
-        // Next segment starts from where this one actually ended
-        const end = result.path[result.path.length - 1];
-        fromGx = end.x;
-        fromGz = end.z;
-      }
-      return { path, finalDir: mom };
-    };
+    const stubNodes: TrackStateNode[] = [];
+    for (let i = -STUB_BEHIND_CELLS; i <= STUB_AHEAD_CELLS; i++) {
+      const gx = stubGx + DIR_DX[stubDir] * i;
+      const gz = stubGz + DIR_DZ[stubDir] * i;
+      const wx = gx * MACRO_GRID_SIZE;
+      const wz = gz * MACRO_GRID_SIZE;
+      if (wx < 4 || wx > 252 || wz < 4 || wz > 252) continue;
+      if (!this.terrainData.isPassable(wx, wz)) continue;
+      if (blockedCells.has(`${gx},${gz}`)) continue;
+      stubNodes.push({ x: gx, z: gz, dir: stubDir, gCost: 0, hCost: 0, parent: null });
+    }
+    if (stubNodes.length < 2) return { route: [], trackCells: new Set<string>() };
 
-    // Pass 1: build with arbitrary start direction to discover return momentum
-    const pass1 = buildLoop(0);
-    // Pass 2: rebuild with the return direction as the start, so the loop is seamless
-    const pass2 = buildLoop(pass1.finalDir);
-    const masterPath = pass2.path;
+    const stubSouthEnd = stubNodes[stubNodes.length - 1];
+    const stubNorthEnd = stubNodes[0];
+
+    // Plant stops only (HQ is handled by the stub)
+    const plantStops = gridStops.filter(gs => !gs.isHQ);
+    if (plantStops.length === 0) return { route: [], trackCells: new Set<string>() };
+
+    // 3e. Chain A* from stub south end through all plants, returning to stub north end.
+    const masterPath: TrackStateNode[] = [...stubNodes];
+    let mom = stubDir;
+    let fromGx = stubSouthEnd.x;
+    let fromGz = stubSouthEnd.z;
+
+    for (let i = 0; i < plantStops.length; i++) {
+      const to = plantStops[i];
+      const result = this.findDiscretePath(fromGx, fromGz, mom, to.gx, to.gz, blockedCells);
+      if (result.path.length === 0) return { route: [], trackCells: new Set<string>() };
+      this.appendNodesDedup(masterPath, result.path);
+      mom = result.exitDir;
+      const end = result.path[result.path.length - 1];
+      fromGx = end.x;
+      fromGz = end.z;
+    }
+
+    // Return leg: back to stub north end, preferring arrival in stub direction
+    // so the loop wraps smoothly into the stub
+    let returnResult = this.findDiscretePath(
+      fromGx, fromGz, mom, stubNorthEnd.x, stubNorthEnd.z, blockedCells, stubDir,
+    );
+    if (returnResult.path.length === 0) {
+      // Fallback: no direction constraint
+      returnResult = this.findDiscretePath(
+        fromGx, fromGz, mom, stubNorthEnd.x, stubNorthEnd.z, blockedCells,
+      );
+    }
+    if (returnResult.path.length === 0) return { route: [], trackCells: new Set<string>() };
+    this.appendNodesDedup(masterPath, returnResult.path);
 
     if (masterPath.length < 2) return { route: [], trackCells: new Set<string>() };
 
@@ -481,6 +541,7 @@ export class TrackManagerSystem implements System {
     startGx: number, startGz: number, startDir: number,
     goalGx: number, goalGz: number,
     blockedCells?: Set<string>,
+    goalDir?: number,
   ): { path: TrackStateNode[]; exitDir: number } {
     const key = (x: number, z: number, d: number) => `${x},${z},${d}`;
     const heuristic = (x: number, z: number) =>
@@ -521,7 +582,8 @@ export class TrackManagerSystem implements System {
       open[bestI] = open[open.length - 1];
       open.pop();
 
-      if (current.x === goalGx && current.z === goalGz) {
+      if (current.x === goalGx && current.z === goalGz &&
+          (goalDir == null || current.dir === goalDir)) {
         found = current;
         break;
       }
@@ -566,13 +628,18 @@ export class TrackManagerSystem implements System {
         // For curve moves, check the diagonal cell the arc swings through.
         // The pivot is perpendicular to current dir; the arc midpoint passes
         // through the cell that is diagonally adjacent (forward + turn side).
-        if (blockedCells && n.nd !== current.dir) {
+        if (n.nd !== current.dir) {
           const isRight = n.nd === rightDir;
           const perpD = isRight ? rightDir : leftDir;
           // The diagonal cell the arc interior passes closest to
           const diagGx = current.x + DIR_DX[perpD];
           const diagGz = current.z + DIR_DZ[perpD];
-          if (blockedCells.has(`${diagGx},${diagGz}`)) {
+          const diagWx = diagGx * MACRO_GRID_SIZE;
+          const diagWz = diagGz * MACRO_GRID_SIZE;
+          if (!this.terrainData.isPassable(diagWx, diagWz)) {
+            continue; // Arc would clip a mountain
+          }
+          if (blockedCells && blockedCells.has(`${diagGx},${diagGz}`)) {
             continue; // Arc would clip a building
           }
         }
@@ -748,6 +815,14 @@ export class TrackManagerSystem implements System {
     return null;
   }
 
+  /** Find the index of the HQ stop waypoint in a path. Falls back to 0. */
+  private findHQWaypointIndex(path: { isHQ: boolean }[]): number {
+    for (let i = 0; i < path.length; i++) {
+      if (path[i].isHQ) return i;
+    }
+    return 0;
+  }
+
   /** Find the train engine for a team. */
   private findEngine(world: World, team: number): number | null {
     const entities = world.query(TRAIN_LINK, TEAM);
@@ -756,12 +831,14 @@ export class TrackManagerSystem implements System {
       if (!link.isEngine) continue;
       const t = world.getComponent<TeamComponent>(e, TEAM)!;
       if (t.team !== team) continue;
+      const h = world.getComponent<HealthComponent>(e, HEALTH);
+      if (h && h.dead) continue;
       return e;
     }
     return null;
   }
 
-  /** Check if any completed building (non-wall, non-pole) sits on one of the given track cells. */
+  /** Check if any completed building (non-pole) sits on one of the given track cells. */
   private hasBuildingOnTrack(world: World, team: number, trackCells: Set<string>): boolean {
     const buildings = world.query(BUILDING, POSITION, TEAM);
     for (const e of buildings) {
@@ -769,7 +846,7 @@ export class TrackManagerSystem implements System {
       const t = world.getComponent<TeamComponent>(e, TEAM)!;
       if (t.team !== team) continue;
       const b = world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (b.buildingType === BuildingType.Wall || b.buildingType === BuildingType.PowerPole) continue;
+      if (b.buildingType === BuildingType.PowerPole) continue;
       const pos = world.getComponent<PositionComponent>(e, POSITION)!;
       const gx = Math.round(pos.x / MACRO_GRID_SIZE);
       const gz = Math.round(pos.z / MACRO_GRID_SIZE);

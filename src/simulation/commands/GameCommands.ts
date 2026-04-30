@@ -6,8 +6,8 @@ import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import {
   POSITION, RENDERABLE, SELECTABLE, HEALTH, TEAM,
   BUILDING, BUILD_COMMAND, CONSTRUCTION, MOVE_COMMAND,
-  PRODUCTION_QUEUE, VOXEL_STATE, POWER_NODE,
-  REPAIR_COMMAND, WALL_BUILD_QUEUE, POWER_POLE_RUIN,
+  PRODUCTION_QUEUE, VOXEL_STATE, POWER_NODE, POWER_POLE,
+  REPAIR_COMMAND, POWER_POLE_RUIN,
   MACRO_GRID_SIZE,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
@@ -21,7 +21,6 @@ import type { MoveCommandComponent } from '@sim/components/MoveCommand';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
 import type { SelectableComponent } from '@sim/components/Selectable';
 import type { VoxelStateComponent } from '@sim/components/VoxelState';
-import type { WallBuildQueueComponent } from '@sim/components/WallBuildQueue';
 import type { PowerPoleRuinComponent } from '@sim/components/PowerPoleRuin';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 
@@ -47,13 +46,7 @@ export interface GameCommandContext {
   trackState?: TrackState;
 }
 
-export interface WallSegment {
-  x: number;
-  z: number;
-  meshType: 'wall_x' | 'wall_z' | 'wall_corner';
-}
-
-// --- Construction site creation (shared by buildStructure and buildWallSegments) ---
+// --- Construction site creation ---
 
 function createConstructionSiteEntity(
   ctx: GameCommandContext,
@@ -129,9 +122,6 @@ function clearWorkerCommands(world: World, workerEntity: number): void {
   }
   if (world.hasComponent(workerEntity, REPAIR_COMMAND)) {
     world.removeComponent(workerEntity, REPAIR_COMMAND);
-  }
-  if (world.hasComponent(workerEntity, WALL_BUILD_QUEUE)) {
-    world.removeComponent(workerEntity, WALL_BUILD_QUEUE);
   }
 }
 
@@ -232,64 +222,6 @@ export function buildStructure(
 }
 
 /**
- * Build wall segments: check affordability for all segments, deduct resources,
- * create construction sites, and issue build command to worker.
- * Returns true if successful.
- */
-export function buildWallSegments(
-  ctx: GameCommandContext,
-  team: number,
-  segments: WallSegment[],
-  workerEntity: number,
-): boolean {
-  if (segments.length === 0) return false;
-
-  // Worker must not already be building
-  if (ctx.world.hasComponent(workerEntity, BUILD_COMMAND)) return false;
-
-  const def = BUILDING_DEFS[BuildingType.Wall];
-  if (!def) return false;
-
-  // Total cost
-  const totalEnergyCost = def.energyCost * segments.length;
-  const totalMatterCost = def.matterCost * segments.length;
-
-  // Affordability
-  if (totalEnergyCost > 0 && !ctx.resources.canAfford(team, totalEnergyCost)) return false;
-  if (totalMatterCost > 0 && !ctx.resources.canAffordMatter(team, totalMatterCost)) return false;
-
-  // Deduct resources
-  if (totalEnergyCost > 0) ctx.resources.spend(team, totalEnergyCost);
-  if (totalMatterCost > 0) ctx.resources.spendMatter(team, totalMatterCost);
-
-  // Clear existing worker commands
-  clearWorkerCommands(ctx.world, workerEntity);
-
-  // Create all wall construction site entities
-  const siteEntities: number[] = [];
-  for (const seg of segments) {
-    const site = createConstructionSiteEntity(
-      ctx, team, BuildingType.Wall, seg.meshType, seg.x, seg.z, workerEntity,
-    );
-    siteEntities.push(site);
-  }
-
-  // Issue move + build command for first segment
-  const firstSeg = segments[0];
-  issueWorkerBuild(ctx.world, workerEntity, BuildingType.Wall, firstSeg.x, firstSeg.z, siteEntities[0]);
-
-  // Add wall build queue if multiple segments
-  if (siteEntities.length > 1) {
-    ctx.world.addComponent<WallBuildQueueComponent>(workerEntity, WALL_BUILD_QUEUE, {
-      siteEntities,
-      currentIndex: 0,
-    });
-  }
-
-  return true;
-}
-
-/**
  * Train a unit at a production building: check affordability, deduct resources,
  * add to production queue.
  * Returns true if successful.
@@ -341,18 +273,62 @@ export function trainUnit(
   return true;
 }
 
+/** Find a pole ruin at a specific grid position for a team. */
+function findRuinAtGrid(
+  world: World,
+  team: number,
+  gridX: number,
+  gridZ: number,
+): PowerPoleRuinComponent | null {
+  const ruins = world.query(POWER_POLE_RUIN, TEAM);
+  for (const e of ruins) {
+    const t = world.getComponent<TeamComponent>(e, TEAM)!;
+    if (t.team !== team) continue;
+    const ruin = world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
+    if (ruin.gridX === gridX && ruin.gridZ === gridZ) return ruin;
+  }
+  return null;
+}
+
 /**
- * Check if a pole ruin has at least one surviving neighbor POWER_NODE.
- * If none survive, the pole is orphaned (its building was destroyed) and not worth rebuilding.
+ * BFS from a pole ruin through neighboring ruins and live nodes to check
+ * if rebuilding this ruin would serve a functional building (not just HQ).
+ * Returns false for orphaned chains whose endpoint building was destroyed.
  */
-function hasAnySurvivingNeighbor(
+export function isRuinChainUseful(
   world: World,
   team: number,
   ruin: PowerPoleRuinComponent,
 ): boolean {
-  for (const [gx, gz] of ruin.neighborGridPositions) {
-    if (findNodeAtGrid(world, team, gx, gz) !== null) return true;
+  const queue: [number, number][] = [...ruin.neighborGridPositions];
+  const visited = new Set<string>();
+  visited.add(`${ruin.gridX},${ruin.gridZ}`);
+
+  while (queue.length > 0) {
+    const [gx, gz] = queue.shift()!;
+    const key = `${gx},${gz}`;
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    const nodeEntity = findNodeAtGrid(world, team, gx, gz);
+    if (nodeEntity !== null) {
+      // Live pole: conservatively assume chain is useful
+      if (world.hasComponent(nodeEntity, POWER_POLE)) return true;
+      const bldg = world.getComponent<BuildingComponent>(nodeEntity, BUILDING);
+      if (bldg && bldg.buildingType !== BuildingType.HQ) return true;
+      // HQ: skip, keep searching other branches
+      continue;
+    }
+
+    // Traverse through neighboring ruins
+    const neighborRuin = findRuinAtGrid(world, team, gx, gz);
+    if (neighborRuin) {
+      for (const pos of neighborRuin.neighborGridPositions) {
+        queue.push(pos);
+      }
+    }
   }
+
   return false;
 }
 
@@ -373,7 +349,7 @@ export function getPoleRepairCost(
     const t = world.getComponent<TeamComponent>(e, TEAM)!;
     if (t.team !== team) continue;
     const ruin = world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
-    if (!hasAnySurvivingNeighbor(world, team, ruin)) continue;
+    if (!isRuinChainUseful(world, team, ruin)) continue;
     count++;
   }
 
@@ -416,7 +392,7 @@ export function repairAllPoles(
     const ruin = ctx.world.getComponent<PowerPoleRuinComponent>(e, POWER_POLE_RUIN)!;
 
     // Skip orphaned ruins — no surviving neighbor buildings
-    if (!hasAnySurvivingNeighbor(ctx.world, team, ruin)) continue;
+    if (!isRuinChainUseful(ctx.world, team, ruin)) continue;
 
     const site = ctx.world.createEntity();
     ctx.world.addComponent<PositionComponent>(site, POSITION, {

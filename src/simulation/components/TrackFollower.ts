@@ -8,4 +8,6 @@ export interface TrackFollowerComponent {
   reconnectTarget: number;
   /** When true, TrainMovementSystem skips this engine (halted for loading/unloading). */
   halted: boolean;
+  /** Current speed (wu/s). Ramps up from 0 after each halt. */
+  currentSpeed: number;
 }

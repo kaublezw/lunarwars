@@ -1,7 +1,7 @@
 import type { World } from '@core/ECS';
 import {
   POSITION, RENDERABLE, UNIT_TYPE, SELECTABLE, HEALTH, TEAM, VISION,
-  VOXEL_STATE, TRAIN_LINK, TRACK_FOLLOWER, CARGO_STORAGE,
+  VOXEL_STATE, TRAIN_LINK, TRACK_FOLLOWER, CARGO_STORAGE, MACRO_GRID_SIZE,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
@@ -19,11 +19,22 @@ import { UNIT_DEFS } from '@sim/data/UnitData';
 import { VOXEL_MODELS } from '@sim/data/VoxelModels';
 
 const TEAM_COLORS = [0x4488ff, 0xff4444];
-const CAR_SPACING = 2.5; // world units between each linked entity
+const CAR_SPACING = 2.0; // world units between each linked entity (matches TrainMovementSystem)
+
+/** Grid cells behind the engine (covers cargo cars trailing behind). */
+export const STUB_BEHIND_CELLS = 2;
+/** Grid cells ahead of the engine (runway before entering A* circuit). */
+export const STUB_AHEAD_CELLS = 1;
+
+/** Direction deltas: 0=North(-Z), 1=East(+X), 2=South(+Z), 3=West(-X) */
+const DIR_DX = [0, 1, 0, -1];
+const DIR_DZ = [-1, 0, 1, 0];
 
 /**
  * Spawn a train set (1 engine + N cargo cars) at the given position.
  * All entities are linked via TrainLink. The engine gets a TrackFollower.
+ * If stubDirection is provided, engine faces that direction, cars trail opposite,
+ * and the follower starts halted (for the initial HQ stub track).
  * Returns [engineEntity, ...carEntities].
  */
 export function spawnTrainSet(
@@ -33,6 +44,7 @@ export function spawnTrainSet(
   y: number,
   z: number,
   carCount: number,
+  stubDirection?: number,
 ): number[] {
   const engineDef = UNIT_DEFS[UnitCategory.TrainEngine];
   const carDef = UNIT_DEFS[UnitCategory.CargoCar];
@@ -40,8 +52,11 @@ export function spawnTrainSet(
 
   // Spawn engine
   const engine = world.createEntity();
+  const engineRotation = stubDirection != null
+    ? Math.atan2(DIR_DX[stubDirection], DIR_DZ[stubDirection])
+    : 0;
   world.addComponent<PositionComponent>(engine, POSITION, {
-    x, y, z, prevX: x, prevY: y, prevZ: z, rotation: 0,
+    x, y, z, prevX: x, prevY: y, prevZ: z, rotation: engineRotation,
   });
   world.addComponent<RenderableComponent>(engine, RENDERABLE, {
     meshType: engineDef.meshType, color, scale: 1.0,
@@ -69,14 +84,16 @@ export function spawnTrainSet(
     });
   }
 
-  // TrackFollower on the engine (empty path until TrackManagerSystem fills it)
+  // TrackFollower on the engine (empty path until TrackManagerSystem fills it,
+  // or halted on the stub track if stubDirection is provided)
   world.addComponent<TrackFollowerComponent>(engine, TRACK_FOLLOWER, {
     path: [],
     currentWaypointIndex: 0,
     distanceAlongSegment: 0,
     direction: 1,
     reconnectTarget: -1,
-    halted: false,
+    halted: stubDirection != null,
+    currentSpeed: 0,
   });
 
   // TrainLink for the engine (head of the chain)
@@ -89,10 +106,11 @@ export function spawnTrainSet(
   const entities: number[] = [engine];
   let prevEntity = engine;
 
-  // Spawn cargo cars
+  // Spawn cargo cars (trail behind engine opposite to stub direction, or along +Z by default)
   for (let i = 0; i < carCount; i++) {
-    const carX = x;
-    const carZ = z + CAR_SPACING * (i + 1); // stagger behind engine along +Z
+    const offset = CAR_SPACING * (i + 1);
+    const carX = stubDirection != null ? x - DIR_DX[stubDirection] * offset : x;
+    const carZ = stubDirection != null ? z - DIR_DZ[stubDirection] * offset : z + offset;
 
     const car = world.createEntity();
     world.addComponent<PositionComponent>(car, POSITION, {
@@ -204,6 +222,80 @@ export function engineInProduction(world: World, team: number): boolean {
   return false;
 }
 
-// Need to import these for engineInProduction
+/**
+ * Deterministic HQ stub track cell: +X (East) from HQ grid center,
+ * with the track running South (+Z) — parallel to the side of HQ.
+ * Used at game start to position the train and later by computeCircuit to
+ * ensure the HQ stop cell matches where the train is sitting.
+ */
+export function getHQStubCell(hqX: number, hqZ: number): {
+  gx: number; gz: number;
+  worldX: number; worldZ: number;
+  direction: number; // 2 = South (+Z), parallel to HQ side
+} {
+  const bgx = Math.round(hqX / MACRO_GRID_SIZE);
+  const bgz = Math.round(hqZ / MACRO_GRID_SIZE);
+  const gx = bgx + 1; // +X adjacent cell
+  const gz = bgz;
+  return {
+    gx, gz,
+    worldX: gx * MACRO_GRID_SIZE,
+    worldZ: gz * MACRO_GRID_SIZE,
+    direction: 2, // South — runs parallel to HQ's east side
+  };
+}
+
+/**
+ * Create a long stub track at the HQ and store it as the active route.
+ * The stub extends behind the engine (for cargo cars) and ahead (runway).
+ * The train sits halted on this stub until a full circuit is computed.
+ */
+export function initHQStubTrack(
+  trackState: TrackState,
+  terrainData: { getHeight(x: number, z: number): number; isPassable(x: number, z: number): boolean },
+  team: number,
+  hqX: number,
+  hqZ: number,
+): void {
+  const stub = getHQStubCell(hqX, hqZ);
+
+  // Store the predetermined cell for computeCircuit
+  trackState.setHQStubCell(team, stub.gx, stub.gz, stub.direction);
+
+  // Build stub waypoints: behind the engine (-STUB_BEHIND) through ahead (+STUB_AHEAD)
+  // All cells go in the stub direction (straight track)
+  const stubRoute: TrackWaypoint[] = [];
+  const trackCells = new Set<string>();
+
+  for (let i = -STUB_BEHIND_CELLS; i <= STUB_AHEAD_CELLS; i++) {
+    const gx = stub.gx + DIR_DX[stub.direction] * i;
+    const gz = stub.gz + DIR_DZ[stub.direction] * i;
+    const wx = gx * MACRO_GRID_SIZE;
+    const wz = gz * MACRO_GRID_SIZE;
+    if (wx < 4 || wx > 252 || wz < 4 || wz > 252) continue;
+    if (!terrainData.isPassable(wx, wz)) continue;
+    stubRoute.push({ x: wx, y: terrainData.getHeight(wx, wz), z: wz, entityId: null, isHQ: false });
+    trackCells.add(`${gx},${gz}`);
+  }
+
+  // Fallback: at minimum include the stub cell and one cell ahead
+  if (stubRoute.length < 2) {
+    const wx = stub.worldX;
+    const wz = stub.worldZ;
+    const w1x = wx + DIR_DX[stub.direction] * MACRO_GRID_SIZE;
+    const w1z = wz + DIR_DZ[stub.direction] * MACRO_GRID_SIZE;
+    stubRoute.length = 0;
+    trackCells.clear();
+    stubRoute.push({ x: wx, y: terrainData.getHeight(wx, wz), z: wz, entityId: null, isHQ: false });
+    stubRoute.push({ x: w1x, y: terrainData.getHeight(w1x, w1z), z: w1z, entityId: null, isHQ: false });
+    trackCells.add(`${stub.gx},${stub.gz}`);
+    trackCells.add(`${stub.gx + DIR_DX[stub.direction]},${stub.gz + DIR_DZ[stub.direction]}`);
+  }
+
+  trackState.setActiveRoute(team, stubRoute, [], trackCells);
+}
+
+// Need to import these for engineInProduction and initHQStubTrack
 import { PRODUCTION_QUEUE } from '@sim/components/ComponentTypes';
 import type { ProductionQueueComponent } from '@sim/components/ProductionQueue';
+import type { TrackState, TrackWaypoint } from '@sim/logistics/TrackState';

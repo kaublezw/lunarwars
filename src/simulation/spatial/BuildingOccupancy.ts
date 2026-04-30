@@ -14,13 +14,6 @@ const FOOTPRINT_RADIUS: Record<string, number> = {
   power_pole_ruin: 0,
 };
 
-// Rectangular footprints for axis-aligned structures (walls)
-const FOOTPRINT_RECT: Record<string, { halfX: number; halfZ: number }> = {
-  wall_x: { halfX: 1, halfZ: 0 },
-  wall_z: { halfX: 0, halfZ: 1 },
-  wall_corner: { halfX: 1, halfZ: 1 },
-};
-
 export class BuildingOccupancy {
   private grid: Uint8Array;
   readonly width: number;
@@ -43,26 +36,13 @@ export class BuildingOccupancy {
       const cx = Math.floor(pos.x);
       const cz = Math.floor(pos.z);
 
-      const rect = FOOTPRINT_RECT[meshType];
-      if (rect) {
-        for (let dz = -rect.halfZ; dz <= rect.halfZ; dz++) {
-          for (let dx = -rect.halfX; dx <= rect.halfX; dx++) {
-            const tx = cx + dx;
-            const tz = cz + dz;
-            if (tx >= 0 && tx < this.width && tz >= 0 && tz < this.height) {
-              this.grid[tz * this.width + tx] = 1;
-            }
-          }
-        }
-      } else {
-        const radius = FOOTPRINT_RADIUS[meshType] ?? 1;
-        for (let dz = -radius; dz <= radius; dz++) {
-          for (let dx = -radius; dx <= radius; dx++) {
-            const tx = cx + dx;
-            const tz = cz + dz;
-            if (tx >= 0 && tx < this.width && tz >= 0 && tz < this.height) {
-              this.grid[tz * this.width + tx] = 1;
-            }
+      const radius = FOOTPRINT_RADIUS[meshType] ?? 1;
+      for (let dz = -radius; dz <= radius; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          const tx = cx + dx;
+          const tz = cz + dz;
+          if (tx >= 0 && tx < this.width && tz >= 0 && tz < this.height) {
+            this.grid[tz * this.width + tx] = 1;
           }
         }
       }

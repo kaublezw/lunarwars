@@ -21,7 +21,7 @@ export class DepotRangeRenderer {
       side: THREE.DoubleSide,
       transparent: true,
       opacity: 0.25,
-      depthTest: false,
+      depthWrite: false,
     });
   }
 
@@ -48,6 +48,7 @@ export class DepotRangeRenderer {
       if (!mesh) {
         mesh = new THREE.Mesh(this.geometry, this.material);
         mesh.rotation.x = -Math.PI / 2;
+        mesh.renderOrder = -2;
         this.scene.add(mesh);
         this.circles.set(e, mesh);
       }

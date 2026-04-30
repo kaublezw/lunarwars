@@ -43,7 +43,7 @@ import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 
 import { TEAM_COLORS } from '@sim/ai/AITypes';
-import { spawnTrainSet } from '@sim/logistics/TrainSpawner';
+import { spawnTrainSet, getHQStubCell, initHQStubTrack } from '@sim/logistics/TrainSpawner';
 import { TrainMovementSystem } from '@sim/systems/TrainMovementSystem';
 import { TrainLogisticsSystem } from '@sim/systems/TrainLogisticsSystem';
 import { TrackManagerSystem } from '@sim/systems/TrackManagerSystem';
@@ -62,6 +62,7 @@ export class HeadlessEngine {
   private energyNodes!: EnergyNode[];
   private oreDeposits!: OreDeposit[];
   private powerGridState!: PowerGridState;
+  private trackState!: TrackState;
   private gameOverTeam: number | null = null;
   private tickCount = 0;
 
@@ -86,7 +87,8 @@ export class HeadlessEngine {
 
     // Economy
     this.resourceState = new ResourceState(2);
-    const trackState = new TrackState(2);
+    this.trackState = new TrackState(2);
+    const trackState = this.trackState;
     this.powerGridState = new PowerGridState(2);
     const powerGridState = this.powerGridState;
 
@@ -262,10 +264,12 @@ export class HeadlessEngine {
       }
     }
 
-    // Train set (1 engine + 2 cargo cars per team, free)
+    // Train set (1 engine + 2 cargo cars per team, on HQ stub track)
     for (const hq of hqSpawns) {
-      const trainY = this.terrainData.getHeight(hq.x, hq.z) + 0.1;
-      spawnTrainSet(this.world, hq.team, hq.x, trainY, hq.z, 2);
+      const stub = getHQStubCell(hq.x, hq.z);
+      const stubY = this.terrainData.getHeight(stub.worldX, stub.worldZ) + 0.1;
+      spawnTrainSet(this.world, hq.team, stub.worldX, stubY, stub.worldZ, 2, stub.direction);
+      initHQStubTrack(this.trackState, this.terrainData, hq.team, hq.x, hq.z);
     }
   }
 }

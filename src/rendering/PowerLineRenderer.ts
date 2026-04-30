@@ -33,12 +33,6 @@ export class PowerLineRenderer {
 
   sync(world: World, gridState: PowerGridState, teamCount: number): void {
     for (let team = 0; team < teamCount; team++) {
-      // Skip enemy lines in non-spectator mode
-      if (this.playerTeam >= 0 && team !== this.playerTeam) {
-        this.removeLine(team);
-        continue;
-      }
-
       const edges = gridState.getTeamEdges(team);
       if (edges.length === 0) {
         this.removeLine(team);

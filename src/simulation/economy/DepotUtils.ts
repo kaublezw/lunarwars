@@ -5,7 +5,7 @@ import type { PositionComponent } from '@sim/components/Position';
 import type { HealthComponent } from '@sim/components/Health';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 
-export const RESUPPLY_RANGE = 5;
+export const RESUPPLY_RANGE = 10;
 export const AMMO_MATTER_COST = 0.2;   // 1 matter per 5 ammo
 export const REPAIR_MATTER_COST = 0.1;  // 1 matter per 10 HP
 export const REPAIR_RATE = 20;          // HP per second

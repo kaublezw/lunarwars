@@ -22,6 +22,8 @@ export interface TeamTrackState {
   activeTrackCells: Set<string>;
   /** Grid cells occupied by the pending track route ("gx,gz" keys). */
   pendingTrackCells: Set<string>;
+  /** Predetermined HQ adjacent grid cell for the stub track. Set at game start, used by computeCircuit. */
+  hqStubCell: { gx: number; gz: number; direction: number } | null;
 }
 
 export class TrackState {
@@ -37,6 +39,7 @@ export class TrackState {
         activePlantSnapshot: [],
         activeTrackCells: new Set(),
         pendingTrackCells: new Set(),
+        hqStubCell: null,
       });
     }
   }
@@ -84,6 +87,11 @@ export class TrackState {
     ts.pendingTrackCells = trackCells ?? new Set();
   }
 
+  /** Store the predetermined HQ stub grid cell for a team. */
+  setHQStubCell(team: number, gx: number, gz: number, direction: number): void {
+    this.teams[team].hqStubCell = { gx, gz, direction };
+  }
+
   /** Directly set the active route (for initial route when no train exists yet). */
   setActiveRoute(team: number, route: TrackWaypoint[], plantSnapshot: number[], trackCells?: Set<string>): void {
     const ts = this.teams[team];
@@ -103,6 +111,7 @@ export class TrackState {
       activePlantSnapshot: [...t.activePlantSnapshot],
       activeTrackCells: [...t.activeTrackCells],
       pendingTrackCells: [...t.pendingTrackCells],
+      hqStubCell: t.hqStubCell ? { ...t.hqStubCell } : null,
     }));
   }
 
@@ -115,6 +124,7 @@ export class TrackState {
         activePlantSnapshot: number[];
         activeTrackCells?: string[];
         pendingTrackCells?: string[];
+        hqStubCell?: { gx: number; gz: number; direction?: number } | null;
       };
       return {
         activeRoute: d.activeRoute.map(w => ({ ...w })),
@@ -123,6 +133,7 @@ export class TrackState {
         activePlantSnapshot: [...d.activePlantSnapshot],
         activeTrackCells: new Set(d.activeTrackCells ?? []),
         pendingTrackCells: new Set(d.pendingTrackCells ?? []),
+        hqStubCell: d.hqStubCell ? { gx: d.hqStubCell.gx, gz: d.hqStubCell.gz, direction: d.hqStubCell.direction ?? 0 } : null,
       };
     });
   }

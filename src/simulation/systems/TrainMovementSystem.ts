@@ -55,9 +55,20 @@ export class TrainMovementSystem implements System {
       // Check for broken chain and handle reconnection
       this.checkChainIntegrity(world, engine, follower, link);
 
-      // Advance along the spline
-      const speed = 4;
-      this.advanceEngine(world, engine, follower, dt, speed, teamNum);
+      // Accelerate / decelerate based on distance to next stop
+      const MAX_SPEED = 5.2;
+      const ACCEL = 4;  // wu/s^2 — reaches full speed in ~1s
+      const BRAKE_DIST = 3; // wu — start braking this far from a stop
+      const distToStop = this.distanceToNextStop(follower);
+      if (distToStop >= 0 && distToStop < BRAKE_DIST) {
+        // Decelerate: target speed proportional to remaining distance
+        const targetSpeed = MAX_SPEED * (distToStop / BRAKE_DIST);
+        follower.currentSpeed = Math.max(0.3, Math.min(follower.currentSpeed, targetSpeed));
+      } else {
+        // Accelerate toward max speed
+        follower.currentSpeed = Math.min(MAX_SPEED, follower.currentSpeed + ACCEL * dt);
+      }
+      this.advanceEngine(world, engine, follower, dt, follower.currentSpeed, teamNum);
 
       // Drag cargo cars behind
       this.dragCars(world, engine, teamNum);
@@ -100,6 +111,7 @@ export class TrainMovementSystem implements System {
           // Check if we just arrived at a stop
           if (this.isStopWaypoint(path[follower.currentWaypointIndex])) {
             follower.halted = true;
+            follower.currentSpeed = 0;
             remaining = 0;
           }
           continue;
@@ -113,6 +125,7 @@ export class TrainMovementSystem implements System {
           // Check if we just arrived at a stop
           if (this.isStopWaypoint(path[follower.currentWaypointIndex])) {
             follower.halted = true;
+            follower.currentSpeed = 0;
             remaining = 0;
           }
         } else {
@@ -183,6 +196,30 @@ export class TrainMovementSystem implements System {
   private isStopWaypoint(wp: TrackFollowerComponent['path'][0] | undefined): boolean {
     if (!wp) return false;
     return wp.entityId != null || wp.isHQ;
+  }
+
+  /** Compute distance along the path from the engine's current position to the next stop waypoint. Returns -1 if none found. */
+  private distanceToNextStop(follower: TrackFollowerComponent): number {
+    const path = follower.path;
+    if (path.length < 2) return -1;
+
+    let idx = follower.currentWaypointIndex;
+    // Distance remaining in the current segment
+    const a = path[idx];
+    const b = path[Math.min(idx + 1, path.length - 1)];
+    const segLen = this.dist2D(a, b);
+    let dist = segLen - follower.distanceAlongSegment;
+
+    // Walk forward through upcoming waypoints
+    const maxLook = Math.min(path.length, 200); // cap to avoid perf issues
+    for (let steps = 0; steps < maxLook; steps++) {
+      idx++;
+      if (idx >= path.length) idx = 0;
+      if (this.isStopWaypoint(path[idx])) return dist;
+      const next = (idx + 1) % path.length;
+      dist += this.dist2D(path[idx], path[next]);
+    }
+    return -1;
   }
 
   /**

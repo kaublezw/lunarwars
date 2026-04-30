@@ -10,8 +10,7 @@ import type { HealthComponent } from '@sim/components/Health';
 import { UnitCategory } from '@sim/components/UnitType';
 import { BuildingType } from '@sim/components/Building';
 
-import type { AIContext, AIWorldState, AIPhase, IntelligenceReport } from '@sim/ai/AITypes';
-import { MAX_AI_WALLS } from '@sim/ai/AITypes';
+import type { AIContext, AIWorldState, IntelligenceReport } from '@sim/ai/AITypes';
 
 import {
   getBuildingCount, getIdleWorkers,
@@ -20,11 +19,10 @@ import {
 } from '@sim/ai/AIQueries';
 import {
   findBuildLocation, findEnergyNodeLocation, findOreDepositLocation,
-  findExtractorWallPlan, findChokepointWallPlan, findBasePerimeterWallPlan,
 } from '@sim/ai/AILocationFinder';
 import { issueMove, assignRepair } from '@sim/ai/AIActions';
 import {
-  buildStructure, buildWallSegments, trainUnit, issueWorkerBuild, repairAllPoles, getPoleRepairCost,
+  buildStructure, trainUnit, issueWorkerBuild, repairAllPoles, getPoleRepairCost,
   type GameCommandContext,
 } from '@sim/commands/GameCommands';
 import { teamHasEngine, engineInProduction } from '@sim/logistics/TrainSpawner';
@@ -45,12 +43,11 @@ export class EconomyManager {
   }
 
   update(ctx: AIContext, report: IntelligenceReport): void {
-    const { state, phase, enemyMemory } = report;
+    const { state, enemyMemory } = report;
 
     this.executePoleMaintenance(ctx, state);
     this.executeTrainMaintenance(ctx, state);
     this.executeBuildOrder(ctx, state, enemyMemory);
-    this.executeWallBuilding(ctx, state, phase, enemyMemory);
   }
 
   private executePoleMaintenance(ctx: AIContext, _state: AIWorldState): void {
@@ -183,58 +180,6 @@ export class EconomyManager {
       }
 
       return;
-    }
-  }
-
-  private executeWallBuilding(
-    ctx: AIContext,
-    state: AIWorldState,
-    phase: AIPhase,
-    enemyMemory: Map<number, EnemyMemoryEntry>,
-  ): void {
-    if (phase === 'early') return;
-
-    const idleWorkers = getIdleWorkers(ctx, state);
-    if (idleWorkers.length < 2) return;
-
-    let wallCount = 0;
-    const buildings = ctx.world.query(BUILDING, TEAM, HEALTH);
-    for (const e of buildings) {
-      const team = ctx.world.getComponent<TeamComponent>(e, TEAM)!;
-      if (team.team !== ctx.team) continue;
-      const bldg = ctx.world.getComponent<BuildingComponent>(e, BUILDING)!;
-      if (bldg.buildingType !== BuildingType.Wall) continue;
-      const health = ctx.world.getComponent<HealthComponent>(e, HEALTH)!;
-      if (health.dead) continue;
-      wallCount++;
-    }
-    if (wallCount >= MAX_AI_WALLS) return;
-
-    type PlanFinder = () => ReturnType<typeof findExtractorWallPlan>;
-    const planners: PlanFinder[] = [];
-
-    if (phase === 'buildup' || phase === 'midgame' || phase === 'lategame') {
-      planners.push(() => findExtractorWallPlan(ctx, state, enemyMemory));
-    }
-    if ((phase === 'midgame' || phase === 'lategame') && state.totalArmySize >= 5) {
-      planners.push(() => findChokepointWallPlan(ctx, state, enemyMemory));
-    }
-    if (phase === 'lategame') {
-      planners.push(() => findBasePerimeterWallPlan(ctx, state, enemyMemory));
-    }
-
-    const cmdCtx = this.buildCmdCtx(ctx);
-
-    for (const planner of planners) {
-      const plan = planner();
-      if (!plan) continue;
-
-      const maxNew = MAX_AI_WALLS - wallCount;
-      const segments = plan.slice(0, maxNew);
-      if (segments.length < 2) continue;
-
-      const wallWorker = this.findClosestWorker(ctx, idleWorkers, segments[0].x, segments[0].z);
-      if (buildWallSegments(cmdCtx, ctx.team, segments, wallWorker)) return;
     }
   }
 

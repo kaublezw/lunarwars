@@ -51,18 +51,11 @@ function createBuildingGroup(meshType: string, color: number): THREE.Group | nul
       break;
     }
     case 'energy_extractor': {
-      // Hexagonal cylinder base + glowing sphere on top
-      const base = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 2, 6), makeMat(baseColor));
+      // Power plant building
+      const base = new THREE.Mesh(new THREE.BoxGeometry(3, 2, 3), makeMat(baseColor));
       base.position.y = 1;
       base.castShadow = true;
       group.add(base);
-
-      const orb = new THREE.Mesh(
-        new THREE.SphereGeometry(0.5, 12, 8),
-        new THREE.MeshStandardMaterial({ color: 0x66ccff, emissive: 0x3388cc, emissiveIntensity: 0.8, roughness: 0.3 }),
-      );
-      orb.position.y = 2.5;
-      group.add(orb);
       break;
     }
     case 'matter_plant': {

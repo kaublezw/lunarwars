@@ -22,7 +22,6 @@ export const IMPACT_EVENT = 'ImpactEvent';
 export const PROJECTILE = 'Projectile';
 export const DEATH_TIMER = 'DeathTimer';
 export const REPAIR_COMMAND = 'RepairCommand';
-export const WALL_BUILD_QUEUE = 'WallBuildQueue';
 export const ENERGY_PACKET = 'EnergyPacket';
 export const MATTER_PACKET = 'MatterPacket';
 export const GARAGE_EXIT = 'GarageExit';

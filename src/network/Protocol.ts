@@ -28,13 +28,6 @@ export interface BuildStructurePayload {
   workerEntity: number;
 }
 
-export interface BuildWallSegmentsPayload {
-  type: 'buildWallSegments';
-  team: number;
-  segments: { x: number; z: number; meshType: string }[];
-  workerEntity: number;
-}
-
 export interface TrainUnitPayload {
   type: 'trainUnit';
   team: number;
@@ -83,7 +76,6 @@ export type GameCommandPayload =
   | MoveUnitsPayload
   | AttackMovePayload
   | BuildStructurePayload
-  | BuildWallSegmentsPayload
   | TrainUnitPayload
   | SetRallyPointPayload
   | DemolishPayload

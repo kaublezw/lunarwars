@@ -43,7 +43,7 @@ import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { DepotRadiusComponent } from '@sim/components/DepotRadius';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import { TEAM_COLORS } from '@sim/ai/AITypes';
-import { spawnTrainSet } from '@sim/logistics/TrainSpawner';
+import { spawnTrainSet, getHQStubCell, initHQStubTrack } from '@sim/logistics/TrainSpawner';
 import { TrainMovementSystem } from '@sim/systems/TrainMovementSystem';
 import { TrainLogisticsSystem } from '@sim/systems/TrainLogisticsSystem';
 import { TrackManagerSystem } from '@sim/systems/TrackManagerSystem';
@@ -453,8 +453,10 @@ export class HeadlessMultiplayerEngine {
 
     // Train set (1 engine + 2 cargo cars per team)
     for (const hq of hqSpawns) {
-      const trainY = this.terrainData.getHeight(hq.x, hq.z) + 0.1;
-      spawnTrainSet(this.world, hq.team, hq.x, trainY, hq.z, 2);
+      const stub = getHQStubCell(hq.x, hq.z);
+      const stubY = this.terrainData.getHeight(stub.worldX, stub.worldZ) + 0.1;
+      spawnTrainSet(this.world, hq.team, stub.worldX, stubY, stub.worldZ, 2, stub.direction);
+      initHQStubTrack(this.trackState, this.terrainData, hq.team, hq.x, hq.z);
     }
   }
 }

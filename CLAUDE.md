@@ -71,7 +71,7 @@ The defining mechanic is supply chain management:
 
 ### Power Grid System
 
-All non-wall buildings require a connected power line path back to HQ to function. Power poles are small destructible voxel entities (100 HP) placed automatically on the macro grid when buildings are constructed.
+All buildings require a connected power line path back to HQ to function. Power poles are small destructible voxel entities (100 HP) placed automatically on the macro grid when buildings are constructed.
 
 **Power Nodes (POWER_NODE component):**
 - Attached to HQ, Energy Extractors, Matter Plants, Supply Depots, Drone Factories, and Power Poles

@@ -27,6 +27,7 @@ import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
+import { getHQStubCell } from '@sim/logistics/TrainSpawner';
 
 const TEAM_COLORS = [0x4488ff, 0xff4444];
 
@@ -133,15 +134,17 @@ export class ProductionSystem implements System {
           });
         }
 
-        // Train engine produced at HQ: give it TrainLink + TrackFollower, spawn at HQ center for immediate docking
+        // Train engine produced at HQ: give it TrainLink + TrackFollower, spawn at HQ stub cell for immediate docking
         const isEngineSpawn = def.category === UnitCategory.TrainEngine && isHQ;
         if (isEngineSpawn) {
-          // Reposition to HQ center so TrackManagerSystem docks it immediately
+          // Reposition to HQ stub cell so TrackManagerSystem docks it immediately
+          const stub = getHQStubCell(bldgPos.x, bldgPos.z);
           const ePos = world.getComponent<PositionComponent>(unit, POSITION)!;
-          ePos.x = bldgPos.x;
-          ePos.z = bldgPos.z;
-          ePos.prevX = bldgPos.x;
-          ePos.prevZ = bldgPos.z;
+          ePos.x = stub.worldX;
+          ePos.z = stub.worldZ;
+          ePos.prevX = stub.worldX;
+          ePos.prevZ = stub.worldZ;
+          ePos.rotation = Math.atan2(1, 0); // face East (stub direction)
 
           world.addComponent<TrainLinkComponent>(unit, TRAIN_LINK, {
             nextEntity: null,
@@ -155,6 +158,7 @@ export class ProductionSystem implements System {
             direction: 1,
             reconnectTarget: -1,
             halted: false,
+            currentSpeed: 0,
           });
         }
 
