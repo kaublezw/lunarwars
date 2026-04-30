@@ -19,7 +19,20 @@ const SMOKE_PARTICLES = 3;
 const CHARGE_DURATION = 10; // seconds — matches PACKET_INTERVAL in EconomySystem
 const FADE_DURATION = 2.0;  // seconds for HQ glow to fade after receiving
 const MAX_GLOW_INTENSITY = 50.0;
-const TOWER_GLOW_Y = 5.5;  // wu above building base (matches tower cap / PACKET_ELEVATION)
+const TOWER_GLOW_Y = 5.5;  // wu above building base (HQ antenna height / PACKET_ELEVATION)
+// Extractor window pulse constants
+const EXTRACTOR_PULSE_BASE = 4.0;
+const EXTRACTOR_PULSE_AMP = 8.0;
+const EXTRACTOR_PULSE_DISTANCE = 8.0;
+const EXTRACTOR_GLOW_Y = 2.4;   // wu above building base (blue glow cap on energy pod housing)
+const EXTRACTOR_GLOW_X = 0;     // centered on building
+const EXTRACTOR_GLOW_Z = 0;     // centered on building
+// Extractor cooling tower smoke constants
+const EXTRACTOR_SMOKE_INTERVAL = 0.3; // seconds between smoke puffs (matches matter plant)
+// Tower center world offset: grid (4,15) in 20x22x20 model
+const EXTRACTOR_SMOKE_X = -0.825; // (4.5*0.15) - (20/2*0.15)
+const EXTRACTOR_SMOKE_Y = 3.3;    // 22*0.15
+const EXTRACTOR_SMOKE_Z = 0.825;  // (15.5*0.15) - (20/2*0.15)
 const PRODUCTION_LIGHT_COLOR = 0xff8833;  // warm orange — welding sparks
 const PRODUCTION_LIGHT_INTENSITY = 15.0;
 const PRODUCTION_LIGHT_DISTANCE = 8.0;
@@ -43,6 +56,15 @@ interface GlowTracker {
   fadeTimer: number;   // counts down FADE_DURATION -> 0 (HQ fading)
 }
 
+interface ExtractorPulseTracker {
+  entity: number;
+  light: THREE.PointLight;
+  phase: number;      // single phase offset per building
+  frequency: number;  // single frequency per building
+  time: number;
+  smokeTimer: number; // timer for voxel smoke spawning
+}
+
 interface ProductionGlowTracker {
   entity: number;
   light: THREE.PointLight;
@@ -58,7 +80,7 @@ interface BuildSparkTracker {
 
 export class BuildingEffectsRenderer {
   private smokeTrackers = new Map<number, SmokeTracker>();
-  private glowTrackers = new Map<number, GlowTracker>();
+  private extractorPulseTrackers = new Map<number, ExtractorPulseTracker>();
   private hqGlowTrackers = new Map<number, GlowTracker>();
   private productionGlowTrackers = new Map<number, ProductionGlowTracker>();
   private buildSparkTrackers = new Map<number, BuildSparkTracker>();
@@ -106,7 +128,9 @@ export class BuildingEffectsRenderer {
         }
       } else if (building.buildingType === BuildingType.EnergyExtractor) {
         activeEntities.add(e);
-        this.updateGlow(e, pos, dt, visible);
+        const powerNode = world.getComponent<PowerNodeComponent>(e, POWER_NODE);
+        const powered = powerNode ? powerNode.powered : true;
+        this.updateExtractorPulse(e, pos, dt, visible, powered);
       } else if (building.buildingType === BuildingType.HQ) {
         activeEntities.add(e);
         this.updateHQGlow(e, pos, dt, visible);
@@ -127,11 +151,11 @@ export class BuildingEffectsRenderer {
       }
     }
 
-    for (const [entity, tracker] of this.glowTrackers) {
+    for (const [entity, tracker] of this.extractorPulseTrackers) {
       if (!activeEntities.has(entity)) {
         this.scene.remove(tracker.light);
         tracker.light.dispose();
-        this.glowTrackers.delete(entity);
+        this.extractorPulseTrackers.delete(entity);
       }
     }
 
@@ -186,23 +210,46 @@ export class BuildingEffectsRenderer {
     }
   }
 
-  private updateGlow(entity: number, pos: PositionComponent, dt: number, visible: boolean): void {
-    let tracker = this.glowTrackers.get(entity);
+  private updateExtractorPulse(entity: number, pos: PositionComponent, dt: number, visible: boolean, powered: boolean): void {
+    let tracker = this.extractorPulseTrackers.get(entity);
     if (!tracker) {
-      const light = new THREE.PointLight(0x66ccff, 0, 14);
-      light.position.set(pos.x, pos.y + TOWER_GLOW_Y, pos.z);
+      const light = new THREE.PointLight(0x66ccff, 0, EXTRACTOR_PULSE_DISTANCE);
+      light.position.set(pos.x + EXTRACTOR_GLOW_X, pos.y + EXTRACTOR_GLOW_Y, pos.z + EXTRACTOR_GLOW_Z);
       this.scene.add(light);
-      tracker = { entity, light, chargeTimer: 0, fadeTimer: 0 };
-      this.glowTrackers.set(entity, tracker);
+      // Single phase/frequency per building, varied between buildings
+      const phase = ((entity * 7919) % 1000) / 1000 * Math.PI * 2;
+      const frequency = 0.3 + ((entity * 3571) % 1000) / 1000 * 0.2;
+      tracker = { entity, light, phase, frequency, time: 0, smokeTimer: 0 };
+      this.extractorPulseTrackers.set(entity, tracker);
     }
 
-    // Slow charge-up: ramps linearly over CHARGE_DURATION, resets to 0 on packet fire
-    tracker.chargeTimer = Math.min(tracker.chargeTimer + dt, CHARGE_DURATION);
-    const intensity = (tracker.chargeTimer / CHARGE_DURATION) * MAX_GLOW_INTENSITY;
-    tracker.light.intensity = visible ? intensity : 0;
-    tracker.light.distance = 6 + 14 * (tracker.chargeTimer / CHARGE_DURATION);
+    tracker.time += dt;
 
-    tracker.light.position.set(pos.x, pos.y + TOWER_GLOW_Y, pos.z);
+    const pulse = Math.sin(tracker.time * Math.PI * 2 * tracker.frequency + tracker.phase);
+    tracker.light.intensity = (visible && powered) ? EXTRACTOR_PULSE_BASE + EXTRACTOR_PULSE_AMP * (pulse * 0.5 + 0.5) : 0;
+
+    // Spawn particle smoke from cooling tower when powered and visible
+    if (powered) {
+      tracker.smokeTimer += dt;
+      if (tracker.smokeTimer >= EXTRACTOR_SMOKE_INTERVAL && visible) {
+        tracker.smokeTimer = 0;
+        const smokeX = pos.x + EXTRACTOR_SMOKE_X;
+        const smokeY = pos.y + EXTRACTOR_SMOKE_Y;
+        const smokeZ = pos.z + EXTRACTOR_SMOKE_Z;
+        this.particleRenderer.spawnBurst(
+          smokeX, smokeY, smokeZ,
+          0, 1, // direction: upward
+          0x888888,
+          SMOKE_PARTICLES,
+          {
+            speed: 1.5,
+            gravity: -0.3,
+            lifetime: 2.0,
+            spread: 0.5,
+          },
+        );
+      }
+    }
   }
 
   private updateHQGlow(entity: number, pos: PositionComponent, dt: number, visible: boolean): void {
@@ -346,7 +393,7 @@ export class BuildingEffectsRenderer {
 
   /** Remove all tracked effects but keep the renderer alive (for world revert). */
   clearAll(): void {
-    for (const [, tracker] of this.glowTrackers) {
+    for (const [, tracker] of this.extractorPulseTrackers) {
       this.scene.remove(tracker.light);
       tracker.light.dispose();
     }
@@ -362,7 +409,7 @@ export class BuildingEffectsRenderer {
       this.scene.remove(tracker.glowLight);
       tracker.glowLight.dispose();
     }
-    this.glowTrackers.clear();
+    this.extractorPulseTrackers.clear();
     this.hqGlowTrackers.clear();
     this.productionGlowTrackers.clear();
     this.buildSparkTrackers.clear();

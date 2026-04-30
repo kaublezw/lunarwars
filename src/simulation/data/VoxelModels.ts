@@ -250,21 +250,44 @@ export const HQ_MODEL = createModel(27, 38, 27, (g, sx, _sy, sz) => {
   fillBox(g, sx, sz, 10, 1, 20, 16, 8, 22, 0);
 });
 
-export const ENERGY_EXTRACTOR_MODEL = createModel(10, 38, 10, (g, sx, _sy, sz) => {
-  // Hexagonal base (approximated as cylinder)
-  fillCylinder(g, sx, sz, 5, 5, 5, 0, 8, PAL_DARK_GREY);
-  // Inner column
-  fillCylinder(g, sx, sz, 5, 5, 2, 0, 12, PAL_TEAM_PRIMARY);
-  // Glowing orb
-  fillCylinder(g, sx, sz, 5, 5, 3, 13, 16, PAL_BLUE_GLOW);
-  // Ring at mid height
-  fillCylinder(g, sx, sz, 5, 5, 4.5, 6, 7, PAL_TEAM_ACCENT);
-  // Transmission spire reaching HQ antenna height
-  fillCylinder(g, sx, sz, 5, 5, 1, 17, 35, PAL_LIGHT_GREY);
-  // Support ring at mid-spire
-  fillCylinder(g, sx, sz, 5, 5, 2, 26, 27, PAL_TEAM_ACCENT);
-  // Glowing emitter cap (energy packets originate here)
-  fillCylinder(g, sx, sz, 5, 5, 1.5, 36, 37, PAL_BLUE_GLOW);
+export const ENERGY_EXTRACTOR_MODEL = createModel(20, 22, 20, (g, sx, _sy, sz) => {
+  // Cooling tower on the left in isometric (low X, high Z) — rises from ground
+  fillCylinder(g, sx, sz, 4, 15, 4, 0, 20, PAL_CHIMNEY);
+  // Tower rim accent
+  fillCylinder(g, sx, sz, 4, 15, 4.5, 19, 21, PAL_TEAM_ACCENT);
+  // Hollow tower interior (open top for smoke)
+  fillCylinder(g, sx, sz, 4, 15, 2.5, 12, 21, 0);
+  // L-shaped building wraps around tower on +X and -Z sides
+  // Front arm (-Z side): x=0-19, z=0-8
+  fillBox(g, sx, sz, 0, 0, 0, 19, 1, 8, PAL_DARK_GREY);     // foundation
+  fillBox(g, sx, sz, 0, 2, 0, 19, 9, 8, PAL_TEAM_PRIMARY);   // walls
+  fillBox(g, sx, sz, 0, 10, 0, 19, 10, 8, PAL_TEAM_ACCENT);  // roof
+  // Right arm (+X side): x=9-19, z=9-19
+  fillBox(g, sx, sz, 9, 0, 9, 19, 1, 19, PAL_DARK_GREY);     // foundation
+  fillBox(g, sx, sz, 9, 2, 9, 19, 9, 19, PAL_TEAM_PRIMARY);  // walls
+  fillBox(g, sx, sz, 9, 10, 9, 19, 10, 19, PAL_TEAM_ACCENT); // roof
+  // Energy pod housing centered over energy node (grid center)
+  fillBox(g, sx, sz, 7, 11, 7, 13, 13, 13, PAL_MED_GREY);
+  fillBox(g, sx, sz, 8, 14, 8, 12, 14, 12, PAL_DARK_GREY);
+  // Blue glow cap (energy harvesting indicator)
+  fillBox(g, sx, sz, 9, 15, 9, 11, 15, 11, PAL_BLUE_GLOW);
+  // Accent stripe at mid-height on outer faces
+  fillBox(g, sx, sz, 0, 5, 0, 19, 5, 0, PAL_TEAM_ACCENT);   // -Z outer (front)
+  fillBox(g, sx, sz, 19, 5, 0, 19, 5, 19, PAL_TEAM_ACCENT);  // +X outer (right)
+  // Windows — -Z face (front arm, visible in isometric)
+  fillBox(g, sx, sz, 2, 6, 0, 4, 8, 0, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 8, 6, 0, 10, 8, 0, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 14, 6, 0, 16, 8, 0, PAL_WINDOW_GLOW);
+  // Windows — +X face (right arm, visible in isometric)
+  fillBox(g, sx, sz, 19, 6, 2, 19, 8, 4, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 19, 6, 11, 19, 8, 13, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 19, 6, 16, 19, 8, 18, PAL_WINDOW_GLOW);
+  // Windows — -X face (front arm left side)
+  fillBox(g, sx, sz, 0, 6, 2, 0, 8, 4, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 0, 6, 6, 0, 8, 8, PAL_WINDOW_GLOW);
+  // Windows — +Z face (right arm back)
+  fillBox(g, sx, sz, 11, 6, 19, 13, 8, 19, PAL_WINDOW_GLOW);
+  fillBox(g, sx, sz, 16, 6, 19, 18, 8, 19, PAL_WINDOW_GLOW);
 });
 
 export const MATTER_PLANT_MODEL = createModel(20, 14, 20, (g, sx, _sy, sz) => {

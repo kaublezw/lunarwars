@@ -29,6 +29,7 @@ interface DebrisParticle {
   lifetime: number;
   maxLifetime: number;
   bounces: number;
+  gravity: number;
   color: THREE.Color;
   isRubble: boolean;
   emissive: number; // 0-1 glow intensity
@@ -120,6 +121,7 @@ export class DebrisRenderer {
         lifetime: 0,
         maxLifetime: 0,
         bounces: 0,
+        gravity: LUNAR_GRAVITY,
         color: new THREE.Color(),
         isRubble: false,
         emissive: 0,
@@ -180,6 +182,7 @@ export class DebrisRenderer {
     p.maxLifetime = 5.0 + Math.random() * 3.0;
     p.lifetime = p.maxLifetime;
     p.bounces = 0;
+    p.gravity = LUNAR_GRAVITY;
     p.isRubble = false;
     p.color.setHex(color);
     p.emissive = initialEmissive;
@@ -217,6 +220,7 @@ export class DebrisRenderer {
     p.maxLifetime = 120 + Math.random() * 60;
     p.lifetime = p.maxLifetime;
     p.bounces = MAX_BOUNCES; // already settled
+    p.gravity = 0;
     p.isRubble = true;
     p.color.setHex(color);
     p.emissive = 0;
@@ -241,6 +245,48 @@ export class DebrisRenderer {
     for (let i = 0; i < count; i++) {
       this.spawn(x, y, z, ndx, ndy, ndz, color, 0, glowColor);
     }
+  }
+
+  /** Spawn a single smoke voxel that floats upward and fades */
+  spawnSmoke(x: number, y: number, z: number, color: number): void {
+    let slot = -1;
+    for (let i = 0; i < MAX_DEBRIS; i++) {
+      if (!this.particles[i].alive) {
+        slot = i;
+        break;
+      }
+    }
+    if (slot === -1) return;
+
+    const p = this.particles[slot];
+    p.alive = true;
+    p.x = x;
+    p.y = y;
+    p.z = z;
+
+    // Slow upward drift with slight random XZ wander
+    p.vx = (Math.random() - 0.5) * 0.4;
+    p.vy = 0.5 + Math.random() * 0.5;
+    p.vz = (Math.random() - 0.5) * 0.4;
+
+    // Slow tumble
+    p.ax = (Math.random() - 0.5) * 4;
+    p.ay = (Math.random() - 0.5) * 4;
+    p.az = (Math.random() - 0.5) * 4;
+    p.rotX = Math.random() * Math.PI * 2;
+    p.rotY = Math.random() * Math.PI * 2;
+    p.rotZ = Math.random() * Math.PI * 2;
+
+    p.maxLifetime = 3.0 + Math.random() * 1.5;
+    p.lifetime = p.maxLifetime;
+    p.bounces = MAX_BOUNCES; // skip bounce logic
+    p.gravity = -0.3; // negative = floats upward
+    p.isRubble = false;
+    p.color.setHex(color);
+    p.emissive = 0;
+    p.dieOnGlowFade = false;
+
+    this.activeCount = Math.max(this.activeCount, slot + 1);
   }
 
   update(dt: number): void {
@@ -275,7 +321,7 @@ export class DebrisRenderer {
       }
 
       // Physics: gravity + velocity
-      p.vy -= LUNAR_GRAVITY * dt;
+      p.vy -= p.gravity * dt;
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       p.z += p.vz * dt;
