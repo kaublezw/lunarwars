@@ -1,4 +1,4 @@
-:80 {
+voxel.itty.games {
     handle /ws {
         reverse_proxy localhost:8080
     }

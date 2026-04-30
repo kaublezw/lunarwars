@@ -9,7 +9,7 @@ SSH_KEY="${DEPLOY_KEY:-$HOME/.ssh/lunarwars-key.pem}"
 
 echo "=== Building client ==="
 cd "$PROJECT_DIR"
-VITE_WS_SERVER_URL="ws://${SERVER_HOST}/ws" npm run build
+VITE_WS_SERVER_URL="wss://voxel.itty.games/ws" npm run build
 
 echo "=== Uploading client files ==="
 rsync -avz --delete \
@@ -36,4 +36,4 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_HOST}" \
   "cd /opt/lunarwars/server && npm install --production=false && cd /opt/lunarwars && pm2 startOrRestart ecosystem.config.cjs && pm2 save && sudo cp /tmp/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy"
 
 echo "=== Deploy complete ==="
-echo "Game is live at http://${SERVER_HOST}"
+echo "Game is live at https://voxel.itty.games"
