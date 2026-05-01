@@ -2,6 +2,7 @@ import type { World } from '@core/ECS';
 import {
   POSITION, RENDERABLE, UNIT_TYPE, SELECTABLE, HEALTH, TEAM, VISION,
   VOXEL_STATE, TRAIN_LINK, TRACK_FOLLOWER, CARGO_STORAGE, MACRO_GRID_SIZE,
+  PENDING_CAR_ATTACH, MOVE_COMMAND,
 } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { RenderableComponent } from '@sim/components/Renderable';
@@ -27,8 +28,8 @@ export const STUB_BEHIND_CELLS = 2;
 export const STUB_AHEAD_CELLS = 1;
 
 /** Direction deltas: 0=North(-Z), 1=East(+X), 2=South(+Z), 3=West(-X) */
-const DIR_DX = [0, 1, 0, -1];
-const DIR_DZ = [-1, 0, 1, 0];
+export const DIR_DX = [0, 1, 0, -1];
+export const DIR_DZ = [-1, 0, 1, 0];
 
 /**
  * Spawn a train set (1 engine + N cargo cars) at the given position.
@@ -186,6 +187,70 @@ export function appendCarToTrain(world: World, engineEntity: number, carEntity: 
   if (carLink) {
     carLink.prevEntity = tail;
     carLink.nextEntity = null;
+  }
+}
+
+/**
+ * Gather every alive cargo car on the team that is not already linked to this
+ * engine, teleport each to a chained slot behind the engine on the stub, and
+ * append them to the engine's TrainLink chain. Used right after a new engine
+ * is spawned so orphans (cars whose old engine died) and PENDING_CAR_ATTACH
+ * cars are immediately reunited with the new engine.
+ *
+ * Iterates entities in id-sorted order for determinism (multiplayer lockstep,
+ * replays).
+ */
+export function attachOrphansAndPendingToEngine(
+  world: World,
+  team: number,
+  engine: number,
+  terrainHeightAt: (x: number, z: number) => number,
+  stubDirection: number,
+): void {
+  const enginePos = world.getComponent<PositionComponent>(engine, POSITION);
+  if (!enginePos) return;
+
+  const candidates: number[] = [];
+  const all = world.query(TRAIN_LINK, TEAM, HEALTH, POSITION);
+  for (const e of all) {
+    if (e === engine) continue;
+    const link = world.getComponent<TrainLinkComponent>(e, TRAIN_LINK)!;
+    if (link.isEngine) continue;
+    const t = world.getComponent<TeamComponent>(e, TEAM)!;
+    if (t.team !== team) continue;
+    const h = world.getComponent<HealthComponent>(e, HEALTH)!;
+    if (h.dead) continue;
+    candidates.push(e);
+  }
+  candidates.sort((a, b) => a - b);
+
+  const dx = DIR_DX[stubDirection] ?? 0;
+  const dz = DIR_DZ[stubDirection] ?? 1;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const car = candidates[i];
+    const offset = CAR_SPACING * (i + 1);
+    const x = enginePos.x - dx * offset;
+    const z = enginePos.z - dz * offset;
+    const y = terrainHeightAt(x, z) + 0.1;
+
+    const carPos = world.getComponent<PositionComponent>(car, POSITION)!;
+    carPos.x = x;
+    carPos.z = z;
+    carPos.y = y;
+    carPos.prevX = x;
+    carPos.prevZ = z;
+    carPos.prevY = y;
+    carPos.rotation = enginePos.rotation;
+
+    if (world.hasComponent(car, MOVE_COMMAND)) {
+      world.removeComponent(car, MOVE_COMMAND);
+    }
+    if (world.hasComponent(car, PENDING_CAR_ATTACH)) {
+      world.removeComponent(car, PENDING_CAR_ATTACH);
+    }
+
+    appendCarToTrain(world, engine, car);
   }
 }
 

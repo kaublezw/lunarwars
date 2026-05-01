@@ -27,7 +27,7 @@ import type { VoxelStateComponent } from '@sim/components/VoxelState';
 import type { PowerNodeComponent } from '@sim/components/PowerNode';
 import type { ResourceState } from '@sim/economy/ResourceState';
 import type { TerrainData } from '@sim/terrain/TerrainData';
-import { getHQStubCell } from '@sim/logistics/TrainSpawner';
+import { getHQStubCell, attachOrphansAndPendingToEngine, DIR_DX, DIR_DZ } from '@sim/logistics/TrainSpawner';
 
 const TEAM_COLORS = [0x4488ff, 0xff4444];
 
@@ -139,12 +139,15 @@ export class ProductionSystem implements System {
         if (isEngineSpawn) {
           // Reposition to HQ stub cell so TrackManagerSystem docks it immediately
           const stub = getHQStubCell(bldgPos.x, bldgPos.z);
+          const stubY = this.terrainData.getHeight(stub.worldX, stub.worldZ) + 0.1;
           const ePos = world.getComponent<PositionComponent>(unit, POSITION)!;
           ePos.x = stub.worldX;
           ePos.z = stub.worldZ;
+          ePos.y = stubY;
           ePos.prevX = stub.worldX;
           ePos.prevZ = stub.worldZ;
-          ePos.rotation = Math.atan2(1, 0); // face East (stub direction)
+          ePos.prevY = stubY;
+          ePos.rotation = Math.atan2(DIR_DX[stub.direction], DIR_DZ[stub.direction]);
 
           world.addComponent<TrainLinkComponent>(unit, TRAIN_LINK, {
             nextEntity: null,
@@ -160,6 +163,15 @@ export class ProductionSystem implements System {
             halted: false,
             currentSpeed: 0,
           });
+
+          // Gather any surviving cargo cars (orphans + pending) onto the new engine.
+          attachOrphansAndPendingToEngine(
+            world,
+            team.team,
+            unit,
+            (x, z) => this.terrainData.getHeight(x, z),
+            stub.direction,
+          );
         }
 
         // Cargo cars produced at HQ: give them TrainLink + CargoStorage + PendingCarAttach

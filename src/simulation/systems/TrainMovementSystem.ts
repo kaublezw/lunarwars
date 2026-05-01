@@ -45,6 +45,13 @@ export class TrainMovementSystem implements System {
       if (follower.path.length < 2) continue;
       if (follower.halted) continue;
 
+      // No living car linked? Stay parked. The engine waits at the stub until
+      // a cargo car is built (or surviving cars are gathered on respawn).
+      if (!this.hasLivingCar(world, link)) {
+        follower.currentSpeed = 0;
+        continue;
+      }
+
       const team = world.getComponent<TeamComponent>(engine, TEAM);
       const teamNum = team ? team.team : -1;
 
@@ -386,6 +393,18 @@ export class TrainMovementSystem implements System {
 
       current = carLink.nextEntity;
     }
+  }
+
+  /** True if any living non-engine car is reachable through the chain. */
+  private hasLivingCar(world: World, engineLink: TrainLinkComponent): boolean {
+    let current: number | null = engineLink.nextEntity;
+    while (current != null) {
+      const link = world.getComponent<TrainLinkComponent>(current, TRAIN_LINK);
+      const health = world.getComponent<HealthComponent>(current, HEALTH);
+      if (link && !link.isEngine && health && !health.dead) return true;
+      current = link ? link.nextEntity : null;
+    }
+    return false;
   }
 
   /** Rebuild linked list skipping dead cars. */
