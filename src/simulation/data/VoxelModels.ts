@@ -169,19 +169,19 @@ function createModel(sx: number, sy: number, sz: number, buildFn: (grid: Uint8Ar
 
 // --- Unit Models ---
 
-export const COMBAT_DRONE_MODEL = createModel(3, 7, 3, (g, sx, _sy, sz) => {
+export const COMBAT_DRONE_MODEL = createModel(5, 11, 5, (g, sx, _sy, sz) => {
   // Legs
-  fillBox(g, sx, sz, 0, 0, 1, 0, 1, 1, PAL_MED_GREY);
-  fillBox(g, sx, sz, 2, 0, 1, 2, 1, 1, PAL_MED_GREY);
+  fillBox(g, sx, sz, 0, 0, 1, 1, 2, 3, PAL_MED_GREY);
+  fillBox(g, sx, sz, 3, 0, 1, 4, 2, 3, PAL_MED_GREY);
   // Body
-  fillBox(g, sx, sz, 0, 2, 0, 2, 3, 2, PAL_TEAM_PRIMARY);
+  fillBox(g, sx, sz, 0, 3, 0, 4, 6, 4, PAL_TEAM_PRIMARY);
   // Head
-  fillBox(g, sx, sz, 0, 4, 0, 2, 5, 2, PAL_TEAM_ACCENT);
-  // Weapon arm
-  fillBox(g, sx, sz, 2, 2, 1, 2, 3, 1, PAL_DARK_GREY);
-  // Barrel (turret) — 3 voxels along Z at y=6
-  fillBox(g, sx, sz, 1, 6, 0, 1, 6, 2, PAL_DARK_GREY);
-}, 6);
+  fillBox(g, sx, sz, 1, 7, 1, 3, 9, 3, PAL_TEAM_ACCENT);
+  // Weapon arm (darker stripe on body's right face)
+  fillBox(g, sx, sz, 4, 4, 2, 4, 5, 2, PAL_DARK_GREY);
+  // Barrel (turret) — 5 voxels along Z at y=10
+  fillBox(g, sx, sz, 2, 10, 0, 2, 10, 4, PAL_DARK_GREY);
+}, 10);
 
 export const ASSAULT_PLATFORM_MODEL = createModel(10, 6, 14, (g, sx, _sy, sz) => {
   // Treads: left and right

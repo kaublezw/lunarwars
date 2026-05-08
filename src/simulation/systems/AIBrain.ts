@@ -11,6 +11,7 @@ import { TICK_INTERVAL, RALLY_OFFSET } from '@sim/ai/AITypes';
 import { IntelligenceManager } from '@sim/ai/IntelligenceManager';
 import { EconomyManager } from '@sim/ai/EconomyManager';
 import { MilitaryManager } from '@sim/ai/MilitaryManager';
+import { SeededRandom } from '@sim/utils/SeededRandom';
 import { POSITION, TEAM, BUILDING, HEALTH } from '@sim/components/ComponentTypes';
 import type { PositionComponent } from '@sim/components/Position';
 import type { TeamComponent } from '@sim/components/Team';
@@ -30,6 +31,7 @@ export class AISystem implements System {
   private occupancy: BuildingOccupancy;
   private powerGrid: PowerGridState;
   private trackState?: TrackState;
+  private rng: SeededRandom;
 
   private intel: IntelligenceManager;
   private economy: EconomyManager;
@@ -48,6 +50,7 @@ export class AISystem implements System {
     occupancy: BuildingOccupancy,
     powerGrid?: PowerGridState,
     trackState?: TrackState,
+    seed: number = 0,
   ) {
     this.team = team;
     this.resources = resources;
@@ -58,6 +61,8 @@ export class AISystem implements System {
     this.occupancy = occupancy;
     this.powerGrid = powerGrid ?? new PowerGridState(2);
     this.trackState = trackState;
+    // Per-team seeded RNG for deterministic AI variability
+    this.rng = new SeededRandom(((seed >>> 0) ^ ((team + 1) * 9973)) >>> 0);
     // Stagger AI ticks so teams don't always act on the same frame
     this.tickCounter = team * Math.floor(TICK_INTERVAL / 2);
 
@@ -97,6 +102,7 @@ export class AISystem implements System {
       totalTicks: this.totalTicks,
       powerGrid: this.powerGrid,
       trackState: this.trackState,
+      rng: this.rng,
     };
 
     // Perceive -> Decide -> Act

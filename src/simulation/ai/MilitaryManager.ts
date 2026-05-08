@@ -28,7 +28,7 @@ export class MilitaryManager {
   };
 
   update(ctx: AIContext, report: IntelligenceReport): void {
-    const { state, influenceGrid } = report;
+    const { state, influenceGrid, casualtyGrid } = report;
 
     this.attackState.forceAttackTimer++;
 
@@ -37,7 +37,7 @@ export class MilitaryManager {
     const result = updateSquads(ctx, state, this.squads, this.nextSquadId);
     this.squads = result.squads;
     this.nextSquadId = result.nextSquadId;
-    executeSquadOrders(ctx, state, this.squads, influenceGrid, this.attackState);
+    executeSquadOrders(ctx, state, this.squads, influenceGrid, this.attackState, casualtyGrid);
   }
 
   private buildCmdCtx(ctx: AIContext): GameCommandContext {

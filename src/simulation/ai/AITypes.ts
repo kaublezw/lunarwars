@@ -6,6 +6,7 @@ import type { EnergyNode, OreDeposit } from '@sim/terrain/MapFeatures';
 import type { BuildingOccupancy } from '@sim/spatial/BuildingOccupancy';
 import type { PowerGridState } from '@sim/economy/PowerGridState';
 import type { TrackState } from '@sim/logistics/TrackState';
+import type { SeededRandom } from '@sim/utils/SeededRandom';
 import { BuildingType } from '@sim/components/Building';
 import { UnitCategory } from '@sim/components/UnitType';
 
@@ -35,6 +36,16 @@ export const INFLUENCE_GRID = 16;
 export const INFLUENCE_CELL = 16;
 export const THREAT_WEIGHT = 8.0;
 export const THREAT_DECAY_PER_TICK = 0.05;
+
+// Casualty Memory (per-cell deaths to learn dangerous areas)
+// AI runs every TICK_INTERVAL=10 frames at 60fps → 6 AI ticks/sec.
+// Half-life ≈ 2 minutes ≈ 720 AI ticks: 0.5 ** (1/720) ≈ 0.99904
+export const CASUALTY_DECAY_PER_TICK = 0.99904;
+export const CASUALTY_BLEED = 0.5;
+export const CASUALTY_DEATH_WEIGHT = 1.0;
+export const CASUALTY_PATH_WEIGHT = 4.0;
+export const CASUALTY_TARGET_WEIGHT = 0.3;
+export const CASUALTY_CELL_CAP = 12.0;
 
 // Squad System
 export const HARASS_SQUAD_SIZE = 3;
@@ -176,12 +187,14 @@ export interface AIContext {
   totalTicks: number;
   powerGrid: PowerGridState;
   trackState?: TrackState;
+  rng: SeededRandom;
 }
 
 export interface IntelligenceReport {
   state: AIWorldState;
   phase: AIPhase;
   influenceGrid: Float32Array;
+  casualtyGrid: Float32Array;
   enemyMemory: Map<number, EnemyMemoryEntry>;
 }
 

@@ -8,7 +8,9 @@ import { BuildingType } from '@sim/components/Building';
 import type { AIContext, AIWorldState } from '@sim/ai/AITypes';
 import {
   INFLUENCE_GRID, INFLUENCE_CELL, THREAT_WEIGHT, THREAT_DECAY_PER_TICK,
+  CASUALTY_PATH_WEIGHT,
 } from '@sim/ai/AITypes';
+import type { SeededRandom } from '@sim/utils/SeededRandom';
 
 function toCell(wx: number, wz: number): [number, number] {
   const G = INFLUENCE_GRID;
@@ -111,6 +113,8 @@ export function findInfluenceAwarePath(
   fromZ: number,
   toX: number,
   toZ: number,
+  casualtyGrid?: Float32Array,
+  rng?: SeededRandom,
 ): { x: number; z: number }[] {
   const G = INFLUENCE_GRID;
   const C = INFLUENCE_CELL;
@@ -184,7 +188,12 @@ export function findInfluenceAwarePath(
       const nIdx = nz * G + nx;
       if (closed[nIdx]) continue;
       const threat = grid[nIdx * 3];
-      const tentG = gScore[cur] + d.c + threat * THREAT_WEIGHT;
+      const danger = casualtyGrid ? casualtyGrid[nIdx] : 0;
+      const jitter = rng ? rng.next() * 0.15 : 0;
+      const tentG = gScore[cur] + d.c
+        + threat * THREAT_WEIGHT
+        + danger * CASUALTY_PATH_WEIGHT
+        + jitter;
       if (tentG < gScore[nIdx]) {
         cameFrom[nIdx] = cur;
         gScore[nIdx] = tentG;

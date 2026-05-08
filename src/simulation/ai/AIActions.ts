@@ -16,6 +16,7 @@ import type { AIContext, AIWorldState, Squad } from '@sim/ai/AITypes';
 import {
   RETREAT_HP_FRACTION, OVERWHELMING_ARMY,
   MEMORY_DECAY_TICKS,
+  INFLUENCE_GRID, INFLUENCE_CELL, CASUALTY_TARGET_WEIGHT,
 } from '@sim/ai/AITypes';
 
 export function issueMove(ctx: AIContext, entity: number, x: number, z: number): void {
@@ -91,103 +92,102 @@ export function retreatWounded(ctx: AIContext, squad: Squad): void {
   }
 }
 
+function buildingTypeWeight(bt: BuildingType): number {
+  switch (bt) {
+    case BuildingType.HQ: return 6;
+    case BuildingType.EnergyExtractor: return 10;
+    case BuildingType.SupplyDepot: return 8;
+    case BuildingType.DroneFactory: return 5;
+    case BuildingType.MatterPlant: return 4;
+    default: return 1;
+  }
+}
+
+function casualtyAtPoint(casualtyGrid: Float32Array | undefined, x: number, z: number): number {
+  if (!casualtyGrid) return 0;
+  const G = INFLUENCE_GRID;
+  const C = INFLUENCE_CELL;
+  const cx = Math.min(G - 1, Math.max(0, Math.floor(x / C)));
+  const cz = Math.min(G - 1, Math.max(0, Math.floor(z / C)));
+  return casualtyGrid[cz * G + cx];
+}
+
 export function pickAttackTarget(
   ctx: AIContext,
   state: AIWorldState,
+  casualtyGrid?: Float32Array,
 ): { x: number; z: number } | null {
-  let bestTarget: { x: number; z: number } | null = null;
-  let bestDistSq = Infinity;
-
+  // Overwhelming army: still beeline for HQ if visible
   if (state.totalArmySize >= OVERWHELMING_ARMY) {
     for (const bldg of state.knownEnemyBuildings) {
       if (bldg.type === BuildingType.HQ) return { x: bldg.x, z: bldg.z };
     }
   }
 
-  // 1. TOP PRIORITY: Kill enemy Energy Extractors (closest first)
-  for (const bldg of state.knownEnemyBuildings) {
-    if (bldg.type === BuildingType.EnergyExtractor) {
-      const dx = bldg.x - ctx.baseX;
-      const dz = bldg.z - ctx.baseZ;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestTarget = { x: bldg.x, z: bldg.z };
-      }
-    }
-  }
-  if (bestTarget) return bestTarget;
+  // Build scored candidate pool from all known visible enemies
+  type Candidate = { x: number; z: number; score: number };
+  const candidates: Candidate[] = [];
 
-  // 2. Hunt Forward Supply Depots
-  for (const bldg of state.knownEnemyBuildings) {
-    if (bldg.type === BuildingType.SupplyDepot) {
-      const dx = bldg.x - ctx.baseX;
-      const dz = bldg.z - ctx.baseZ;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestTarget = { x: bldg.x, z: bldg.z };
-      }
-    }
-  }
-  if (bestTarget) return bestTarget;
+  const scoreCandidate = (x: number, z: number, typeWeight: number): number => {
+    const dx = x - ctx.baseX;
+    const dz = z - ctx.baseZ;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    const proximity = 1 / (1 + dist / 100);
+    const danger = casualtyAtPoint(casualtyGrid, x, z);
+    return (typeWeight * proximity) / (1 + danger * CASUALTY_TARGET_WEIGHT);
+  };
 
-  // 3. Disrupt Worker Ferries
+  for (const bldg of state.knownEnemyBuildings) {
+    if (bldg.type === BuildingType.HQ) continue; // HQ only via overwhelming
+    candidates.push({ x: bldg.x, z: bldg.z, score: scoreCandidate(bldg.x, bldg.z, buildingTypeWeight(bldg.type)) });
+  }
+
+  // Worker ferries (visible enemy units) — disruption priority
   for (const unit of state.knownEnemyUnits) {
-     const dx = unit.x - ctx.baseX;
-     const dz = unit.z - ctx.baseZ;
-     const distSq = dx * dx + dz * dz;
-     if (distSq < bestDistSq) {
-       bestDistSq = distSq;
-       bestTarget = { x: unit.x, z: unit.z };
-     }
+    candidates.push({ x: unit.x, z: unit.z, score: scoreCandidate(unit.x, unit.z, 7) });
   }
-  if (bestTarget) return bestTarget;
 
-  // 4. Matter Plants + Factories (extractors handled above)
-  bestDistSq = Infinity;
-  for (const bldg of state.knownEnemyBuildings) {
-    if (bldg.type === BuildingType.MatterPlant || bldg.type === BuildingType.DroneFactory) {
-      const dx = bldg.x - ctx.baseX;
-      const dz = bldg.z - ctx.baseZ;
-      const distSq = dx * dx + dz * dz;
-      if (distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestTarget = { x: bldg.x, z: bldg.z };
-      }
-    }
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => b.score - a.score);
+    const topK = candidates.slice(0, Math.min(4, candidates.length));
+    return weightedPick(ctx, topK);
   }
-  if (bestTarget) return bestTarget;
 
-  // Fall back to remembered buildings scored by typeScore * freshness
+  // Fall back to remembered buildings (out of sight) scored by typeScore * freshness, with casualty penalty
   if (state.rememberedEnemyBuildings.length > 0) {
-    let bestMemTarget: { x: number; z: number } | null = null;
-    let bestMemScore = -Infinity;
-
-    const typeScore = (bt: BuildingType | null): number => {
-      switch (bt) {
-        case BuildingType.HQ: return 5;
-        case BuildingType.SupplyDepot: return 4;
-        case BuildingType.EnergyExtractor: return 4;
-        case BuildingType.DroneFactory: return 3;
-        case BuildingType.MatterPlant: return 2;
-        default: return 0;
-      }
-    };
-
+    type MemCandidate = { x: number; z: number; score: number };
+    const memCandidates: MemCandidate[] = [];
     for (const entry of state.rememberedEnemyBuildings) {
+      if (!entry.buildingType) continue;
       const freshness = Math.max(0, 1 - (ctx.totalTicks - entry.lastSeenTick) / MEMORY_DECAY_TICKS);
-      const score = typeScore(entry.buildingType) * freshness;
-      if (score > bestMemScore) {
-        bestMemScore = score;
-        bestMemTarget = { x: entry.x, z: entry.z };
-      }
+      if (freshness <= 0) continue;
+      const danger = casualtyAtPoint(casualtyGrid, entry.x, entry.z);
+      const score = (buildingTypeWeight(entry.buildingType) * freshness) / (1 + danger * CASUALTY_TARGET_WEIGHT);
+      memCandidates.push({ x: entry.x, z: entry.z, score });
     }
-
-    if (bestMemTarget) return bestMemTarget;
+    if (memCandidates.length > 0) {
+      memCandidates.sort((a, b) => b.score - a.score);
+      const topK = memCandidates.slice(0, Math.min(3, memCandidates.length));
+      return weightedPick(ctx, topK);
+    }
   }
 
   return null;
+}
+
+function weightedPick(
+  ctx: AIContext,
+  candidates: { x: number; z: number; score: number }[],
+): { x: number; z: number } {
+  let total = 0;
+  for (const c of candidates) total += Math.max(0, c.score);
+  if (total <= 0) return { x: candidates[0].x, z: candidates[0].z };
+  let r = ctx.rng.next() * total;
+  for (const c of candidates) {
+    r -= Math.max(0, c.score);
+    if (r <= 0) return { x: c.x, z: c.z };
+  }
+  return { x: candidates[candidates.length - 1].x, z: candidates[candidates.length - 1].z };
 }
 
 export function assignRepair(ctx: AIContext, worker: number, buildingEntity: number): void {

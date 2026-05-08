@@ -219,12 +219,13 @@ export function executeSquadOrders(
   squads: Squad[],
   influenceGrid: Float32Array,
   attackState: AttackState,
+  casualtyGrid?: Float32Array,
 ): void {
   for (const squad of squads) {
     switch (squad.type) {
       case 'defense': executeDefenseOrders(ctx, state, squad); break;
-      case 'harass': executeHarassOrders(ctx, state, squad, influenceGrid); break;
-      case 'main': executeMainOrders(ctx, state, squad, squads, influenceGrid, attackState); break;
+      case 'harass': executeHarassOrders(ctx, state, squad, influenceGrid, casualtyGrid); break;
+      case 'main': executeMainOrders(ctx, state, squad, squads, influenceGrid, attackState, casualtyGrid); break;
     }
   }
 }
@@ -311,6 +312,7 @@ function executeHarassOrders(
   state: AIWorldState,
   squad: Squad,
   influenceGrid: Float32Array,
+  casualtyGrid?: Float32Array,
 ): void {
   if (squad.targetX < 0 || squad.state === 'idle') {
     const target = findHarassTarget(state, influenceGrid);
@@ -319,7 +321,7 @@ function executeHarassOrders(
       squad.targetZ = target.z;
       squad.state = 'moving';
       const centroid = getSquadCentroid(ctx, squad);
-      squad.waypoints = findInfluenceAwarePath(influenceGrid, centroid.x, centroid.z, target.x, target.z);
+      squad.waypoints = findInfluenceAwarePath(influenceGrid, centroid.x, centroid.z, target.x, target.z, casualtyGrid, ctx.rng);
       squad.waypointIdx = 0;
     } else {
       for (const unitId of squad.unitIds) {
@@ -368,6 +370,7 @@ function executeMainOrders(
   allSquads: Squad[],
   influenceGrid: Float32Array,
   attack: AttackState,
+  casualtyGrid?: Float32Array,
 ): void {
   if (attack.reattackTimer > 0) attack.reattackTimer--;
 
@@ -409,7 +412,10 @@ function executeMainOrders(
     if (readyFraction >= STAGING_READY_FRACTION || attack.stagingTimer >= STAGING_TIMEOUT_TICKS) {
       attack.attackPhase = 'attacking';
       const centroid = getSquadCentroid(ctx, squad);
-      squad.waypoints = findInfluenceAwarePath(influenceGrid, centroid.x, centroid.z, attack.attackTargetX, attack.attackTargetZ);
+      squad.waypoints = findInfluenceAwarePath(
+        influenceGrid, centroid.x, centroid.z, attack.attackTargetX, attack.attackTargetZ,
+        casualtyGrid, ctx.rng,
+      );
       squad.waypointIdx = 0;
       retreatWounded(ctx, squad);
       return;
@@ -423,7 +429,7 @@ function executeMainOrders(
   if (attack.attackPhase === 'attacking' && armySize > 0) {
     const hasVisibleTargets = state.knownEnemyBuildings.length > 0 || state.knownEnemyUnits.length > 0;
     if (hasVisibleTargets) {
-      const target = pickAttackTarget(ctx, state);
+      const target = pickAttackTarget(ctx, state, casualtyGrid);
       if (target) {
         attack.attackTargetX = target.x;
         attack.attackTargetZ = target.z;
@@ -456,7 +462,7 @@ function executeMainOrders(
   const forceAttack = attack.forceAttackTimer >= FORCE_ATTACK_TICKS && armySize > 0;
 
   if (armySize >= effectiveThreshold || forceAttack) {
-    const target = pickAttackTarget(ctx, state);
+    const target = pickAttackTarget(ctx, state, casualtyGrid);
     const fallback = ctx.team === 0 ? 192 : 64;
     const targetX = target ? target.x : fallback;
     const targetZ = target ? target.z : fallback;
@@ -466,22 +472,31 @@ function executeMainOrders(
     attack.reattackTimer = -1;
     attack.forceAttackTimer = 0;
 
-    // Staging point: 70% of the way from centroid to target
+    // Staging point: random fraction in [0.65, 0.85] along centroid->target,
+    // with random angle jitter +/- 30 deg so attacks come from varying directions
+    // without wasting too much travel time off-axis.
     const centroid = getSquadCentroid(ctx, squad);
     const dx = targetX - centroid.x;
     const dz = targetZ - centroid.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
-    const angle = Math.atan2(dz, dx);
-    const stagingDist = dist * 0.7;
+    const baseAngle = Math.atan2(dz, dx);
+    const angleJitter = (ctx.rng.next() - 0.5) * (Math.PI / 3);
+    const finalAngle = baseAngle + angleJitter;
 
-    let proposedX = centroid.x + Math.cos(angle) * stagingDist;
-    let proposedZ = centroid.z + Math.sin(angle) * stagingDist;
+    let stagingFraction = 0.65 + ctx.rng.next() * 0.20;
+    let proposedX = centroid.x + Math.cos(finalAngle) * dist * stagingFraction;
+    let proposedZ = centroid.z + Math.sin(finalAngle) * dist * stagingFraction;
     proposedX = Math.max(20, Math.min(236, proposedX));
     proposedZ = Math.max(20, Math.min(236, proposedZ));
 
-    if (!ctx.terrain.isPassable(Math.round(proposedX), Math.round(proposedZ))) {
-      proposedX -= Math.cos(angle) * 15;
-      proposedZ -= Math.sin(angle) * 15;
+    // Passability fallback: shrink fraction in 3 steps if blocked
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (ctx.terrain.isPassable(Math.round(proposedX), Math.round(proposedZ))) break;
+      stagingFraction = Math.max(0.3, stagingFraction - 0.15);
+      proposedX = centroid.x + Math.cos(finalAngle) * dist * stagingFraction;
+      proposedZ = centroid.z + Math.sin(finalAngle) * dist * stagingFraction;
+      proposedX = Math.max(20, Math.min(236, proposedX));
+      proposedZ = Math.max(20, Math.min(236, proposedZ));
     }
 
     attack.stagingX = proposedX;

@@ -391,12 +391,12 @@ if (isMultiplayer && !mpAIMode) {
   // Multiplayer: no AI — both teams are human players
 } else if (mpAIMode) {
   // Multiplayer AI test: both teams controlled by AI, spectator view
-  world.addSystem(new AISystem(0, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
-  world.addSystem(new AISystem(1, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
+  world.addSystem(new AISystem(0, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState, seed));
+  world.addSystem(new AISystem(1, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState, seed));
 } else {
-  world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
+  world.addSystem(new AISystem(AI_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState, seed));
   if (spectatorMode) {
-    world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState));
+    world.addSystem(new AISystem(PLAYER_TEAM, resourceState, terrainData, fogState, energyNodes, oreDeposits, buildingOccupancy, powerGridState, trackState, seed));
   }
 }
 

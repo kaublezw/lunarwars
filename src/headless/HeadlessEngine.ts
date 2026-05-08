@@ -138,8 +138,8 @@ export class HeadlessEngine {
     this.world.addSystem(new TrackManagerSystem(trackState, this.terrainData, 2, this.buildingOccupancy));
 
     // Both teams controlled by AI
-    this.world.addSystem(new AISystem(1, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy, this.powerGridState, trackState));
-    this.world.addSystem(new AISystem(0, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy, this.powerGridState, trackState));
+    this.world.addSystem(new AISystem(1, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy, this.powerGridState, trackState, this.seed));
+    this.world.addSystem(new AISystem(0, this.resourceState, this.terrainData, this.fogState, this.energyNodes, this.oreDeposits, this.buildingOccupancy, this.powerGridState, trackState, this.seed));
 
     // Spawn HQs + workers
     this.spawnInitialEntities();

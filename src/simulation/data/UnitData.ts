@@ -47,8 +47,8 @@ export const UNIT_DEFS: Record<string, UnitDef> = {
     damage: 10,
     ammo: 38,
     maxAmmo: 38,
-    muzzleOffset: 0.5,
-    muzzleHeight: 0.6,
+    muzzleOffset: 0.8,
+    muzzleHeight: 1.0,
   },
   [UnitCategory.AssaultPlatform]: {
     category: UnitCategory.AssaultPlatform,
